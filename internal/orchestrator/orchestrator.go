@@ -1,0 +1,311 @@
+package orchestrator
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/rs/zerolog/log"
+
+	"github.com/backflow-labs/backflow/internal/config"
+	"github.com/backflow-labs/backflow/internal/models"
+	"github.com/backflow-labs/backflow/internal/notify"
+	"github.com/backflow-labs/backflow/internal/store"
+)
+
+type Orchestrator struct {
+	store    store.Store
+	config   *config.Config
+	notifier notify.Notifier
+	ec2      *EC2Manager
+	docker   *DockerManager
+	scaler   *Scaler
+	spot     *SpotHandler
+
+	mu       sync.Mutex
+	running  int
+	stopCh   chan struct{}
+}
+
+func New(s store.Store, cfg *config.Config, notifier notify.Notifier) *Orchestrator {
+	ec2 := NewEC2Manager(cfg)
+	return &Orchestrator{
+		store:    s,
+		config:   cfg,
+		notifier: notifier,
+		ec2:      ec2,
+		docker:   NewDockerManager(cfg),
+		scaler:   NewScaler(s, ec2, cfg),
+		spot:     NewSpotHandler(s, ec2),
+		stopCh:   make(chan struct{}),
+	}
+}
+
+func (o *Orchestrator) Start(ctx context.Context) {
+	log.Info().
+		Str("auth_mode", string(o.config.AuthMode)).
+		Int("max_concurrent", o.config.MaxConcurrent()).
+		Dur("poll_interval", o.config.PollInterval).
+		Msg("orchestrator started")
+
+	ticker := time.NewTicker(o.config.PollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Info().Msg("orchestrator stopping")
+			return
+		case <-o.stopCh:
+			log.Info().Msg("orchestrator stopped")
+			return
+		case <-ticker.C:
+			o.tick(ctx)
+		}
+	}
+}
+
+func (o *Orchestrator) Stop() {
+	close(o.stopCh)
+}
+
+func (o *Orchestrator) tick(ctx context.Context) {
+	o.monitorRunning(ctx)
+	o.dispatchPending(ctx)
+	o.scaler.Evaluate(ctx)
+}
+
+func (o *Orchestrator) dispatchPending(ctx context.Context) {
+	o.mu.Lock()
+	maxConcurrent := o.config.MaxConcurrent()
+	available := maxConcurrent - o.running
+	o.mu.Unlock()
+
+	if available <= 0 {
+		return
+	}
+
+	pending := models.TaskStatusPending
+	tasks, err := o.store.ListTasks(ctx, store.TaskFilter{
+		Status: &pending,
+		Limit:  available,
+	})
+	if err != nil {
+		log.Error().Err(err).Msg("failed to list pending tasks")
+		return
+	}
+
+	for _, task := range tasks {
+		if err := o.dispatch(ctx, task); err != nil {
+			log.Error().Err(err).Str("task_id", task.ID).Msg("failed to dispatch task")
+			task.Status = models.TaskStatusFailed
+			task.Error = err.Error()
+			o.store.UpdateTask(ctx, task)
+			o.notifier.Notify(notify.Event{
+				Type:      notify.EventTaskFailed,
+				TaskID:    task.ID,
+				RepoURL:   task.RepoURL,
+				Prompt:    task.Prompt,
+				Message:   "Failed to dispatch: " + err.Error(),
+				Timestamp: time.Now().UTC(),
+			})
+			continue
+		}
+	}
+}
+
+func (o *Orchestrator) dispatch(ctx context.Context, task *models.Task) error {
+	// Find an instance with capacity
+	instance, err := o.findAvailableInstance(ctx)
+	if err != nil {
+		// Request scale-up and re-queue for next tick
+		o.scaler.RequestScaleUp(ctx)
+		return nil
+	}
+
+	// Update task status to provisioning
+	task.Status = models.TaskStatusProvisioning
+	task.InstanceID = instance.InstanceID
+	if err := o.store.UpdateTask(ctx, task); err != nil {
+		return err
+	}
+
+	// Start container
+	containerID, err := o.docker.RunAgent(ctx, instance, task)
+	if err != nil {
+		return err
+	}
+
+	now := time.Now().UTC()
+	task.Status = models.TaskStatusRunning
+	task.ContainerID = containerID
+	task.StartedAt = &now
+	if err := o.store.UpdateTask(ctx, task); err != nil {
+		return err
+	}
+
+	o.mu.Lock()
+	o.running++
+	o.mu.Unlock()
+
+	// Update instance container count
+	instance.RunningContainers++
+	o.store.UpdateInstance(ctx, instance)
+
+	o.notifier.Notify(notify.Event{
+		Type:      notify.EventTaskRunning,
+		TaskID:    task.ID,
+		RepoURL:   task.RepoURL,
+		Prompt:    task.Prompt,
+		Timestamp: now,
+	})
+
+	log.Info().Str("task_id", task.ID).Str("container", containerID).Str("instance", instance.InstanceID).Msg("task dispatched")
+	return nil
+}
+
+func (o *Orchestrator) findAvailableInstance(ctx context.Context) (*models.Instance, error) {
+	running := models.InstanceStatusRunning
+	instances, err := o.store.ListInstances(ctx, &running)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, inst := range instances {
+		if inst.RunningContainers < inst.MaxContainers {
+			return inst, nil
+		}
+	}
+
+	return nil, errNoCapacity
+}
+
+func (o *Orchestrator) monitorRunning(ctx context.Context) {
+	running := models.TaskStatusRunning
+	tasks, err := o.store.ListTasks(ctx, store.TaskFilter{Status: &running})
+	if err != nil {
+		log.Error().Err(err).Msg("failed to list running tasks")
+		return
+	}
+
+	for _, task := range tasks {
+		// Check timeout
+		if task.StartedAt != nil && task.MaxRuntimeMin > 0 {
+			deadline := task.StartedAt.Add(time.Duration(task.MaxRuntimeMin) * time.Minute)
+			if time.Now().UTC().After(deadline) {
+				log.Warn().Str("task_id", task.ID).Msg("task exceeded max runtime, killing")
+				o.killTask(ctx, task, "exceeded max runtime")
+				continue
+			}
+		}
+
+		// Check container status
+		status, err := o.docker.InspectContainer(ctx, task.InstanceID, task.ContainerID)
+		if err != nil {
+			log.Warn().Err(err).Str("task_id", task.ID).Msg("failed to inspect container")
+			continue
+		}
+
+		if status.Done {
+			o.handleCompletion(ctx, task, status)
+		}
+	}
+}
+
+func (o *Orchestrator) handleCompletion(ctx context.Context, task *models.Task, status ContainerStatus) {
+	now := time.Now().UTC()
+	task.CompletedAt = &now
+
+	if status.ExitCode == 0 {
+		task.Status = models.TaskStatusCompleted
+		o.notifier.Notify(notify.Event{
+			Type:         notify.EventTaskCompleted,
+			TaskID:       task.ID,
+			RepoURL:      task.RepoURL,
+			Prompt:       task.Prompt,
+			AgentLogTail: status.LogTail,
+			Timestamp:    now,
+		})
+	} else if status.NeedsInput {
+		task.Status = models.TaskStatusFailed
+		task.Error = "agent needs input"
+		o.notifier.Notify(notify.Event{
+			Type:         notify.EventTaskNeedsInput,
+			TaskID:       task.ID,
+			RepoURL:      task.RepoURL,
+			Prompt:       task.Prompt,
+			Message:      status.Question,
+			AgentLogTail: status.LogTail,
+			Timestamp:    now,
+		})
+	} else {
+		task.Status = models.TaskStatusFailed
+		task.Error = status.Error
+		o.notifier.Notify(notify.Event{
+			Type:         notify.EventTaskFailed,
+			TaskID:       task.ID,
+			RepoURL:      task.RepoURL,
+			Prompt:       task.Prompt,
+			Message:      status.Error,
+			AgentLogTail: status.LogTail,
+			Timestamp:    now,
+		})
+	}
+
+	o.store.UpdateTask(ctx, task)
+
+	o.mu.Lock()
+	o.running--
+	o.mu.Unlock()
+
+	// Decrement instance container count
+	if task.InstanceID != "" {
+		if inst, err := o.store.GetInstance(ctx, task.InstanceID); err == nil && inst != nil {
+			inst.RunningContainers--
+			if inst.RunningContainers < 0 {
+				inst.RunningContainers = 0
+			}
+			o.store.UpdateInstance(ctx, inst)
+		}
+	}
+
+	log.Info().Str("task_id", task.ID).Str("status", string(task.Status)).Msg("task completed")
+}
+
+func (o *Orchestrator) killTask(ctx context.Context, task *models.Task, reason string) {
+	if task.ContainerID != "" {
+		o.docker.StopContainer(ctx, task.InstanceID, task.ContainerID)
+	}
+
+	now := time.Now().UTC()
+	task.Status = models.TaskStatusFailed
+	task.Error = reason
+	task.CompletedAt = &now
+	o.store.UpdateTask(ctx, task)
+
+	o.mu.Lock()
+	o.running--
+	o.mu.Unlock()
+
+	if task.InstanceID != "" {
+		if inst, err := o.store.GetInstance(ctx, task.InstanceID); err == nil && inst != nil {
+			inst.RunningContainers--
+			if inst.RunningContainers < 0 {
+				inst.RunningContainers = 0
+			}
+			o.store.UpdateInstance(ctx, inst)
+		}
+	}
+
+	o.notifier.Notify(notify.Event{
+		Type:      notify.EventTaskFailed,
+		TaskID:    task.ID,
+		RepoURL:   task.RepoURL,
+		Prompt:    task.Prompt,
+		Message:   reason,
+		Timestamp: now,
+	})
+}
+
+var errNoCapacity = fmt.Errorf("no instance capacity available")

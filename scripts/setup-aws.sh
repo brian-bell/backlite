@@ -15,11 +15,14 @@ echo "==> Setting up Backflow infrastructure in ${REGION}"
 
 # --- ECR Repository ---
 echo "==> Creating ECR repository..."
-aws ecr create-repository \
-    --repository-name "$ECR_REPO" \
-    --region "$REGION" \
-    --image-scanning-configuration scanOnPush=true \
-    2>/dev/null || echo "    ECR repo already exists"
+if aws ecr describe-repositories --repository-names "$ECR_REPO" --region "$REGION" &>/dev/null; then
+    echo "    ECR repo already exists"
+else
+    aws ecr create-repository \
+        --repository-name "$ECR_REPO" \
+        --region "$REGION" \
+        --image-scanning-configuration scanOnPush=true
+fi
 
 ECR_URI=$(aws ecr describe-repositories \
     --repository-names "$ECR_REPO" \
@@ -44,27 +47,31 @@ TRUST_POLICY=$(cat <<'TRUSTEOF'
 TRUSTEOF
 )
 
-aws iam create-role \
-    --role-name "$IAM_ROLE" \
-    --assume-role-policy-document "$TRUST_POLICY" \
-    2>/dev/null || echo "    IAM role already exists"
+if aws iam get-role --role-name "$IAM_ROLE" &>/dev/null; then
+    echo "    IAM role already exists"
+else
+    aws iam create-role \
+        --role-name "$IAM_ROLE" \
+        --assume-role-policy-document "$TRUST_POLICY"
+fi
 
 # Attach policies for SSM and ECR
 aws iam attach-role-policy \
     --role-name "$IAM_ROLE" \
-    --policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore 2>/dev/null || true
+    --policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
 aws iam attach-role-policy \
     --role-name "$IAM_ROLE" \
-    --policy-arn arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly 2>/dev/null || true
+    --policy-arn arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
 
 # Create instance profile
-aws iam create-instance-profile \
-    --instance-profile-name "$IAM_ROLE" \
-    2>/dev/null || echo "    Instance profile already exists"
-aws iam add-role-to-instance-profile \
-    --instance-profile-name "$IAM_ROLE" \
-    --role-name "$IAM_ROLE" \
-    2>/dev/null || true
+if aws iam get-instance-profile --instance-profile-name "$IAM_ROLE" &>/dev/null; then
+    echo "    Instance profile already exists"
+else
+    aws iam create-instance-profile --instance-profile-name "$IAM_ROLE"
+    aws iam add-role-to-instance-profile \
+        --instance-profile-name "$IAM_ROLE" \
+        --role-name "$IAM_ROLE"
+fi
 
 echo "    IAM role: ${IAM_ROLE}"
 
@@ -76,18 +83,23 @@ VPC_ID=$(aws ec2 describe-vpcs \
     --output text \
     --region "$REGION")
 
-SG_ID=$(aws ec2 create-security-group \
-    --group-name "$SG_NAME" \
-    --description "Backflow agent - outbound only" \
-    --vpc-id "$VPC_ID" \
-    --region "$REGION" \
-    --query 'GroupId' \
-    --output text 2>/dev/null) || \
 SG_ID=$(aws ec2 describe-security-groups \
-    --filters "Name=group-name,Values=${SG_NAME}" \
+    --filters "Name=group-name,Values=${SG_NAME}" "Name=vpc-id,Values=${VPC_ID}" \
     --query 'SecurityGroups[0].GroupId' \
     --output text \
-    --region "$REGION")
+    --region "$REGION" 2>/dev/null) || true
+
+if [ -z "$SG_ID" ] || [ "$SG_ID" = "None" ]; then
+    SG_ID=$(aws ec2 create-security-group \
+        --group-name "$SG_NAME" \
+        --description "Backflow agent - outbound only" \
+        --vpc-id "$VPC_ID" \
+        --region "$REGION" \
+        --query 'GroupId' \
+        --output text)
+else
+    echo "    Security group already exists"
+fi
 
 # Revoke default inbound rule (no inbound needed)
 aws ec2 revoke-security-group-ingress \
@@ -102,25 +114,48 @@ echo "    Security group: ${SG_ID}"
 echo "==> Creating launch template..."
 USER_DATA=$(base64 -w0 scripts/user-data.sh)
 
-aws ec2 create-launch-template \
-    --launch-template-name "$LT_NAME" \
-    --version-description "Backflow agent v1" \
-    --launch-template-data "{
-        \"InstanceType\": \"${INSTANCE_TYPE}\",
-        \"IamInstanceProfile\": {\"Name\": \"${IAM_ROLE}\"},
-        \"SecurityGroupIds\": [\"${SG_ID}\"],
-        \"UserData\": \"${USER_DATA}\",
-        \"TagSpecifications\": [{
-            \"ResourceType\": \"instance\",
-            \"Tags\": [{\"Key\": \"Name\", \"Value\": \"backflow-agent\"}, {\"Key\": \"backflow\", \"Value\": \"true\"}]
-        }],
-        \"BlockDeviceMappings\": [{
-            \"DeviceName\": \"/dev/xvda\",
-            \"Ebs\": {\"VolumeSize\": 30, \"VolumeType\": \"gp3\"}
-        }]
-    }" \
-    --region "$REGION" \
-    2>/dev/null || echo "    Launch template already exists"
+if aws ec2 describe-launch-templates \
+    --launch-template-names "$LT_NAME" \
+    --region "$REGION" &>/dev/null; then
+    echo "    Launch template already exists, creating new version..."
+    aws ec2 create-launch-template-version \
+        --launch-template-name "$LT_NAME" \
+        --version-description "Backflow agent updated" \
+        --launch-template-data "{
+            \"InstanceType\": \"${INSTANCE_TYPE}\",
+            \"IamInstanceProfile\": {\"Name\": \"${IAM_ROLE}\"},
+            \"SecurityGroupIds\": [\"${SG_ID}\"],
+            \"UserData\": \"${USER_DATA}\",
+            \"TagSpecifications\": [{
+                \"ResourceType\": \"instance\",
+                \"Tags\": [{\"Key\": \"Name\", \"Value\": \"backflow-agent\"}, {\"Key\": \"backflow\", \"Value\": \"true\"}]
+            }],
+            \"BlockDeviceMappings\": [{
+                \"DeviceName\": \"/dev/xvda\",
+                \"Ebs\": {\"VolumeSize\": 30, \"VolumeType\": \"gp3\"}
+            }]
+        }" \
+        --region "$REGION"
+else
+    aws ec2 create-launch-template \
+        --launch-template-name "$LT_NAME" \
+        --version-description "Backflow agent v1" \
+        --launch-template-data "{
+            \"InstanceType\": \"${INSTANCE_TYPE}\",
+            \"IamInstanceProfile\": {\"Name\": \"${IAM_ROLE}\"},
+            \"SecurityGroupIds\": [\"${SG_ID}\"],
+            \"UserData\": \"${USER_DATA}\",
+            \"TagSpecifications\": [{
+                \"ResourceType\": \"instance\",
+                \"Tags\": [{\"Key\": \"Name\", \"Value\": \"backflow-agent\"}, {\"Key\": \"backflow\", \"Value\": \"true\"}]
+            }],
+            \"BlockDeviceMappings\": [{
+                \"DeviceName\": \"/dev/xvda\",
+                \"Ebs\": {\"VolumeSize\": 30, \"VolumeType\": \"gp3\"}
+            }]
+        }" \
+        --region "$REGION"
+fi
 
 LT_ID=$(aws ec2 describe-launch-templates \
     --launch-template-names "$LT_NAME" \

@@ -4,6 +4,7 @@ set -euo pipefail
 # --- Configuration from environment ---
 REPO_URL="${REPO_URL:?REPO_URL is required}"
 PROMPT="${PROMPT:?PROMPT is required}"
+AUTH_MODE="${AUTH_MODE:-api_key}"
 BRANCH="${BRANCH:-backflow/${TASK_ID:-$(date +%s)}}"
 TARGET_BRANCH="${TARGET_BRANCH:-main}"
 MODEL="${MODEL:-claude-sonnet-4-6}"
@@ -74,6 +75,39 @@ if [ -n "${GITHUB_TOKEN:-}" ]; then
     echo "$GITHUB_TOKEN" | gh auth login --with-token 2>/dev/null || true
 fi
 
+# --- Auth mode setup ---
+echo "==> Auth mode: ${AUTH_MODE}"
+if [ "$AUTH_MODE" = "api_key" ]; then
+    if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+        echo "ERROR: ANTHROPIC_API_KEY is required in api_key mode" >&2
+        exit 1
+    fi
+elif [ "$AUTH_MODE" = "max_subscription" ]; then
+    if [ ! -d "$HOME/.claude" ]; then
+        echo "ERROR: ~/.claude credentials not mounted (required for max_subscription mode)" >&2
+        exit 1
+    fi
+    echo "==> Using Max subscription credentials from ~/.claude"
+else
+    echo "ERROR: Unknown AUTH_MODE: ${AUTH_MODE}" >&2
+    exit 1
+fi
+
+# --- Build claude command args ---
+CLAUDE_ARGS=(
+    -p "$FULL_PROMPT"
+    --dangerously-skip-permissions
+    --model "$MODEL"
+    --max-turns "$MAX_TURNS"
+    --output-format json
+    --verbose
+)
+
+# --max-budget-usd only applies to API key mode (billed per token)
+if [ "$AUTH_MODE" = "api_key" ]; then
+    CLAUDE_ARGS+=(--max-budget-usd "$MAX_BUDGET_USD")
+fi
+
 # --- Run Claude Code with retries ---
 ATTEMPT=0
 CLAUDE_EXIT=1
@@ -84,12 +118,7 @@ while [ $ATTEMPT -lt "$MAX_RETRIES" ]; do
     echo "==> Running Claude Code (attempt ${ATTEMPT}/${MAX_RETRIES})..."
 
     set +e
-    CLAUDE_OUTPUT=$(claude -p "$FULL_PROMPT" \
-        --dangerously-skip-permissions \
-        --model "$MODEL" \
-        --max-turns "$MAX_TURNS" \
-        --output-format json \
-        --verbose 2>&1)
+    CLAUDE_OUTPUT=$(claude "${CLAUDE_ARGS[@]}" 2>&1)
     CLAUDE_EXIT=$?
     set -e
 
@@ -108,6 +137,11 @@ ${ERROR_TAIL}
 
 Please try again:
 ${PROMPT}"
+        # Rebuild args with updated prompt
+        CLAUDE_ARGS=( -p "$FULL_PROMPT" --dangerously-skip-permissions --model "$MODEL" --max-turns "$MAX_TURNS" --output-format json --verbose )
+        if [ "$AUTH_MODE" = "api_key" ]; then
+            CLAUDE_ARGS+=(--max-budget-usd "$MAX_BUDGET_USD")
+        fi
     fi
 done
 
@@ -143,11 +177,15 @@ write_status "$CLAUDE_EXIT" "$COMPLETE" "$NEEDS_INPUT" "$QUESTION" "$ERROR_MSG"
 echo "==> Committing any remaining changes..."
 git add -A
 if ! git diff --cached --quiet; then
-    git commit -m "backflow: agent work on task ${TASK_ID:-unknown}
+    COMMIT_MSG="backflow: agent work on task ${TASK_ID:-unknown}
 
 Automated commit by backflow agent.
-Model: ${MODEL}
+Model: ${MODEL}"
+    if [ "$AUTH_MODE" = "api_key" ]; then
+        COMMIT_MSG="${COMMIT_MSG}
 Budget: \$${MAX_BUDGET_USD}"
+    fi
+    git commit -m "$COMMIT_MSG"
 fi
 
 # --- Push ---
@@ -164,8 +202,15 @@ if [ "$CREATE_PR" = "true" ]; then
 
 **Task:** ${PROMPT}
 
-**Model:** ${MODEL}
-**Budget:** \$${MAX_BUDGET_USD}
+**Model:** ${MODEL}"
+        if [ "$AUTH_MODE" = "api_key" ]; then
+            PR_BODY="${PR_BODY}
+**Budget:** \$${MAX_BUDGET_USD}"
+        else
+            PR_BODY="${PR_BODY}
+**Auth:** Max subscription"
+        fi
+        PR_BODY="${PR_BODY}
 
 ---
 *Created by [backflow](https://github.com/backflow-labs/backflow) agent*"

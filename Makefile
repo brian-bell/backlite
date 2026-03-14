@@ -3,12 +3,13 @@
 BINARY := backflow
 PKG := github.com/backflow-labs/backflow
 GOFLAGS := -trimpath
+export PATH := $(HOME)/.local/go/bin:$(HOME)/go/bin:$(PATH)
 
 build:
 	go build $(GOFLAGS) -o bin/$(BINARY) ./cmd/backflow
 
 run: build
-	./bin/$(BINARY)
+	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; ./bin/$(BINARY)
 
 test:
 	go test ./... -v -count=1

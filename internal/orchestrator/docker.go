@@ -76,6 +76,7 @@ func (m *DockerManager) RunAgent(ctx context.Context, instance *models.Instance,
 	}
 
 	// Auth mode
+	envFlags = append(envFlags, fmt.Sprintf("-e AUTH_MODE=%s", string(m.config.AuthMode)))
 	if m.config.AuthMode == config.AuthModeAPIKey {
 		envFlags = append(envFlags, fmt.Sprintf("-e ANTHROPIC_API_KEY=%s", m.config.AnthropicAPIKey))
 	}

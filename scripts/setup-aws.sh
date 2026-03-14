@@ -11,6 +11,30 @@ SG_NAME="backflow-agent-sg"
 LT_NAME="backflow-agent-lt"
 INSTANCE_TYPE="${BACKFLOW_INSTANCE_TYPE:-t4g.medium}"
 
+# Resolve AMI: use provided value or look up latest Amazon Linux 2023 for the instance arch
+AMI_ID="${BACKFLOW_AMI:-}"
+if [ -z "$AMI_ID" ]; then
+    # t4g = arm64 (Graviton), t3/m5/c5 = x86_64
+    if [[ "$INSTANCE_TYPE" == *g.* ]]; then
+        ARCH="arm64"
+    else
+        ARCH="x86_64"
+    fi
+    echo "==> Looking up latest Amazon Linux 2023 AMI (${ARCH})..."
+    AMI_ID=$(aws ec2 describe-images \
+        --owners amazon \
+        --filters "Name=name,Values=al2023-ami-2023.*-${ARCH}" \
+                  "Name=state,Values=available" \
+        --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
+        --output text \
+        --region "$REGION")
+    if [ -z "$AMI_ID" ] || [ "$AMI_ID" = "None" ]; then
+        echo "ERROR: Could not find Amazon Linux 2023 AMI. Set BACKFLOW_AMI manually." >&2
+        exit 1
+    fi
+fi
+echo "    AMI: ${AMI_ID}"
+
 echo "==> Setting up Backflow infrastructure in ${REGION}"
 
 # --- ECR Repository ---
@@ -122,6 +146,7 @@ if aws ec2 describe-launch-templates \
         --launch-template-name "$LT_NAME" \
         --version-description "Backflow agent updated" \
         --launch-template-data "{
+            \"ImageId\": \"${AMI_ID}\",
             \"InstanceType\": \"${INSTANCE_TYPE}\",
             \"IamInstanceProfile\": {\"Name\": \"${IAM_ROLE}\"},
             \"SecurityGroupIds\": [\"${SG_ID}\"],
@@ -141,6 +166,7 @@ else
         --launch-template-name "$LT_NAME" \
         --version-description "Backflow agent v1" \
         --launch-template-data "{
+            \"ImageId\": \"${AMI_ID}\",
             \"InstanceType\": \"${INSTANCE_TYPE}\",
             \"IamInstanceProfile\": {\"Name\": \"${IAM_ROLE}\"},
             \"SecurityGroupIds\": [\"${SG_ID}\"],

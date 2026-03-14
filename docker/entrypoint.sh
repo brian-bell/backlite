@@ -73,6 +73,7 @@ fi
 # --- GitHub auth ---
 if [ -n "${GITHUB_TOKEN:-}" ]; then
     echo "$GITHUB_TOKEN" | gh auth login --with-token 2>/dev/null || true
+    gh auth setup-git 2>/dev/null || true
 fi
 
 # --- Auth mode setup ---
@@ -128,6 +129,7 @@ while [ $ATTEMPT -lt "$MAX_RETRIES" ]; do
     fi
 
     echo "==> Claude Code exited with code ${CLAUDE_EXIT} (attempt ${ATTEMPT})"
+    echo "$CLAUDE_OUTPUT" | tail -30
 
     if [ $ATTEMPT -lt "$MAX_RETRIES" ]; then
         # Add error context to prompt for retry

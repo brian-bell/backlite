@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -96,7 +97,7 @@ func (m *DockerManager) RunAgent(ctx context.Context, instance *models.Instance,
 	}
 
 	cmd := fmt.Sprintf(
-		"docker run -d --cpus=1 --memory=3g %s %s backflow-agent 2>&1 | head -1",
+		"docker run -d --cpus=1 --memory=3g %s %s backflow-agent",
 		volumeFlags,
 		strings.Join(envFlags, " "),
 	)
@@ -109,6 +110,12 @@ func (m *DockerManager) RunAgent(ctx context.Context, instance *models.Instance,
 	containerID := strings.TrimSpace(output)
 	if containerID == "" {
 		return "", fmt.Errorf("empty container ID returned")
+	}
+
+	// Docker container IDs are 64-char hex strings; reject anything else
+	// (e.g. error messages captured via 2>&1)
+	if !isHexString(containerID) {
+		return "", fmt.Errorf("docker run failed: %s", containerID)
 	}
 
 	log.Debug().Str("container", containerID[:12]).Str("instance", instance.InstanceID).Msg("started agent container")
@@ -192,6 +199,10 @@ func (m *DockerManager) GetLogs(ctx context.Context, instanceID, containerID str
 }
 
 func (m *DockerManager) runSSMCommand(ctx context.Context, instanceID, command string) (string, error) {
+	if err := m.ensureClient(ctx); err != nil {
+		return "", err
+	}
+
 	input := &ssm.SendCommandInput{
 		InstanceIds:  []string{instanceID},
 		DocumentName: aws.String("AWS-RunShellScript"),
@@ -214,7 +225,21 @@ func (m *DockerManager) runSSMCommand(ctx context.Context, instanceID, command s
 		InstanceId: aws.String(instanceID),
 	}
 
-	if err := waiter.Wait(ctx, getOutput, 60); err != nil {
+	if err := waiter.Wait(ctx, getOutput, 5*time.Minute); err != nil {
+		// Fetch output even on failure to get stderr/diagnostics
+		if out, getErr := m.ssmClient.GetCommandInvocation(ctx, getOutput); getErr == nil {
+			stderr := strings.TrimSpace(aws.ToString(out.StandardErrorContent))
+			stdout := strings.TrimSpace(aws.ToString(out.StandardOutputContent))
+			status := string(out.Status)
+			detail := stderr
+			if detail == "" {
+				detail = stdout
+			}
+			if detail != "" {
+				return "", fmt.Errorf("ssm command failed (status=%s): %s", status, detail)
+			}
+			return "", fmt.Errorf("ssm command failed (status=%s): %w", status, err)
+		}
 		return "", fmt.Errorf("wait for command: %w", err)
 	}
 
@@ -224,6 +249,18 @@ func (m *DockerManager) runSSMCommand(ctx context.Context, instanceID, command s
 	}
 
 	return aws.ToString(out.StandardOutputContent), nil
+}
+
+func isHexString(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
 
 func shellEscape(s string) string {

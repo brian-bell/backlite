@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,12 @@ import (
 	"github.com/backflow-labs/backflow/internal/config"
 	"github.com/backflow-labs/backflow/internal/store"
 )
+
+type noopLogFetcher struct{}
+
+func (noopLogFetcher) GetLogs(_ context.Context, _, _ string, _ int) (string, error) {
+	return "test logs\n", nil
+}
 
 func testServer(t *testing.T) http.Handler {
 	t.Helper()
@@ -36,7 +43,7 @@ func testServer(t *testing.T) http.Handler {
 		DefaultMaxTurns:   200,
 	}
 
-	return NewServer(s, cfg)
+	return NewServer(s, cfg, noopLogFetcher{})
 }
 
 func TestHealthCheck(t *testing.T) {

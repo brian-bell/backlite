@@ -10,7 +10,7 @@ import (
 	"github.com/backflow-labs/backflow/internal/store"
 )
 
-func NewServer(s store.Store, cfg *config.Config) http.Handler {
+func NewServer(s store.Store, cfg *config.Config, logs LogFetcher) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(middleware.RequestID)
@@ -19,7 +19,7 @@ func NewServer(s store.Store, cfg *config.Config) http.Handler {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.SetHeader("Content-Type", "application/json"))
 
-	h := NewHandlers(s, cfg)
+	h := NewHandlers(s, cfg, logs)
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Get("/health", h.HealthCheck)

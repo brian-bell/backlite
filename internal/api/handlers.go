@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -14,13 +15,19 @@ import (
 	"github.com/backflow-labs/backflow/internal/store"
 )
 
+// LogFetcher retrieves container logs for a running task.
+type LogFetcher interface {
+	GetLogs(ctx context.Context, instanceID, containerID string, tail int) (string, error)
+}
+
 type Handlers struct {
 	store  store.Store
 	config *config.Config
+	logs   LogFetcher
 }
 
-func NewHandlers(s store.Store, cfg *config.Config) *Handlers {
-	return &Handlers{store: s, config: cfg}
+func NewHandlers(s store.Store, cfg *config.Config, logs LogFetcher) *Handlers {
+	return &Handlers{store: s, config: cfg, logs: logs}
 }
 
 func (h *Handlers) CreateTask(w http.ResponseWriter, r *http.Request) {
@@ -153,11 +160,33 @@ func (h *Handlers) GetTaskLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Logs will be fetched from the container via SSM in a future iteration.
-	// For now, return a placeholder.
+	if task.InstanceID == "" || task.ContainerID == "" {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		msg := "status: " + string(task.Status) + "\n"
+		if task.Error != "" {
+			msg += "error: " + task.Error + "\n"
+		}
+		w.Write([]byte(msg))
+		return
+	}
+
+	tail := 100
+	if t := r.URL.Query().Get("tail"); t != "" {
+		if n, err := strconv.Atoi(t); err == nil && n > 0 {
+			tail = n
+		}
+	}
+
+	logs, err := h.logs.GetLogs(r.Context(), task.InstanceID, task.ContainerID, tail)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "failed to fetch logs: "+err.Error())
+		return
+	}
+
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("logs not yet available for task " + id + "\n"))
+	w.Write([]byte(logs))
 }
 
 func (h *Handlers) HealthCheck(w http.ResponseWriter, r *http.Request) {

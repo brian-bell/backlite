@@ -40,9 +40,8 @@ func (m *EC2Manager) LaunchSpotInstance(ctx context.Context) (string, error) {
 	}
 
 	input := &ec2.RunInstancesInput{
-		MinCount:     aws.Int32(1),
-		MaxCount:     aws.Int32(1),
-		InstanceType: types.InstanceType(m.config.InstanceType),
+		MinCount: aws.Int32(1),
+		MaxCount: aws.Int32(1),
 		InstanceMarketOptions: &types.InstanceMarketOptionsRequest{
 			MarketType: types.MarketTypeSpot,
 			SpotOptions: &types.SpotMarketOptions{
@@ -50,7 +49,18 @@ func (m *EC2Manager) LaunchSpotInstance(ctx context.Context) (string, error) {
 				InstanceInterruptionBehavior: types.InstanceInterruptionBehaviorTerminate,
 			},
 		},
-		TagSpecifications: []types.TagSpecification{
+	}
+
+	if m.config.LaunchTemplateID != "" {
+		// Let the launch template provide ImageId, InstanceType, tags, etc.
+		input.LaunchTemplate = &types.LaunchTemplateSpecification{
+			LaunchTemplateId: aws.String(m.config.LaunchTemplateID),
+			Version:          aws.String("$Latest"),
+		}
+	} else if m.config.AMI != "" {
+		input.ImageId = aws.String(m.config.AMI)
+		input.InstanceType = types.InstanceType(m.config.InstanceType)
+		input.TagSpecifications = []types.TagSpecification{
 			{
 				ResourceType: types.ResourceTypeInstance,
 				Tags: []types.Tag{
@@ -58,16 +68,7 @@ func (m *EC2Manager) LaunchSpotInstance(ctx context.Context) (string, error) {
 					{Key: aws.String("backflow"), Value: aws.String("true")},
 				},
 			},
-		},
-	}
-
-	if m.config.LaunchTemplateID != "" {
-		input.LaunchTemplate = &types.LaunchTemplateSpecification{
-			LaunchTemplateId: aws.String(m.config.LaunchTemplateID),
-			Version:          aws.String("$Latest"),
 		}
-	} else if m.config.AMI != "" {
-		input.ImageId = aws.String(m.config.AMI)
 	} else {
 		return "", fmt.Errorf("either BACKFLOW_AMI or BACKFLOW_LAUNCH_TEMPLATE_ID must be set")
 	}

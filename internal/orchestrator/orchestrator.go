@@ -23,23 +23,31 @@ type Orchestrator struct {
 	scaler   *Scaler
 	spot     *SpotHandler
 
-	mu       sync.Mutex
-	running  int
-	stopCh   chan struct{}
+	mu             sync.Mutex
+	running        int
+	stopCh         chan struct{}
+	inspectFailures map[string]int // task ID -> consecutive inspect failure count
 }
 
 func New(s store.Store, cfg *config.Config, notifier notify.Notifier) *Orchestrator {
 	ec2 := NewEC2Manager(cfg)
+	docker := NewDockerManager(cfg)
 	return &Orchestrator{
 		store:    s,
 		config:   cfg,
 		notifier: notifier,
 		ec2:      ec2,
-		docker:   NewDockerManager(cfg),
-		scaler:   NewScaler(s, ec2, cfg),
+		docker:   docker,
+		scaler:   NewScaler(s, ec2, docker, cfg),
 		spot:     NewSpotHandler(s, ec2),
-		stopCh:   make(chan struct{}),
+		stopCh:          make(chan struct{}),
+		inspectFailures: make(map[string]int),
 	}
+}
+
+// Docker returns the DockerManager for use by the API logs endpoint.
+func (o *Orchestrator) Docker() *DockerManager {
+	return o.docker
 }
 
 func (o *Orchestrator) Start(ctx context.Context) {
@@ -203,9 +211,17 @@ func (o *Orchestrator) monitorRunning(ctx context.Context) {
 		// Check container status
 		status, err := o.docker.InspectContainer(ctx, task.InstanceID, task.ContainerID)
 		if err != nil {
-			log.Warn().Err(err).Str("task_id", task.ID).Msg("failed to inspect container")
+			o.inspectFailures[task.ID]++
+			count := o.inspectFailures[task.ID]
+			log.Warn().Err(err).Str("task_id", task.ID).Int("consecutive_failures", count).Msg("failed to inspect container")
+			if count >= 3 {
+				delete(o.inspectFailures, task.ID)
+				o.killTask(ctx, task, fmt.Sprintf("container unreachable after %d inspect failures: %v", count, err))
+			}
 			continue
 		}
+
+		delete(o.inspectFailures, task.ID)
 
 		if status.Done {
 			o.handleCompletion(ctx, task, status)

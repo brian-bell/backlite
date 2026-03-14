@@ -51,6 +51,7 @@ func (h *Handlers) CreateTask(w http.ResponseWriter, r *http.Request) {
 		Prompt:        req.Prompt,
 		Context:       req.Context,
 		Model:         withDefault(req.Model, h.config.DefaultModel),
+		Effort:        withDefault(req.Effort, h.config.DefaultEffort),
 		MaxBudgetUSD:  withDefaultFloat(req.MaxBudgetUSD, h.config.DefaultMaxBudget),
 		MaxRuntimeMin: withDefaultInt(req.MaxRuntimeMin, int(h.config.DefaultMaxRuntime.Minutes())),
 		MaxTurns:      withDefaultInt(req.MaxTurns, h.config.DefaultMaxTurns),

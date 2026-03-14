@@ -8,6 +8,7 @@ AUTH_MODE="${AUTH_MODE:-api_key}"
 BRANCH="${BRANCH:-backflow/${TASK_ID:-$(date +%s)}}"
 TARGET_BRANCH="${TARGET_BRANCH:-main}"
 MODEL="${MODEL:-claude-sonnet-4-6}"
+EFFORT="${EFFORT:-high}"
 MAX_BUDGET_USD="${MAX_BUDGET_USD:-10}"
 MAX_TURNS="${MAX_TURNS:-200}"
 CREATE_PR="${CREATE_PR:-false}"
@@ -99,6 +100,7 @@ CLAUDE_ARGS=(
     -p "$FULL_PROMPT"
     --dangerously-skip-permissions
     --model "$MODEL"
+    --effort "$EFFORT"
     --max-turns "$MAX_TURNS"
     --output-format json
     --verbose
@@ -140,7 +142,7 @@ ${ERROR_TAIL}
 Please try again:
 ${PROMPT}"
         # Rebuild args with updated prompt
-        CLAUDE_ARGS=( -p "$FULL_PROMPT" --dangerously-skip-permissions --model "$MODEL" --max-turns "$MAX_TURNS" --output-format json --verbose )
+        CLAUDE_ARGS=( -p "$FULL_PROMPT" --dangerously-skip-permissions --model "$MODEL" --effort "$EFFORT" --max-turns "$MAX_TURNS" --output-format json --verbose )
         if [ "$AUTH_MODE" = "api_key" ]; then
             CLAUDE_ARGS+=(--max-budget-usd "$MAX_BUDGET_USD")
         fi

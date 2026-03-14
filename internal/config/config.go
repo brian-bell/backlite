@@ -34,6 +34,7 @@ type Config struct {
 
 	// Agent defaults
 	DefaultModel      string
+	DefaultEffort     string
 	DefaultMaxBudget  float64
 	DefaultMaxRuntime time.Duration
 	DefaultMaxTurns   int
@@ -72,6 +73,7 @@ func Load() (*Config, error) {
 		ContainersPerInst: envInt("BACKFLOW_CONTAINERS_PER_INSTANCE", 4),
 		LaunchTemplateID:  os.Getenv("BACKFLOW_LAUNCH_TEMPLATE_ID"),
 		DefaultModel:      envOr("BACKFLOW_DEFAULT_MODEL", "claude-sonnet-4-6"),
+		DefaultEffort:     envOr("BACKFLOW_DEFAULT_EFFORT", "high"),
 		DefaultMaxBudget:  envFloat("BACKFLOW_DEFAULT_MAX_BUDGET", 10.0),
 		DefaultMaxRuntime: time.Duration(envInt("BACKFLOW_DEFAULT_MAX_RUNTIME_MIN", 30)) * time.Minute,
 		DefaultMaxTurns:   envInt("BACKFLOW_DEFAULT_MAX_TURNS", 200),

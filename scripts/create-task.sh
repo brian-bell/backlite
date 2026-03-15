@@ -27,7 +27,8 @@ Options:
   --plan <file>           Read prompt from a file (use instead of <prompt> arg)
   --branch <name>         Working branch name
   --target-branch <name>  Target branch (default: main)
-  --model <model>         Claude model to use (default: claude-opus-4-6)
+  --harness <name>        Agent harness: claude_code (default) or codex
+  --model <model>         Model to use (default: claude-opus-4-6 or gpt-5.4 for codex)
   --effort <level>        Reasoning effort: low, medium, high (default: high)
   --budget <usd>          Max budget in USD
   --runtime <min>         Max runtime in minutes
@@ -59,9 +60,10 @@ else
 fi
 
 # Defaults
+HARNESS=""
 BRANCH=""
 TARGET_BRANCH=""
-MODEL="claude-opus-4-6"
+MODEL=""
 EFFORT="high"
 BUDGET=""
 RUNTIME=""
@@ -84,6 +86,7 @@ while [ $# -gt 0 ]; do
             PROMPT=$(cat "$2")
             shift 2
             ;;
+        --harness)      HARNESS="$2"; shift 2 ;;
         --branch)       BRANCH="$2"; shift 2 ;;
         --target-branch) TARGET_BRANCH="$2"; shift 2 ;;
         --model)        MODEL="$2"; shift 2 ;;
@@ -112,6 +115,7 @@ fi
 JSON=$(jq -n \
     --arg repo_url "$REPO_URL" \
     --arg prompt "$PROMPT" \
+    --arg harness "$HARNESS" \
     --arg branch "$BRANCH" \
     --arg target_branch "$TARGET_BRANCH" \
     --arg model "$MODEL" \
@@ -131,6 +135,7 @@ JSON=$(jq -n \
         create_pr: $create_pr,
         self_review: $self_review
     }
+    + if $harness != "" then {harness: $harness} else {} end
     + if $branch != "" then {branch: $branch} else {} end
     + if $target_branch != "" then {target_branch: $target_branch} else {} end
     + if $model != "" then {model: $model} else {} end

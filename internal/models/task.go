@@ -29,10 +29,18 @@ const (
 	TaskModeReview = "review" // Review an existing PR and post feedback as comments
 )
 
+type Harness string
+
+const (
+	HarnessClaudeCode Harness = "claude_code"
+	HarnessCodex      Harness = "codex"
+)
+
 type Task struct {
 	ID             string            `json:"id"`
 	Status         TaskStatus        `json:"status"`
 	TaskMode       string            `json:"task_mode"`
+	Harness        Harness           `json:"harness"`
 	RepoURL        string            `json:"repo_url"`
 	Branch         string            `json:"branch"`
 	TargetBranch   string            `json:"target_branch"`
@@ -84,6 +92,7 @@ func (t *Task) EnvVarsJSON() string {
 // CreateTaskRequest is the API input for creating a task.
 type CreateTaskRequest struct {
 	TaskMode       string            `json:"task_mode,omitempty"`
+	Harness        string            `json:"harness,omitempty"`
 	RepoURL        string            `json:"repo_url"`
 	Branch         string            `json:"branch,omitempty"`
 	TargetBranch   string            `json:"target_branch,omitempty"`
@@ -129,6 +138,13 @@ func (r *CreateTaskRequest) Validate() error {
 	}
 	if r.MaxRuntimeMin < 0 {
 		return fmt.Errorf("max_runtime_min must be non-negative")
+	}
+	if r.Harness != "" {
+		switch Harness(r.Harness) {
+		case HarnessClaudeCode, HarnessCodex:
+		default:
+			return fmt.Errorf("harness must be claude_code or codex")
+		}
 	}
 	if r.Effort != "" {
 		switch r.Effort {

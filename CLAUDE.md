@@ -2,7 +2,7 @@
 
 ## What This Is
 
-Backflow is a Go service that runs Claude Code in ephemeral Docker containers on AWS EC2 spot instances. Tasks come in via REST API; the orchestrator provisions infrastructure, runs agents, and cleans up.
+Backflow is a Go service that runs coding agents (Claude Code or Codex) in ephemeral Docker containers on AWS EC2 spot instances. Tasks come in via REST API; the orchestrator provisions infrastructure, runs agents, and cleans up.
 
 ## Commands
 
@@ -49,7 +49,7 @@ Two goroutines: chi REST API on `:8080` + polling orchestrator (5s default). Two
 
 ### Agent container (`docker/`)
 
-Node.js 20 image with Claude Code CLI + git + gh. `entrypoint.sh`: clone → checkout → inject CLAUDE.md → run Claude (with retry up to 3 attempts) → commit → push → create PR → optional self-review. Uses `--output-format stream-json`. Writes `status.json` for the orchestrator. Generates PR title via Claude when none is provided.
+Node.js 20 image with Claude Code CLI + git + gh. `entrypoint.sh`: clone → checkout → inject CLAUDE.md → run agent (with retry up to 3 attempts) → commit → push → create PR → optional self-review. Supports two harnesses: `claude_code` (default, `--output-format stream-json`) and `codex` (`--full-auto --quiet`). Writes `status.json` for the orchestrator. Generates PR title via Claude when none is provided.
 
 ### Statuses
 
@@ -59,6 +59,13 @@ Node.js 20 image with Claude Code CLI + git + gh. `entrypoint.sh`: clone → che
 ### Webhook events
 
 `task.created`, `task.running`, `task.completed`, `task.failed`, `task.needs_input`, `task.interrupted`, `task.recovering`
+
+## Harnesses
+
+- **`claude_code`** (default) — Claude Code CLI. Requires `ANTHROPIC_API_KEY` or Max subscription credentials.
+- **`codex`** — OpenAI Codex CLI. Requires `OPENAI_API_KEY`. Defaults to `gpt-5.4` model.
+
+Configured per-task via the `harness` field or globally via `BACKFLOW_DEFAULT_HARNESS`.
 
 ## Auth modes
 

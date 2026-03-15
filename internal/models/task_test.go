@@ -19,6 +19,21 @@ func TestCreateTaskRequestValidation(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name:    "valid with claude_code harness",
+			req:     CreateTaskRequest{RepoURL: "https://github.com/test/repo", Prompt: "Fix bug", Harness: "claude_code"},
+			wantErr: false,
+		},
+		{
+			name:    "valid with codex harness",
+			req:     CreateTaskRequest{RepoURL: "https://github.com/test/repo", Prompt: "Fix bug", Harness: "codex"},
+			wantErr: false,
+		},
+		{
+			name:    "invalid harness",
+			req:     CreateTaskRequest{RepoURL: "https://github.com/test/repo", Prompt: "Fix bug", Harness: "invalid"},
+			wantErr: true,
+		},
+		{
 			name:    "missing repo_url",
 			req:     CreateTaskRequest{Prompt: "Fix bug"},
 			wantErr: true,

@@ -34,6 +34,7 @@ type Config struct {
 	// Auth
 	AuthMode              AuthMode
 	AnthropicAPIKey       string
+	OpenAIAPIKey          string
 	ClaudeCredentialsPath string
 
 	// AWS
@@ -49,7 +50,9 @@ type Config struct {
 	ContainerMemGB int
 
 	// Agent defaults
+	DefaultHarness    string
 	DefaultModel      string
+	DefaultCodexModel string
 	DefaultEffort     string
 	DefaultMaxBudget  float64
 	DefaultMaxRuntime time.Duration
@@ -85,6 +88,7 @@ func Load() (*Config, error) {
 		ListenAddr:            envOr("BACKFLOW_LISTEN_ADDR", ":8080"),
 		AuthMode:              AuthMode(envOr("BACKFLOW_AUTH_MODE", string(AuthModeAPIKey))),
 		AnthropicAPIKey:       os.Getenv("ANTHROPIC_API_KEY"),
+		OpenAIAPIKey:          os.Getenv("OPENAI_API_KEY"),
 		ClaudeCredentialsPath: envOr("CLAUDE_CREDENTIALS_PATH", ""),
 		AWSRegion:             envOr("AWS_REGION", "us-east-1"),
 		InstanceType:          envOr("BACKFLOW_INSTANCE_TYPE", "m7g.xlarge"),
@@ -94,7 +98,9 @@ func Load() (*Config, error) {
 		ContainerCPUs:         envInt("BACKFLOW_CONTAINER_CPUS", 2),
 		ContainerMemGB:        envInt("BACKFLOW_CONTAINER_MEMORY_GB", 8),
 		LaunchTemplateID:      os.Getenv("BACKFLOW_LAUNCH_TEMPLATE_ID"),
+		DefaultHarness:        envOr("BACKFLOW_DEFAULT_HARNESS", "claude_code"),
 		DefaultModel:          envOr("BACKFLOW_DEFAULT_MODEL", "claude-sonnet-4-6"),
+		DefaultCodexModel:     envOr("BACKFLOW_DEFAULT_CODEX_MODEL", "gpt-5.4"),
 		DefaultEffort:         envOr("BACKFLOW_DEFAULT_EFFORT", "high"),
 		DefaultMaxBudget:      envFloat("BACKFLOW_DEFAULT_MAX_BUDGET", 10.0),
 		DefaultMaxRuntime:     time.Duration(envInt("BACKFLOW_DEFAULT_MAX_RUNTIME_MIN", 30)) * time.Minute,

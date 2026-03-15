@@ -37,7 +37,10 @@ func testServer(t *testing.T) http.Handler {
 	cfg := &config.Config{
 		AuthMode:          config.AuthModeAPIKey,
 		AnthropicAPIKey:   "sk-test",
+		DefaultHarness:    "claude_code",
 		DefaultModel:      "claude-sonnet-4-6",
+		DefaultCodexModel: "gpt-5.4",
+		DefaultEffort:     "high",
 		DefaultMaxBudget:  10.0,
 		DefaultMaxRuntime: 30 * 60e9, // 30 min
 		DefaultMaxTurns:   200,
@@ -115,6 +118,56 @@ func TestListTasks(t *testing.T) {
 
 	if resp.Data == nil {
 		t.Error("expected non-nil data array")
+	}
+}
+
+func TestCreateTaskCodexHarness(t *testing.T) {
+	srv := testServer(t)
+
+	body := `{"repo_url":"https://github.com/test/repo","prompt":"Fix the bug","harness":"codex"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d, body: %s", w.Code, http.StatusCreated, w.Body.String())
+	}
+
+	var resp struct {
+		Data struct {
+			ID      string `json:"id"`
+			Harness string `json:"harness"`
+			Model   string `json:"model"`
+			Effort  string `json:"effort"`
+		} `json:"data"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+
+	if resp.Data.Harness != "codex" {
+		t.Errorf("harness = %q, want codex", resp.Data.Harness)
+	}
+	if resp.Data.Model != "gpt-5.4" {
+		t.Errorf("model = %q, want gpt-5.4", resp.Data.Model)
+	}
+	if resp.Data.Effort != "high" {
+		t.Errorf("effort = %q, want high", resp.Data.Effort)
+	}
+}
+
+func TestCreateTaskInvalidHarness(t *testing.T) {
+	srv := testServer(t)
+
+	body := `{"repo_url":"https://github.com/test/repo","prompt":"Fix the bug","harness":"invalid"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
 	}
 }
 

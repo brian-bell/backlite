@@ -122,6 +122,7 @@ func (m *DockerManager) buildEnvFlags(task *models.Task) []string {
 	flags := []string{
 		envFlag("TASK_ID", task.ID),
 		envFlag("TASK_MODE", shellEscape(task.TaskMode)),
+		envFlag("HARNESS", shellEscape(string(task.Harness))),
 		envFlag("REPO_URL", shellEscape(task.RepoURL)),
 		envFlag("BRANCH", shellEscape(task.Branch)),
 		envFlag("TARGET_BRANCH", shellEscape(task.TargetBranch)),
@@ -153,6 +154,9 @@ func (m *DockerManager) buildEnvFlags(task *models.Task) []string {
 	// Auth credentials
 	if m.config.AuthMode == config.AuthModeAPIKey {
 		flags = append(flags, envFlag("ANTHROPIC_API_KEY", m.config.AnthropicAPIKey))
+	}
+	if m.config.OpenAIAPIKey != "" {
+		flags = append(flags, envFlag("OPENAI_API_KEY", m.config.OpenAIAPIKey))
 	}
 	if m.config.GitHubToken != "" {
 		flags = append(flags, envFlag("GITHUB_TOKEN", m.config.GitHubToken))

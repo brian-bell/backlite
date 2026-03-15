@@ -8,18 +8,21 @@ Connection string: `<path>?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=on
 
 ### `tasks`
 
-Stores Claude Code agent tasks submitted via the REST API.
+Stores agent tasks submitted via the REST API.
 
 | Column | Type | Default | Description |
 |--------|------|---------|-------------|
 | `id` | `TEXT` | — | **Primary key.** ULID with `bf_` prefix (e.g. `bf_01KKQW82994E87Z99QVEMBN8V0`). |
 | `status` | `TEXT` | `'pending'` | Task lifecycle state. One of: `pending`, `provisioning`, `running`, `completed`, `failed`, `interrupted`, `cancelled`, `recovering`. |
+| `task_mode` | `TEXT` | `'code'` | Task mode. `code` (default) or `review` (PR review). Added via migration. |
+| `harness` | `TEXT` | `'claude_code'` | Agent CLI harness. `claude_code` (default) or `codex`. Added via migration. |
 | `repo_url` | `TEXT` | — | Git repository URL to clone (required). |
 | `branch` | `TEXT` | `''` | Branch to check out before running the agent. |
 | `target_branch` | `TEXT` | `''` | Base branch for PR creation (e.g. `main`). |
-| `prompt` | `TEXT` | — | The instruction given to Claude Code (required). |
+| `review_pr_number` | `INTEGER` | `0` | PR number to review (used when `task_mode` is `review`). Added via migration. |
+| `prompt` | `TEXT` | — | The instruction given to the agent (required). |
 | `context` | `TEXT` | `''` | Additional context appended to the prompt. |
-| `model` | `TEXT` | `''` | Claude model override (e.g. `claude-sonnet-4-20250514`). |
+| `model` | `TEXT` | `''` | Model override (e.g. `claude-sonnet-4-6`, `gpt-5.4`). |
 | `effort` | `TEXT` | `''` | Agent effort level. One of: `low`, `medium`, `high`, `xhigh`, or empty for default. |
 | `max_budget_usd` | `REAL` | `0` | Maximum spend in USD. 0 = unlimited. |
 | `max_runtime_min` | `INTEGER` | `0` | Maximum wall-clock runtime in minutes. 0 = unlimited. |

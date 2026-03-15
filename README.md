@@ -1,6 +1,6 @@
 # Backflow
 
-Background agent orchestrator that runs Claude Code in ephemeral Docker containers on AWS EC2 spot instances. POST a task (repo + prompt), get back a branch with commits and optionally a PR.
+Background agent orchestrator that runs coding agents (Claude Code or Codex) in ephemeral Docker containers on AWS EC2 spot instances. POST a task (repo + prompt), get back a branch with commits and optionally a PR.
 
 ## Prerequisites
 
@@ -119,9 +119,15 @@ Builds a multi-arch image (amd64 + arm64) and pushes to ECR.
 Or call the API directly:
 
 ```bash
+# Claude Code (default)
 curl -X POST http://localhost:8080/api/v1/tasks \
   -H "Content-Type: application/json" \
   -d '{"repo_url": "https://github.com/org/repo", "prompt": "Fix the bug", "create_pr": true}'
+
+# Codex (requires OPENAI_API_KEY)
+curl -X POST http://localhost:8080/api/v1/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"repo_url": "https://github.com/org/repo", "prompt": "Fix the bug", "harness": "codex", "create_pr": true}'
 ```
 
 ## Monitoring and Operations
@@ -167,6 +173,15 @@ aws ssm start-session --target i-0abc...
 - **`api_key`** (default) — Uses Anthropic API key. Supports multiple concurrent agents. Pay per token.
 - **`max_subscription`** — Uses Claude Max subscription credentials. One agent at a time. Flat rate.
 
+## Harnesses
+
+Tasks can run with different agent CLIs via the `harness` field:
+
+- **`claude_code`** (default) — Claude Code CLI. Uses `--output-format stream-json` with retry logic and structured result parsing.
+- **`codex`** — OpenAI Codex CLI. Uses `--full-auto --quiet` mode. Requires `OPENAI_API_KEY`.
+
+Set `BACKFLOW_DEFAULT_HARNESS` to change the default, or specify per-task in the API request.
+
 ## Webhooks
 
 Set `BACKFLOW_WEBHOOK_URL` in `.env`:
@@ -196,6 +211,7 @@ All config is via environment variables (or `.env` file).
 | `BACKFLOW_MODE` | `ec2` | `ec2` or `local` |
 | `BACKFLOW_AUTH_MODE` | `api_key` | `api_key` or `max_subscription` |
 | `ANTHROPIC_API_KEY` | | Required for `api_key` mode |
+| `OPENAI_API_KEY` | | Required for `codex` harness |
 | `CLAUDE_CREDENTIALS_PATH` | | Path to `~/.claude/` for `max_subscription` mode |
 | `GITHUB_TOKEN` | | For cloning private repos and creating PRs |
 | `BACKFLOW_LISTEN_ADDR` | `:8080` | Server listen address |
@@ -207,7 +223,9 @@ All config is via environment variables (or `.env` file).
 | `BACKFLOW_CONTAINERS_PER_INSTANCE` | `1` | Containers per instance |
 | `BACKFLOW_CONTAINER_CPUS` | `2` | CPU cores per container |
 | `BACKFLOW_CONTAINER_MEMORY_GB` | `8` | Memory (GB) per container |
-| `BACKFLOW_DEFAULT_MODEL` | `claude-sonnet-4-6` | Default Claude model |
+| `BACKFLOW_DEFAULT_HARNESS` | `claude_code` | Default harness (`claude_code` or `codex`) |
+| `BACKFLOW_DEFAULT_MODEL` | `claude-sonnet-4-6` | Default model for Claude Code harness |
+| `BACKFLOW_DEFAULT_CODEX_MODEL` | `gpt-5.4` | Default model for Codex harness |
 | `BACKFLOW_DEFAULT_MAX_BUDGET` | `10` | Default budget (USD) |
 | `BACKFLOW_DEFAULT_MAX_RUNTIME_MIN` | `30` | Default max runtime (min) |
 | `BACKFLOW_DEFAULT_MAX_TURNS` | `200` | Default max turns |

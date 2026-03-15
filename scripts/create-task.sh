@@ -5,20 +5,24 @@ set -euo pipefail
 #
 # Usage:
 #   ./scripts/create-task.sh <repo_url> <prompt> [options]
+#   ./scripts/create-task.sh <repo_url> --plan <file> [options]
 #
 # Examples:
 #   ./scripts/create-task.sh https://github.com/org/repo "Fix the login bug"
 #   ./scripts/create-task.sh https://github.com/org/repo "Add unit tests" --pr --model claude-sonnet-4-6
 #   ./scripts/create-task.sh https://github.com/org/repo "Refactor auth" --pr --pr-title "Refactor auth module" --budget 20
 #   ./scripts/create-task.sh https://github.com/org/repo "Fix bug" --effort low --model claude-sonnet-4-6
+#   ./scripts/create-task.sh https://github.com/org/repo --plan plan.md --pr
 
 BACKFLOW_URL="${BACKFLOW_URL:-http://localhost:8080}"
 
 usage() {
     cat <<USAGE
 Usage: $(basename "$0") <repo_url> <prompt> [options]
+       $(basename "$0") <repo_url> --plan <file> [options]
 
 Options:
+  --plan <file>           Read prompt from a file (use instead of <prompt> arg)
   --branch <name>         Working branch name
   --target-branch <name>  Target branch (default: main)
   --model <model>         Claude model to use (default: claude-opus-4-6)
@@ -42,8 +46,15 @@ if [ $# -lt 2 ]; then
 fi
 
 REPO_URL="$1"
-PROMPT="$2"
-shift 2
+shift 1
+
+# If the next argument is a flag (starts with --), prompt must come from --plan
+if [[ "$1" == --* ]]; then
+    PROMPT=""
+else
+    PROMPT="$1"
+    shift 1
+fi
 
 # Defaults
 BRANCH=""
@@ -63,6 +74,14 @@ declare -a ENV_VARS=()
 
 while [ $# -gt 0 ]; do
     case "$1" in
+        --plan)
+            if [ ! -f "$2" ]; then
+                echo "Error: plan file not found: $2" >&2
+                exit 1
+            fi
+            PROMPT=$(cat "$2")
+            shift 2
+            ;;
         --branch)       BRANCH="$2"; shift 2 ;;
         --target-branch) TARGET_BRANCH="$2"; shift 2 ;;
         --model)        MODEL="$2"; shift 2 ;;
@@ -80,6 +99,12 @@ while [ $# -gt 0 ]; do
         *)              echo "Unknown option: $1"; usage ;;
     esac
 done
+
+# Validate that a prompt was provided
+if [ -z "$PROMPT" ]; then
+    echo "Error: no prompt provided. Pass a prompt argument or use --plan <file>." >&2
+    exit 1
+fi
 
 # Build JSON payload
 JSON=$(jq -n \

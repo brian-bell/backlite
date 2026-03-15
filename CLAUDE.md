@@ -1,72 +1,61 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## What This Is
 
-Backflow is a background agent orchestrator written in Go. It runs Claude Code in ephemeral Docker containers on AWS EC2 spot instances. Tasks are submitted via REST API, and the orchestrator handles provisioning, execution, monitoring, and cleanup.
+Backflow is a Go service that runs Claude Code in ephemeral Docker containers on AWS EC2 spot instances. Tasks come in via REST API; the orchestrator provisions infrastructure, runs agents, and cleans up.
 
 ## Commands
 
 ```bash
-make build          # Build server binary to bin/backflow
+make build          # Build to bin/backflow
 make run            # Build + run (sources .env)
 make test           # go test ./... -v -count=1
 make lint           # go vet ./...
 make deps           # go mod tidy
-make db-status      # Dump SQLite database state
+make db-status      # Dump SQLite state
 make docker-deploy  # Build + push agent image to ECR
 make setup-aws      # Create AWS infrastructure
 ```
 
-Run a single test:
-```bash
-go test ./internal/store/ -run TestCreateTask -v
-```
+Single test: `go test ./internal/store/ -run TestCreateTask -v`
 
 ## Architecture
 
-The server runs two concurrent goroutines: a chi-based REST API on `:8080` and a polling orchestrator (default 5s interval).
+Two goroutines: chi REST API on `:8080` + polling orchestrator (5s default).
 
-**Request flow:** Client → REST API → SQLite store → Orchestrator picks up pending tasks → Dispatches Docker containers on EC2 via SSM → Monitors completion → Fires webhooks.
+**Flow:** Client → API → SQLite → Orchestrator → Docker on EC2 via SSM → Webhooks.
 
 ### Key modules (`internal/`)
 
-- **api/** — chi router, REST handlers, JSON envelope responses
-- **orchestrator/** — The core loop. Contains sub-components:
-  - `orchestrator.go` — Main poll loop, task dispatch, completion detection
-  - `scaler.go` — EC2 instance lifecycle (scale up on demand, terminate after 5min idle)
-  - `docker.go` — Container operations via AWS SSM (run, inspect, stop, logs)
-  - `spot.go` — Spot interruption detection and task re-queuing
-  - `ec2.go` — EC2 launch/terminate/describe operations
-- **store/** — `Store` interface + SQLite implementation (WAL mode)
+- **api/** — chi router, handlers, JSON responses
+- **orchestrator/** — Poll loop, EC2 scaling, Docker via SSM, spot interruption handling
+- **store/** — `Store` interface + SQLite (WAL mode, auto-migrated)
 - **models/** — `Task` and `Instance` structs with status enums
-- **config/** — Environment-variable-based configuration (25+ vars)
-- **notify/** — `Notifier` interface with noop and webhook implementations
+- **config/** — Env-var config (`BACKFLOW_*` prefix)
+- **notify/** — Webhook notifier
 
 ### Agent container (`docker/`)
 
-The Dockerfile builds a Node.js-based image with Claude Code CLI, git, and GitHub CLI. The `entrypoint.sh` script handles the full agent lifecycle: clone → checkout → run Claude Code → commit → push → create PR.
+Node.js image with Claude Code CLI + git + gh. `entrypoint.sh`: clone → checkout → run Claude → commit → push → create PR. Writes `status.json` for the orchestrator.
 
-The orchestrator communicates with containers indirectly by reading a `status.json` file from the stopped container.
+### Statuses
 
-### Task statuses
-
-`pending` → `provisioning` → `running` → `completed` | `failed` | `interrupted` | `cancelled`
-
-### Instance statuses
-
-`pending` → `running` → `draining` → `terminated`
+- **Task:** `pending` → `provisioning` → `running` → `completed` | `failed` | `interrupted` | `cancelled`
+- **Instance:** `pending` → `running` → `draining` → `terminated`
 
 ## Auth modes
 
-- **`api_key`** — Anthropic API key, supports concurrent agents
-- **`max_subscription`** — Claude Max subscription, strictly serial (one agent at a time)
+- **`api_key`** — Anthropic API key, concurrent agents
+- **`max_subscription`** — Claude Max, serial (one agent at a time)
 
 ## Design patterns
 
-- Interface-based abstractions (`Store`, `Notifier`) for testability
-- Polling over event-driven orchestration for simplicity
-- SSM instead of SSH for EC2 communication (no key management)
-- ULID-based task IDs with `bf_` prefix
-- Zerolog for structured logging
+- Interface abstractions (`Store`, `Notifier`) for testability
+- Polling over events for simplicity
+- SSM instead of SSH (no key management)
+- ULID task IDs with `bf_` prefix
+- Zerolog structured logging
+
+## Database
+
+SQLite with WAL mode. Schema auto-migrates on startup via `CREATE TABLE IF NOT EXISTS` in `internal/store/sqlite.go:migrate()`. No separate migration files — add new columns with `ALTER TABLE` idempotently in the same function.

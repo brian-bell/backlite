@@ -18,7 +18,8 @@ const (
 	EventTaskCompleted   EventType = "task.completed"
 	EventTaskFailed      EventType = "task.failed"
 	EventTaskNeedsInput  EventType = "task.needs_input"
-	EventTaskInterrupted EventType = "task.interrupted"
+	EventTaskInterrupted  EventType = "task.interrupted"
+	EventTaskRecovering   EventType = "task.recovering"
 )
 
 type Event struct {

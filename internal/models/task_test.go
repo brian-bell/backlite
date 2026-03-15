@@ -78,7 +78,7 @@ func TestTaskStatusIsTerminal(t *testing.T) {
 		}
 	}
 
-	nonTerminal := []TaskStatus{TaskStatusPending, TaskStatusProvisioning, TaskStatusRunning, TaskStatusInterrupted}
+	nonTerminal := []TaskStatus{TaskStatusPending, TaskStatusProvisioning, TaskStatusRunning, TaskStatusInterrupted, TaskStatusRecovering}
 	for _, s := range nonTerminal {
 		if s.IsTerminal() {
 			t.Errorf("%q should not be terminal", s)

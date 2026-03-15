@@ -53,12 +53,12 @@ Node.js 20 image with Claude Code CLI + git + gh. `entrypoint.sh`: clone → che
 
 ### Statuses
 
-- **Task:** `pending` → `provisioning` → `running` → `completed` | `failed` | `interrupted` | `cancelled`
+- **Task:** `pending` → `provisioning` → `running` → `completed` | `failed` | `interrupted` | `cancelled` | `recovering` → `pending` | `running` | `completed` | `failed`
 - **Instance:** `pending` → `running` → `draining` → `terminated`
 
 ### Webhook events
 
-`task.created`, `task.running`, `task.completed`, `task.failed`, `task.needs_input`, `task.interrupted`
+`task.created`, `task.running`, `task.completed`, `task.failed`, `task.needs_input`, `task.interrupted`, `task.recovering`
 
 ## Auth modes
 

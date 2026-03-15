@@ -135,7 +135,7 @@ func (h *Handlers) DeleteTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// If running, mark as cancelled (orchestrator will kill the container)
-	if task.Status == models.TaskStatusRunning || task.Status == models.TaskStatusProvisioning {
+	if task.Status == models.TaskStatusRunning || task.Status == models.TaskStatusProvisioning || task.Status == models.TaskStatusRecovering {
 		task.Status = models.TaskStatusCancelled
 		now := time.Now().UTC()
 		task.CompletedAt = &now

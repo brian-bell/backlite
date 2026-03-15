@@ -13,7 +13,7 @@ Stores Claude Code agent tasks submitted via the REST API.
 | Column | Type | Default | Description |
 |--------|------|---------|-------------|
 | `id` | `TEXT` | — | **Primary key.** ULID with `bf_` prefix (e.g. `bf_01KKQW82994E87Z99QVEMBN8V0`). |
-| `status` | `TEXT` | `'pending'` | Task lifecycle state. One of: `pending`, `provisioning`, `running`, `completed`, `failed`, `interrupted`, `cancelled`. |
+| `status` | `TEXT` | `'pending'` | Task lifecycle state. One of: `pending`, `provisioning`, `running`, `completed`, `failed`, `interrupted`, `cancelled`, `recovering`. |
 | `repo_url` | `TEXT` | — | Git repository URL to clone (required). |
 | `branch` | `TEXT` | `''` | Branch to check out before running the agent. |
 | `target_branch` | `TEXT` | `''` | Base branch for PR creation (e.g. `main`). |
@@ -74,9 +74,14 @@ pending → provisioning → running → completed
                                   → failed
                                   → interrupted → (re-queued as pending)
          (any non-terminal)      → cancelled
+running/provisioning → recovering → running (container still alive)
+                                  → completed/failed (container exited)
+                                  → pending (re-queued, container/instance gone)
 ```
 
 Terminal states: `completed`, `failed`, `cancelled`.
+
+The `recovering` status is set on startup for tasks orphaned by a server restart. The orchestrator inspects their containers and resolves them on each tick.
 
 ### Instance statuses
 

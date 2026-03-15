@@ -16,6 +16,7 @@ const (
 	TaskStatusFailed       TaskStatus = "failed"
 	TaskStatusInterrupted  TaskStatus = "interrupted"
 	TaskStatusCancelled    TaskStatus = "cancelled"
+	TaskStatusRecovering   TaskStatus = "recovering"
 )
 
 func (s TaskStatus) IsTerminal() bool {

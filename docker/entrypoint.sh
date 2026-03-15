@@ -240,28 +240,50 @@ if [ "$SELF_REVIEW" = "true" ] && [ -n "$PR_URL" ]; then
     # Cap review budget at 20% of coding budget (minimum $2)
     REVIEW_BUDGET=$(echo "$MAX_BUDGET_USD" | awk '{b = $1 * 0.2; print (b < 2) ? 2 : b}')
 
-    # Use Claude Code's built-in /review-pr command
+    REVIEW_PROMPT="You are reviewing a pull request that you (a different instance) just created.
+
+PR URL: ${PR_URL}
+
+Review the PR by:
+1. Read the full diff with: gh pr diff ${PR_URL}
+2. Look at the PR description with: gh pr view ${PR_URL}
+
+Focus on:
+- Bugs and logic errors
+- Security issues
+- Missing error handling that could cause failures
+- Correctness of the implementation vs the PR description
+
+Do NOT comment on:
+- Code style or formatting
+- Minor naming preferences
+- Things that are working correctly
+
+Respond with your review findings. If everything looks good, say so. If there are real issues, explain what needs fixing."
+
     REVIEW_ARGS=(
-        -p "/review-pr"
+        -p "$REVIEW_PROMPT"
         --dangerously-skip-permissions
         --model "$MODEL"
-        --output-format json
+        --max-turns 10
+        --output-format stream-json
         --verbose
     )
     if [ "$AUTH_MODE" = "api_key" ]; then
         REVIEW_ARGS+=(--max-budget-usd "$REVIEW_BUDGET")
     fi
 
+    REVIEW_LOG="${WORKSPACE}/review_output.log"
     set +e
-    REVIEW_OUTPUT=$(claude "${REVIEW_ARGS[@]}" 2>&1)
-    REVIEW_EXIT=$?
+    claude "${REVIEW_ARGS[@]}" 2>&1 | tee "$REVIEW_LOG"
+    REVIEW_EXIT=${PIPESTATUS[0]}
     set -e
 
     if [ $REVIEW_EXIT -eq 0 ]; then
         echo "==> Self-review completed successfully"
 
-        # Extract review text from JSON output and post as PR comment
-        REVIEW_TEXT=$(echo "$REVIEW_OUTPUT" | jq -r '.result // empty' 2>/dev/null)
+        # Extract review text from stream-json result line
+        REVIEW_TEXT=$(grep '"type":"result"' "$REVIEW_LOG" | tail -1 | jq -r '.result // empty' 2>/dev/null)
         if [ -n "$REVIEW_TEXT" ]; then
             echo "==> Posting review feedback as PR comment..."
             COMMENT_BODY="## Self-Review (automated)

@@ -23,9 +23,9 @@ type Orchestrator struct {
 	scaler   scaler
 	spot     *SpotHandler
 
-	mu             sync.Mutex
-	running        int
-	stopCh         chan struct{}
+	mu              sync.Mutex
+	running         int
+	stopCh          chan struct{}
 	inspectFailures map[string]int // task ID -> consecutive inspect failure count
 }
 
@@ -249,6 +249,12 @@ func (o *Orchestrator) monitorRunning(ctx context.Context) {
 		// Check container status
 		status, err := o.docker.InspectContainer(ctx, task.InstanceID, task.ContainerID)
 		if err != nil {
+			if isInstanceGone(err) {
+				log.Warn().Err(err).Str("task_id", task.ID).Str("instance", task.InstanceID).Msg("instance terminated, re-queuing task")
+				delete(o.inspectFailures, task.ID)
+				o.requeueTask(ctx, task, "instance terminated")
+				continue
+			}
 			o.inspectFailures[task.ID]++
 			count := o.inspectFailures[task.ID]
 			log.Warn().Err(err).Str("task_id", task.ID).Int("consecutive_failures", count).Msg("failed to inspect container")
@@ -276,13 +282,13 @@ func (o *Orchestrator) handleCompletion(ctx context.Context, task *models.Task, 
 	if status.ExitCode == 0 {
 		task.Status = models.TaskStatusCompleted
 		o.notifier.Notify(notify.Event{
-			Type:           notify.EventTaskCompleted,
-			TaskID:         task.ID,
-			RepoURL:        task.RepoURL,
-			Prompt:         task.Prompt,
-			PRURL:          status.PRURL,
-			AgentLogTail:   status.LogTail,
-			Timestamp:      now,
+			Type:         notify.EventTaskCompleted,
+			TaskID:       task.ID,
+			RepoURL:      task.RepoURL,
+			Prompt:       task.Prompt,
+			PRURL:        status.PRURL,
+			AgentLogTail: status.LogTail,
+			Timestamp:    now,
 		})
 	} else if status.NeedsInput {
 		task.Status = models.TaskStatusFailed
@@ -363,6 +369,38 @@ func (o *Orchestrator) killTask(ctx context.Context, task *models.Task, reason s
 		Message:   reason,
 		Timestamp: now,
 	})
+}
+
+// requeueTask resets a running task back to pending so it will be dispatched
+// to a different instance. It also marks the old instance as terminated.
+func (o *Orchestrator) requeueTask(ctx context.Context, task *models.Task, reason string) {
+	// Mark the instance as terminated so no new tasks get dispatched to it.
+	if task.InstanceID != "" {
+		if inst, err := o.store.GetInstance(ctx, task.InstanceID); err == nil && inst != nil {
+			if inst.Status != models.InstanceStatusTerminated {
+				inst.Status = models.InstanceStatusTerminated
+				inst.RunningContainers = 0
+				o.store.UpdateInstance(ctx, inst)
+			}
+		}
+	}
+
+	o.mu.Lock()
+	o.running--
+	o.mu.Unlock()
+
+	task.Status = models.TaskStatusPending
+	task.InstanceID = ""
+	task.ContainerID = ""
+	task.StartedAt = nil
+	task.Error = "re-queued: " + reason + " at " + time.Now().UTC().Format(time.RFC3339)
+	task.RetryCount++
+	if err := o.store.UpdateTask(ctx, task); err != nil {
+		log.Error().Err(err).Str("task_id", task.ID).Msg("failed to re-queue task")
+	}
+
+	// Trigger scale-up so a new instance is provisioned.
+	o.scaler.RequestScaleUp(ctx)
 }
 
 var errNoCapacity = fmt.Errorf("no instance capacity available")

@@ -1,16 +1,11 @@
 package orchestrator
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strings"
-	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/rs/zerolog/log"
 
@@ -18,6 +13,7 @@ import (
 	"github.com/backflow-labs/backflow/internal/models"
 )
 
+// ContainerStatus represents the current state of an agent container.
 type ContainerStatus struct {
 	Done       bool
 	ExitCode   int
@@ -28,81 +24,21 @@ type ContainerStatus struct {
 	PRURL      string
 }
 
+// DockerManager manages agent containers on remote (SSM) or local hosts.
 type DockerManager struct {
 	config    *config.Config
 	ssmClient *ssm.Client
 }
 
+// NewDockerManager creates a new DockerManager.
 func NewDockerManager(cfg *config.Config) *DockerManager {
 	return &DockerManager{config: cfg}
 }
 
-func (m *DockerManager) ensureClient(ctx context.Context) error {
-	if m.ssmClient != nil {
-		return nil
-	}
-	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(m.config.AWSRegion))
-	if err != nil {
-		return fmt.Errorf("load AWS config: %w", err)
-	}
-	m.ssmClient = ssm.NewFromConfig(cfg)
-	return nil
-}
-
+// RunAgent starts a new agent container on the given instance for the task.
+// Returns the container ID on success.
 func (m *DockerManager) RunAgent(ctx context.Context, instance *models.Instance, task *models.Task) (string, error) {
-
-	envFlags := []string{
-		fmt.Sprintf("-e TASK_ID=%s", task.ID),
-		fmt.Sprintf("-e REPO_URL=%s", shellEscape(task.RepoURL)),
-		fmt.Sprintf("-e BRANCH=%s", shellEscape(task.Branch)),
-		fmt.Sprintf("-e TARGET_BRANCH=%s", shellEscape(task.TargetBranch)),
-		fmt.Sprintf("-e PROMPT=%s", shellEscape(task.Prompt)),
-		fmt.Sprintf("-e MODEL=%s", shellEscape(task.Model)),
-		fmt.Sprintf("-e EFFORT=%s", shellEscape(task.Effort)),
-		fmt.Sprintf("-e MAX_BUDGET_USD=%g", task.MaxBudgetUSD),
-		fmt.Sprintf("-e MAX_TURNS=%d", task.MaxTurns),
-		fmt.Sprintf("-e CREATE_PR=%t", task.CreatePR),
-		fmt.Sprintf("-e SELF_REVIEW=%t", task.SelfReview),
-	}
-
-	if task.PRTitle != "" {
-		envFlags = append(envFlags, fmt.Sprintf("-e PR_TITLE=%s", shellEscape(task.PRTitle)))
-	}
-	if task.PRBody != "" {
-		envFlags = append(envFlags, fmt.Sprintf("-e PR_BODY=%s", shellEscape(task.PRBody)))
-	}
-	if task.ClaudeMD != "" {
-		envFlags = append(envFlags, fmt.Sprintf("-e CLAUDE_MD=%s", shellEscape(task.ClaudeMD)))
-	}
-	if task.Context != "" {
-		envFlags = append(envFlags, fmt.Sprintf("-e TASK_CONTEXT=%s", shellEscape(task.Context)))
-	}
-
-	// Auth mode
-	envFlags = append(envFlags, fmt.Sprintf("-e AUTH_MODE=%s", string(m.config.AuthMode)))
-	if m.config.AuthMode == config.AuthModeAPIKey {
-		envFlags = append(envFlags, fmt.Sprintf("-e ANTHROPIC_API_KEY=%s", m.config.AnthropicAPIKey))
-	}
-
-	if m.config.GitHubToken != "" {
-		envFlags = append(envFlags, fmt.Sprintf("-e GITHUB_TOKEN=%s", m.config.GitHubToken))
-	}
-
-	// Custom env vars from task
-	for k, v := range task.EnvVars {
-		envFlags = append(envFlags, fmt.Sprintf("-e %s=%s", k, shellEscape(v)))
-	}
-
-	volumeFlags := ""
-	if m.config.AuthMode == config.AuthModeMaxSubscription && m.config.ClaudeCredentialsPath != "" {
-		volumeFlags = fmt.Sprintf("-v %s:/home/agent/.claude:ro", m.config.ClaudeCredentialsPath)
-	}
-
-	cmd := fmt.Sprintf(
-		"docker run -d --cpus=1 --memory=3g %s %s backflow-agent",
-		volumeFlags,
-		strings.Join(envFlags, " "),
-	)
+	cmd := m.buildRunCommand(task)
 
 	output, err := m.runCommand(ctx, instance.InstanceID, cmd)
 	if err != nil {
@@ -113,9 +49,6 @@ func (m *DockerManager) RunAgent(ctx context.Context, instance *models.Instance,
 	if containerID == "" {
 		return "", fmt.Errorf("empty container ID returned")
 	}
-
-	// Docker container IDs are 64-char hex strings; reject anything else
-	// (e.g. error messages captured via 2>&1)
 	if !isHexString(containerID) {
 		return "", fmt.Errorf("docker run failed: %s", containerID)
 	}
@@ -124,13 +57,130 @@ func (m *DockerManager) RunAgent(ctx context.Context, instance *models.Instance,
 	return containerID, nil
 }
 
+// InspectContainer checks a container's status and reads the agent's
+// status.json if the container has exited.
 func (m *DockerManager) InspectContainer(ctx context.Context, instanceID, containerID string) (ContainerStatus, error) {
-	cmd := fmt.Sprintf("docker inspect --format '{{.State.Status}} {{.State.ExitCode}}' %s 2>/dev/null && docker logs --tail 20 %s 2>&1", containerID, containerID)
+	cmd := fmt.Sprintf(
+		"docker inspect --format '{{.State.Status}} {{.State.ExitCode}}' %s 2>/dev/null && docker logs --tail 20 %s 2>&1",
+		containerID, containerID,
+	)
 	output, err := m.runCommand(ctx, instanceID, cmd)
 	if err != nil {
 		return ContainerStatus{}, err
 	}
 
+	status, err := parseInspectOutput(output)
+	if err != nil {
+		return ContainerStatus{}, err
+	}
+
+	if status.Done {
+		m.enrichFromStatusJSON(ctx, instanceID, containerID, &status)
+	}
+
+	return status, nil
+}
+
+// StopContainer stops and removes a container.
+func (m *DockerManager) StopContainer(ctx context.Context, instanceID, containerID string) error {
+	cmd := fmt.Sprintf("docker stop -t 30 %s 2>/dev/null; docker rm %s 2>/dev/null", containerID, containerID)
+	_, err := m.runCommand(ctx, instanceID, cmd)
+	return err
+}
+
+// GetLogs retrieves the last N lines of a container's logs.
+func (m *DockerManager) GetLogs(ctx context.Context, instanceID, containerID string, tail int) (string, error) {
+	cmd := fmt.Sprintf("docker logs --tail %d %s 2>&1", tail, containerID)
+	return m.runCommand(ctx, instanceID, cmd)
+}
+
+// buildRunCommand constructs the full `docker run` command for an agent task.
+func (m *DockerManager) buildRunCommand(task *models.Task) string {
+	envFlags := m.buildEnvFlags(task)
+	volumeFlags := m.buildVolumeFlags()
+
+	return fmt.Sprintf(
+		"docker run -d --cpus=1 --memory=3g %s %s backflow-agent",
+		volumeFlags,
+		strings.Join(envFlags, " "),
+	)
+}
+
+// buildEnvFlags assembles the -e flags for the docker run command from the
+// task configuration and global config.
+func (m *DockerManager) buildEnvFlags(task *models.Task) []string {
+	flags := []string{
+		envFlag("TASK_ID", task.ID),
+		envFlag("REPO_URL", shellEscape(task.RepoURL)),
+		envFlag("BRANCH", shellEscape(task.Branch)),
+		envFlag("TARGET_BRANCH", shellEscape(task.TargetBranch)),
+		envFlag("PROMPT", shellEscape(task.Prompt)),
+		envFlag("MODEL", shellEscape(task.Model)),
+		envFlag("EFFORT", shellEscape(task.Effort)),
+		fmt.Sprintf("-e MAX_BUDGET_USD=%g", task.MaxBudgetUSD),
+		fmt.Sprintf("-e MAX_TURNS=%d", task.MaxTurns),
+		fmt.Sprintf("-e CREATE_PR=%t", task.CreatePR),
+		fmt.Sprintf("-e SELF_REVIEW=%t", task.SelfReview),
+		envFlag("AUTH_MODE", string(m.config.AuthMode)),
+	}
+
+	// Optional task fields
+	if task.PRTitle != "" {
+		flags = append(flags, envFlag("PR_TITLE", shellEscape(task.PRTitle)))
+	}
+	if task.PRBody != "" {
+		flags = append(flags, envFlag("PR_BODY", shellEscape(task.PRBody)))
+	}
+	if task.ClaudeMD != "" {
+		flags = append(flags, envFlag("CLAUDE_MD", shellEscape(task.ClaudeMD)))
+	}
+	if task.Context != "" {
+		flags = append(flags, envFlag("TASK_CONTEXT", shellEscape(task.Context)))
+	}
+
+	// Auth credentials
+	if m.config.AuthMode == config.AuthModeAPIKey {
+		flags = append(flags, envFlag("ANTHROPIC_API_KEY", m.config.AnthropicAPIKey))
+	}
+	if m.config.GitHubToken != "" {
+		flags = append(flags, envFlag("GITHUB_TOKEN", m.config.GitHubToken))
+	}
+
+	// Custom env vars from the task
+	for k, v := range task.EnvVars {
+		flags = append(flags, envFlag(k, shellEscape(v)))
+	}
+
+	return flags
+}
+
+// buildVolumeFlags returns the -v flag for mounting Claude credentials when
+// using Max subscription auth, or an empty string otherwise.
+func (m *DockerManager) buildVolumeFlags() string {
+	if m.config.AuthMode == config.AuthModeMaxSubscription && m.config.ClaudeCredentialsPath != "" {
+		return fmt.Sprintf("-v %s:/home/agent/.claude:ro", m.config.ClaudeCredentialsPath)
+	}
+	return ""
+}
+
+// envFlag returns a single "-e KEY=VALUE" flag string.
+func envFlag(key, value string) string {
+	return fmt.Sprintf("-e %s=%s", key, value)
+}
+
+// agentStatus is the JSON structure written by the agent entrypoint to
+// /home/agent/workspace/status.json inside the container.
+type agentStatus struct {
+	NeedsInput bool   `json:"needs_input"`
+	Question   string `json:"question"`
+	Complete   bool   `json:"complete"`
+	Error      string `json:"error"`
+	PRURL      string `json:"pr_url"`
+}
+
+// parseInspectOutput parses the combined output of `docker inspect` +
+// `docker logs` into a ContainerStatus.
+func parseInspectOutput(output string) (ContainerStatus, error) {
 	lines := strings.SplitN(output, "\n", 2)
 	if len(lines) == 0 {
 		return ContainerStatus{}, fmt.Errorf("empty inspect output")
@@ -146,140 +196,36 @@ func (m *DockerManager) InspectContainer(ctx context.Context, instanceID, contai
 		status.LogTail = lines[1]
 	}
 
-	dockerStatus := parts[0]
-	if dockerStatus == "exited" || dockerStatus == "dead" {
+	dockerState := parts[0]
+	if dockerState == "exited" || dockerState == "dead" {
 		status.Done = true
 		fmt.Sscanf(parts[1], "%d", &status.ExitCode)
-
 		if status.ExitCode != 0 {
 			status.Error = fmt.Sprintf("container exited with code %d", status.ExitCode)
-		}
-
-		// Check for status.json written by entrypoint
-		statusCmd := fmt.Sprintf("docker cp %s:/home/agent/workspace/status.json /dev/stdout 2>/dev/null", containerID)
-		if statusJSON, err := m.runCommand(ctx, instanceID, statusCmd); err == nil {
-			var agentStatus struct {
-				NeedsInput bool   `json:"needs_input"`
-				Question   string `json:"question"`
-				Complete   bool   `json:"complete"`
-				Error      string `json:"error"`
-				PRURL      string `json:"pr_url"`
-			}
-			if json.Unmarshal([]byte(statusJSON), &agentStatus) == nil {
-				status.NeedsInput = agentStatus.NeedsInput
-				status.Question = agentStatus.Question
-				status.PRURL = agentStatus.PRURL
-				if agentStatus.Error != "" {
-					status.Error = agentStatus.Error
-				}
-			}
 		}
 	}
 
 	return status, nil
 }
 
-func (m *DockerManager) StopContainer(ctx context.Context, instanceID, containerID string) error {
-	cmd := fmt.Sprintf("docker stop -t 30 %s 2>/dev/null; docker rm %s 2>/dev/null", containerID, containerID)
-	_, err := m.runCommand(ctx, instanceID, cmd)
-	return err
-}
-
-func (m *DockerManager) GetLogs(ctx context.Context, instanceID, containerID string, tail int) (string, error) {
-	cmd := fmt.Sprintf("docker logs --tail %d %s 2>&1", tail, containerID)
-	return m.runCommand(ctx, instanceID, cmd)
-}
-
-func (m *DockerManager) runCommand(ctx context.Context, instanceID, command string) (string, error) {
-	if m.config.Mode == config.ModeLocal {
-		return m.runLocalCommand(ctx, command)
-	}
-	return m.runSSMCommand(ctx, instanceID, command)
-}
-
-func (m *DockerManager) runLocalCommand(ctx context.Context, command string) (string, error) {
-	cmd := exec.CommandContext(ctx, "bash", "-c", command)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		detail := strings.TrimSpace(stderr.String())
-		if detail == "" {
-			detail = strings.TrimSpace(stdout.String())
-		}
-		if detail != "" {
-			return "", fmt.Errorf("local command failed: %s", detail)
-		}
-		return "", fmt.Errorf("local command failed: %w", err)
-	}
-	return stdout.String(), nil
-}
-
-func (m *DockerManager) runSSMCommand(ctx context.Context, instanceID, command string) (string, error) {
-	if err := m.ensureClient(ctx); err != nil {
-		return "", err
-	}
-
-	input := &ssm.SendCommandInput{
-		InstanceIds:  []string{instanceID},
-		DocumentName: aws.String("AWS-RunShellScript"),
-		Parameters: map[string][]string{
-			"commands": {command},
-		},
-	}
-
-	result, err := m.ssmClient.SendCommand(ctx, input)
+// enrichFromStatusJSON reads the agent's status.json from the container and
+// merges its fields into the ContainerStatus.
+func (m *DockerManager) enrichFromStatusJSON(ctx context.Context, instanceID, containerID string, status *ContainerStatus) {
+	cmd := fmt.Sprintf("docker cp %s:/home/agent/workspace/status.json /dev/stdout 2>/dev/null", containerID)
+	statusJSON, err := m.runCommand(ctx, instanceID, cmd)
 	if err != nil {
-		return "", fmt.Errorf("ssm send command: %w", err)
+		return
 	}
 
-	cmdID := aws.ToString(result.Command.CommandId)
-
-	// Wait for command to complete
-	waiter := ssm.NewCommandExecutedWaiter(m.ssmClient)
-	getOutput := &ssm.GetCommandInvocationInput{
-		CommandId:  aws.String(cmdID),
-		InstanceId: aws.String(instanceID),
+	var agent agentStatus
+	if json.Unmarshal([]byte(statusJSON), &agent) != nil {
+		return
 	}
 
-	if err := waiter.Wait(ctx, getOutput, 5*time.Minute); err != nil {
-		// Fetch output even on failure to get stderr/diagnostics
-		if out, getErr := m.ssmClient.GetCommandInvocation(ctx, getOutput); getErr == nil {
-			stderr := strings.TrimSpace(aws.ToString(out.StandardErrorContent))
-			stdout := strings.TrimSpace(aws.ToString(out.StandardOutputContent))
-			status := string(out.Status)
-			detail := stderr
-			if detail == "" {
-				detail = stdout
-			}
-			if detail != "" {
-				return "", fmt.Errorf("ssm command failed (status=%s): %s", status, detail)
-			}
-			return "", fmt.Errorf("ssm command failed (status=%s): %w", status, err)
-		}
-		return "", fmt.Errorf("wait for command: %w", err)
+	status.NeedsInput = agent.NeedsInput
+	status.Question = agent.Question
+	status.PRURL = agent.PRURL
+	if agent.Error != "" {
+		status.Error = agent.Error
 	}
-
-	out, err := m.ssmClient.GetCommandInvocation(ctx, getOutput)
-	if err != nil {
-		return "", fmt.Errorf("get command output: %w", err)
-	}
-
-	return aws.ToString(out.StandardOutputContent), nil
-}
-
-func isHexString(s string) bool {
-	if len(s) == 0 {
-		return false
-	}
-	for _, c := range s {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
-			return false
-		}
-	}
-	return true
-}
-
-func shellEscape(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
 }

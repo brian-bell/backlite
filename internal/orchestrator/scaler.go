@@ -17,6 +17,11 @@ import (
 	"github.com/backflow-labs/backflow/internal/store"
 )
 
+type scaler interface {
+	Evaluate(ctx context.Context)
+	RequestScaleUp(ctx context.Context)
+}
+
 const idleTimeout = 5 * time.Minute
 
 type Scaler struct {

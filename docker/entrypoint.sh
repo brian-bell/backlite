@@ -103,7 +103,7 @@ CLAUDE_ARGS=(
     --model "$MODEL"
     --effort "$EFFORT"
     --max-turns "$MAX_TURNS"
-    --output-format json
+    --output-format stream-json
     --verbose
 )
 
@@ -121,9 +121,11 @@ while [ $ATTEMPT -lt "$MAX_RETRIES" ]; do
     ATTEMPT=$((ATTEMPT + 1))
     echo "==> Running Claude Code (attempt ${ATTEMPT}/${MAX_RETRIES})..."
 
+    CLAUDE_LOG="${WORKSPACE}/claude_output.log"
     set +e
-    CLAUDE_OUTPUT=$(claude "${CLAUDE_ARGS[@]}" 2>&1)
-    CLAUDE_EXIT=$?
+    claude "${CLAUDE_ARGS[@]}" 2>&1 | tee "$CLAUDE_LOG"
+    CLAUDE_EXIT=${PIPESTATUS[0]}
+    CLAUDE_OUTPUT=$(cat "$CLAUDE_LOG")
     set -e
 
     if [ $CLAUDE_EXIT -eq 0 ]; then
@@ -143,27 +145,34 @@ ${ERROR_TAIL}
 Please try again:
 ${PROMPT}"
         # Rebuild args with updated prompt
-        CLAUDE_ARGS=( -p "$FULL_PROMPT" --dangerously-skip-permissions --model "$MODEL" --effort "$EFFORT" --max-turns "$MAX_TURNS" --output-format json --verbose )
+        CLAUDE_ARGS=( -p "$FULL_PROMPT" --dangerously-skip-permissions --model "$MODEL" --effort "$EFFORT" --max-turns "$MAX_TURNS" --output-format stream-json --verbose )
         if [ "$AUTH_MODE" = "api_key" ]; then
             CLAUDE_ARGS+=(--max-budget-usd "$MAX_BUDGET_USD")
         fi
     fi
 done
 
-# --- Detect needs_input ---
+# --- Parse result from stream-json output ---
+# stream-json emits one JSON object per line; the final "result" message has the outcome.
+RESULT_LINE=$(echo "$CLAUDE_OUTPUT" | grep '"type":"result"' | tail -1)
 NEEDS_INPUT=false
 QUESTION=""
 
-if echo "$CLAUDE_OUTPUT" | jq -e '.result' 2>/dev/null | grep -qi 'question\|decision\|should I\|which approach\|do you want\|please clarify'; then
-    NEEDS_INPUT=true
-    QUESTION=$(echo "$CLAUDE_OUTPUT" | jq -r '.result // empty' 2>/dev/null | tail -5)
-fi
-
-# If claude ran out of turns without completing
-if echo "$CLAUDE_OUTPUT" | jq -e '.is_error' 2>/dev/null | grep -q 'true'; then
-    if echo "$CLAUDE_OUTPUT" | jq -r '.error_type // empty' 2>/dev/null | grep -q 'max_turns'; then
+if [ -n "$RESULT_LINE" ]; then
+    RESULT_TEXT=$(echo "$RESULT_LINE" | jq -r '.result // empty' 2>/dev/null)
+    if echo "$RESULT_TEXT" | grep -qi 'question\|decision\|should I\|which approach\|do you want\|please clarify'; then
         NEEDS_INPUT=true
-        QUESTION="Agent ran out of turns (${MAX_TURNS}) without completing the task"
+        QUESTION=$(echo "$RESULT_TEXT" | tail -5)
+    fi
+
+    # If claude ran out of turns without completing
+    IS_ERROR=$(echo "$RESULT_LINE" | jq -r '.is_error // false' 2>/dev/null)
+    if [ "$IS_ERROR" = "true" ]; then
+        ERROR_TYPE=$(echo "$RESULT_LINE" | jq -r '.error_type // empty' 2>/dev/null)
+        if [ "$ERROR_TYPE" = "max_turns" ]; then
+            NEEDS_INPUT=true
+            QUESTION="Agent ran out of turns (${MAX_TURNS}) without completing the task"
+        fi
     fi
 fi
 

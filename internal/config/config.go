@@ -8,6 +8,13 @@ import (
 	"time"
 )
 
+type Mode string
+
+const (
+	ModeEC2   Mode = "ec2"
+	ModeLocal Mode = "local"
+)
+
 type AuthMode string
 
 const (
@@ -16,6 +23,9 @@ const (
 )
 
 type Config struct {
+	// Mode
+	Mode Mode
+
 	// Server
 	ListenAddr string
 
@@ -57,11 +67,15 @@ func (c *Config) MaxConcurrent() int {
 	if c.AuthMode == AuthModeMaxSubscription {
 		return 1
 	}
+	if c.Mode == ModeLocal {
+		return c.ContainersPerInst
+	}
 	return c.MaxInstances * c.ContainersPerInst
 }
 
 func Load() (*Config, error) {
 	c := &Config{
+		Mode:              Mode(envOr("BACKFLOW_MODE", string(ModeEC2))),
 		ListenAddr:        envOr("BACKFLOW_LISTEN_ADDR", ":8080"),
 		AuthMode:          AuthMode(envOr("BACKFLOW_AUTH_MODE", string(AuthModeAPIKey))),
 		AnthropicAPIKey:   os.Getenv("ANTHROPIC_API_KEY"),
@@ -88,6 +102,10 @@ func Load() (*Config, error) {
 		for i := range c.WebhookEvents {
 			c.WebhookEvents[i] = strings.TrimSpace(c.WebhookEvents[i])
 		}
+	}
+
+	if c.Mode != ModeEC2 && c.Mode != ModeLocal {
+		return nil, fmt.Errorf("invalid BACKFLOW_MODE: %q (must be %q or %q)", c.Mode, ModeEC2, ModeLocal)
 	}
 
 	if c.AuthMode != AuthModeAPIKey && c.AuthMode != AuthModeMaxSubscription {

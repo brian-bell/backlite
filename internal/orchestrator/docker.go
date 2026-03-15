@@ -1,9 +1,11 @@
 package orchestrator
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -47,9 +49,6 @@ func (m *DockerManager) ensureClient(ctx context.Context) error {
 }
 
 func (m *DockerManager) RunAgent(ctx context.Context, instance *models.Instance, task *models.Task) (string, error) {
-	if err := m.ensureClient(ctx); err != nil {
-		return "", err
-	}
 
 	envFlags := []string{
 		fmt.Sprintf("-e TASK_ID=%s", task.ID),
@@ -103,7 +102,7 @@ func (m *DockerManager) RunAgent(ctx context.Context, instance *models.Instance,
 		strings.Join(envFlags, " "),
 	)
 
-	output, err := m.runSSMCommand(ctx, instance.InstanceID, cmd)
+	output, err := m.runCommand(ctx, instance.InstanceID, cmd)
 	if err != nil {
 		return "", fmt.Errorf("run container: %w", err)
 	}
@@ -124,12 +123,8 @@ func (m *DockerManager) RunAgent(ctx context.Context, instance *models.Instance,
 }
 
 func (m *DockerManager) InspectContainer(ctx context.Context, instanceID, containerID string) (ContainerStatus, error) {
-	if err := m.ensureClient(ctx); err != nil {
-		return ContainerStatus{}, err
-	}
-
 	cmd := fmt.Sprintf("docker inspect --format '{{.State.Status}} {{.State.ExitCode}}' %s 2>/dev/null && docker logs --tail 20 %s 2>&1", containerID, containerID)
-	output, err := m.runSSMCommand(ctx, instanceID, cmd)
+	output, err := m.runCommand(ctx, instanceID, cmd)
 	if err != nil {
 		return ContainerStatus{}, err
 	}
@@ -160,7 +155,7 @@ func (m *DockerManager) InspectContainer(ctx context.Context, instanceID, contai
 
 		// Check for status.json written by entrypoint
 		statusCmd := fmt.Sprintf("docker cp %s:/home/agent/workspace/status.json /dev/stdout 2>/dev/null", containerID)
-		if statusJSON, err := m.runSSMCommand(ctx, instanceID, statusCmd); err == nil {
+		if statusJSON, err := m.runCommand(ctx, instanceID, statusCmd); err == nil {
 			var agentStatus struct {
 				NeedsInput bool   `json:"needs_input"`
 				Question   string `json:"question"`
@@ -181,22 +176,39 @@ func (m *DockerManager) InspectContainer(ctx context.Context, instanceID, contai
 }
 
 func (m *DockerManager) StopContainer(ctx context.Context, instanceID, containerID string) error {
-	if err := m.ensureClient(ctx); err != nil {
-		return err
-	}
-
 	cmd := fmt.Sprintf("docker stop -t 30 %s 2>/dev/null; docker rm %s 2>/dev/null", containerID, containerID)
-	_, err := m.runSSMCommand(ctx, instanceID, cmd)
+	_, err := m.runCommand(ctx, instanceID, cmd)
 	return err
 }
 
 func (m *DockerManager) GetLogs(ctx context.Context, instanceID, containerID string, tail int) (string, error) {
-	if err := m.ensureClient(ctx); err != nil {
-		return "", err
-	}
-
 	cmd := fmt.Sprintf("docker logs --tail %d %s 2>&1", tail, containerID)
-	return m.runSSMCommand(ctx, instanceID, cmd)
+	return m.runCommand(ctx, instanceID, cmd)
+}
+
+func (m *DockerManager) runCommand(ctx context.Context, instanceID, command string) (string, error) {
+	if m.config.Mode == config.ModeLocal {
+		return m.runLocalCommand(ctx, command)
+	}
+	return m.runSSMCommand(ctx, instanceID, command)
+}
+
+func (m *DockerManager) runLocalCommand(ctx context.Context, command string) (string, error) {
+	cmd := exec.CommandContext(ctx, "bash", "-c", command)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		detail := strings.TrimSpace(stderr.String())
+		if detail == "" {
+			detail = strings.TrimSpace(stdout.String())
+		}
+		if detail != "" {
+			return "", fmt.Errorf("local command failed: %s", detail)
+		}
+		return "", fmt.Errorf("local command failed: %w", err)
+	}
+	return stdout.String(), nil
 }
 
 func (m *DockerManager) runSSMCommand(ctx context.Context, instanceID, command string) (string, error) {

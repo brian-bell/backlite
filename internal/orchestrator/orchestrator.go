@@ -20,7 +20,7 @@ type Orchestrator struct {
 	notifier notify.Notifier
 	ec2      *EC2Manager
 	docker   *DockerManager
-	scaler   *Scaler
+	scaler   scaler
 	spot     *SpotHandler
 
 	mu             sync.Mutex
@@ -30,19 +30,49 @@ type Orchestrator struct {
 }
 
 func New(s store.Store, cfg *config.Config, notifier notify.Notifier) *Orchestrator {
-	ec2 := NewEC2Manager(cfg)
 	docker := NewDockerManager(cfg)
-	return &Orchestrator{
-		store:    s,
-		config:   cfg,
-		notifier: notifier,
-		ec2:      ec2,
-		docker:   docker,
-		scaler:   NewScaler(s, ec2, docker, cfg),
-		spot:     NewSpotHandler(s, ec2),
+
+	o := &Orchestrator{
+		store:           s,
+		config:          cfg,
+		notifier:        notifier,
+		docker:          docker,
 		stopCh:          make(chan struct{}),
 		inspectFailures: make(map[string]int),
 	}
+
+	if cfg.Mode == config.ModeLocal {
+		o.scaler = localScaler{}
+		// Seed a local instance so findAvailableInstance works without EC2.
+		// If it already exists (server restart), reset it to running state.
+		now := time.Now().UTC()
+		inst, _ := s.GetInstance(context.Background(), "local")
+		if inst != nil {
+			inst.Status = models.InstanceStatusRunning
+			inst.MaxContainers = cfg.ContainersPerInst
+			inst.RunningContainers = 0
+			inst.UpdatedAt = now
+			s.UpdateInstance(context.Background(), inst)
+		} else {
+			inst = &models.Instance{
+				InstanceID:    "local",
+				InstanceType:  "local",
+				Status:        models.InstanceStatusRunning,
+				MaxContainers: cfg.ContainersPerInst,
+				PrivateIP:     "127.0.0.1",
+				CreatedAt:     now,
+				UpdatedAt:     now,
+			}
+			s.CreateInstance(context.Background(), inst)
+		}
+	} else {
+		ec2 := NewEC2Manager(cfg)
+		o.ec2 = ec2
+		o.scaler = NewScaler(s, ec2, docker, cfg)
+		o.spot = NewSpotHandler(s, ec2)
+	}
+
+	return o
 }
 
 // Docker returns the DockerManager for use by the API logs endpoint.
@@ -52,6 +82,7 @@ func (o *Orchestrator) Docker() *DockerManager {
 
 func (o *Orchestrator) Start(ctx context.Context) {
 	log.Info().
+		Str("mode", string(o.config.Mode)).
 		Str("auth_mode", string(o.config.AuthMode)).
 		Int("max_concurrent", o.config.MaxConcurrent()).
 		Dur("poll_interval", o.config.PollInterval).

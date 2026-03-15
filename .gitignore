@@ -4,3 +4,4 @@ bin/
 *.db-shm
 .env
 *.exe
+mise.toml

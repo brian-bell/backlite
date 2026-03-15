@@ -79,6 +79,7 @@ fi
 
 # --- Auth mode setup ---
 echo "==> Auth mode: ${AUTH_MODE}"
+echo "==> Model: ${MODEL}, effort: ${EFFORT}"
 if [ "$AUTH_MODE" = "api_key" ]; then
     if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
         echo "ERROR: ANTHROPIC_API_KEY is required in api_key mode" >&2

@@ -134,6 +134,20 @@ BODY=$(echo "$RESPONSE" | sed '$d')
 
 if [ "$HTTP_CODE" = "201" ]; then
     echo "$BODY" | jq .
+    TASK_ID=$(echo "$BODY" | jq -r '.id')
+    echo ""
+    echo "Useful commands:"
+    echo "  # Get task status"
+    echo "  curl -s ${BACKFLOW_URL}/api/v1/tasks/${TASK_ID} | jq ."
+    echo ""
+    echo "  # Stream logs"
+    echo "  curl -s ${BACKFLOW_URL}/api/v1/tasks/${TASK_ID}/logs"
+    echo ""
+    echo "  # Stream logs (last 50 lines)"
+    echo "  curl -s '${BACKFLOW_URL}/api/v1/tasks/${TASK_ID}/logs?tail=50'"
+    echo ""
+    echo "  # Cancel task"
+    echo "  curl -s -X DELETE ${BACKFLOW_URL}/api/v1/tasks/${TASK_ID} | jq ."
 else
     echo "Error (HTTP $HTTP_CODE):" >&2
     echo "$BODY" | jq . 2>/dev/null || echo "$BODY" >&2

@@ -134,7 +134,7 @@ BODY=$(echo "$RESPONSE" | sed '$d')
 
 if [ "$HTTP_CODE" = "201" ]; then
     echo "$BODY" | jq .
-    TASK_ID=$(echo "$BODY" | jq -r '.id')
+    TASK_ID=$(echo "$BODY" | jq -r '.data.id')
     echo ""
     echo "Useful commands:"
     echo "  # Get task status"

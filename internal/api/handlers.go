@@ -56,6 +56,7 @@ func (h *Handlers) CreateTask(w http.ResponseWriter, r *http.Request) {
 		MaxRuntimeMin: withDefaultInt(req.MaxRuntimeMin, int(h.config.DefaultMaxRuntime.Minutes())),
 		MaxTurns:      withDefaultInt(req.MaxTurns, h.config.DefaultMaxTurns),
 		CreatePR:      req.CreatePR,
+		SelfReview:    req.SelfReview,
 		PRTitle:       req.PRTitle,
 		PRBody:        req.PRBody,
 		AllowedTools:  req.AllowedTools,

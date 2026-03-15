@@ -10,6 +10,7 @@ set -euo pipefail
 #   ./scripts/create-task.sh https://github.com/org/repo "Fix the login bug"
 #   ./scripts/create-task.sh https://github.com/org/repo "Add unit tests" --pr --model claude-sonnet-4-6
 #   ./scripts/create-task.sh https://github.com/org/repo "Refactor auth" --pr --pr-title "Refactor auth module" --budget 20
+#   ./scripts/create-task.sh https://github.com/org/repo "Fix bug" --effort low --model claude-sonnet-4-6
 
 BACKFLOW_URL="${BACKFLOW_URL:-http://localhost:8080}"
 
@@ -20,7 +21,8 @@ Usage: $(basename "$0") <repo_url> <prompt> [options]
 Options:
   --branch <name>         Working branch name
   --target-branch <name>  Target branch (default: main)
-  --model <model>         Claude model to use
+  --model <model>         Claude model to use (default: claude-opus-4-6)
+  --effort <level>        Reasoning effort: low, medium, high (default: high)
   --budget <usd>          Max budget in USD
   --runtime <min>         Max runtime in minutes
   --turns <n>             Max conversation turns
@@ -45,7 +47,8 @@ shift 2
 # Defaults
 BRANCH=""
 TARGET_BRANCH=""
-MODEL=""
+MODEL="claude-opus-4-6"
+EFFORT="high"
 BUDGET=""
 RUNTIME=""
 TURNS=""
@@ -61,6 +64,7 @@ while [ $# -gt 0 ]; do
         --branch)       BRANCH="$2"; shift 2 ;;
         --target-branch) TARGET_BRANCH="$2"; shift 2 ;;
         --model)        MODEL="$2"; shift 2 ;;
+        --effort)       EFFORT="$2"; shift 2 ;;
         --budget)       BUDGET="$2"; shift 2 ;;
         --runtime)      RUNTIME="$2"; shift 2 ;;
         --turns)        TURNS="$2"; shift 2 ;;
@@ -81,6 +85,7 @@ JSON=$(jq -n \
     --arg branch "$BRANCH" \
     --arg target_branch "$TARGET_BRANCH" \
     --arg model "$MODEL" \
+    --arg effort "$EFFORT" \
     --arg budget "$BUDGET" \
     --arg runtime "$RUNTIME" \
     --arg turns "$TURNS" \
@@ -97,6 +102,7 @@ JSON=$(jq -n \
     + if $branch != "" then {branch: $branch} else {} end
     + if $target_branch != "" then {target_branch: $target_branch} else {} end
     + if $model != "" then {model: $model} else {} end
+    + if $effort != "" then {effort: $effort} else {} end
     + if $budget != "" then {max_budget_usd: ($budget | tonumber)} else {} end
     + if $runtime != "" then {max_runtime_min: ($runtime | tonumber)} else {} end
     + if $turns != "" then {max_turns: ($turns | tonumber)} else {} end
@@ -128,6 +134,20 @@ BODY=$(echo "$RESPONSE" | sed '$d')
 
 if [ "$HTTP_CODE" = "201" ]; then
     echo "$BODY" | jq .
+    TASK_ID=$(echo "$BODY" | jq -r '.data.id')
+    echo ""
+    echo "Useful commands:"
+    echo "  # Get task status"
+    echo "  curl -s ${BACKFLOW_URL}/api/v1/tasks/${TASK_ID} | jq ."
+    echo ""
+    echo "  # Stream logs"
+    echo "  curl -s ${BACKFLOW_URL}/api/v1/tasks/${TASK_ID}/logs"
+    echo ""
+    echo "  # Stream logs (last 50 lines)"
+    echo "  curl -s '${BACKFLOW_URL}/api/v1/tasks/${TASK_ID}/logs?tail=50'"
+    echo ""
+    echo "  # Cancel task"
+    echo "  curl -s -X DELETE ${BACKFLOW_URL}/api/v1/tasks/${TASK_ID} | jq ."
 else
     echo "Error (HTTP $HTTP_CODE):" >&2
     echo "$BODY" | jq . 2>/dev/null || echo "$BODY" >&2

@@ -31,6 +31,7 @@ type Task struct {
 	Prompt        string     `json:"prompt"`
 	Context       string     `json:"context,omitempty"`
 	Model         string     `json:"model,omitempty"`
+	Effort        string     `json:"effort,omitempty"`
 	MaxBudgetUSD  float64    `json:"max_budget_usd,omitempty"`
 	MaxRuntimeMin int        `json:"max_runtime_min,omitempty"`
 	MaxTurns      int        `json:"max_turns,omitempty"`
@@ -78,6 +79,7 @@ type CreateTaskRequest struct {
 	Prompt        string            `json:"prompt"`
 	Context       string            `json:"context,omitempty"`
 	Model         string            `json:"model,omitempty"`
+	Effort        string            `json:"effort,omitempty"`
 	MaxBudgetUSD  float64           `json:"max_budget_usd,omitempty"`
 	MaxRuntimeMin int               `json:"max_runtime_min,omitempty"`
 	MaxTurns      int               `json:"max_turns,omitempty"`
@@ -101,6 +103,13 @@ func (r *CreateTaskRequest) Validate() error {
 	}
 	if r.MaxRuntimeMin < 0 {
 		return fmt.Errorf("max_runtime_min must be non-negative")
+	}
+	if r.Effort != "" {
+		switch r.Effort {
+		case "low", "medium", "high", "xhigh":
+		default:
+			return fmt.Errorf("effort must be low, medium, high, or xhigh")
+		}
 	}
 	return nil
 }

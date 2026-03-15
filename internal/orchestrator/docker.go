@@ -62,6 +62,7 @@ func (m *DockerManager) RunAgent(ctx context.Context, instance *models.Instance,
 		fmt.Sprintf("-e MAX_BUDGET_USD=%g", task.MaxBudgetUSD),
 		fmt.Sprintf("-e MAX_TURNS=%d", task.MaxTurns),
 		fmt.Sprintf("-e CREATE_PR=%t", task.CreatePR),
+		fmt.Sprintf("-e SELF_REVIEW=%t", task.SelfReview),
 	}
 
 	if task.PRTitle != "" {

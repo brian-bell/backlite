@@ -31,6 +31,7 @@ Options:
   --pr-body <body>        PR body
   --claude-md <text>      Extra CLAUDE.md content to inject
   --context <text>        Additional context for the prompt
+  --self-review           Enable self-review after PR creation
   --env <KEY=VALUE>       Environment variable (can repeat)
 USAGE
     exit 1
@@ -53,6 +54,7 @@ BUDGET=""
 RUNTIME=""
 TURNS=""
 CREATE_PR=true
+SELF_REVIEW=false
 PR_TITLE=""
 PR_BODY=""
 CLAUDE_MD=""
@@ -69,6 +71,7 @@ while [ $# -gt 0 ]; do
         --runtime)      RUNTIME="$2"; shift 2 ;;
         --turns)        TURNS="$2"; shift 2 ;;
         --pr)           CREATE_PR=true; shift ;;
+        --self-review)  SELF_REVIEW=true; shift ;;
         --pr-title)     PR_TITLE="$2"; shift 2 ;;
         --pr-body)      PR_BODY="$2"; shift 2 ;;
         --claude-md)    CLAUDE_MD="$2"; shift 2 ;;
@@ -90,6 +93,7 @@ JSON=$(jq -n \
     --arg runtime "$RUNTIME" \
     --arg turns "$TURNS" \
     --argjson create_pr "$CREATE_PR" \
+    --argjson self_review "$SELF_REVIEW" \
     --arg pr_title "$PR_TITLE" \
     --arg pr_body "$PR_BODY" \
     --arg claude_md "$CLAUDE_MD" \
@@ -97,7 +101,8 @@ JSON=$(jq -n \
     '{
         repo_url: $repo_url,
         prompt: $prompt,
-        create_pr: $create_pr
+        create_pr: $create_pr,
+        self_review: $self_review
     }
     + if $branch != "" then {branch: $branch} else {} end
     + if $target_branch != "" then {target_branch: $target_branch} else {} end

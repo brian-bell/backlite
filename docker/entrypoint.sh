@@ -16,6 +16,7 @@ PR_TITLE="${PR_TITLE:-}"
 PR_BODY="${PR_BODY:-}"
 CLAUDE_MD="${CLAUDE_MD:-}"
 TASK_CONTEXT="${TASK_CONTEXT:-}"
+SELF_REVIEW="${SELF_REVIEW:-false}"
 MAX_RETRIES="${MAX_RETRIES:-3}"
 
 WORKSPACE="/home/agent/workspace"
@@ -233,7 +234,7 @@ if [ "$CREATE_PR" = "true" ] && [ "$COMPLETE" = "true" ]; then
 fi
 
 # --- Self-review phase ---
-if [ -n "$PR_URL" ]; then
+if [ "$SELF_REVIEW" = "true" ] && [ -n "$PR_URL" ]; then
     echo "==> Starting self-review phase..."
 
     # Cap review budget at 20% of coding budget (minimum $2)

@@ -50,6 +50,7 @@ func (s *SQLiteStore) migrate() error {
 		max_runtime_min INTEGER NOT NULL DEFAULT 0,
 		max_turns       INTEGER NOT NULL DEFAULT 0,
 		create_pr       INTEGER NOT NULL DEFAULT 0,
+		self_review     INTEGER NOT NULL DEFAULT 0,
 		pr_title        TEXT NOT NULL DEFAULT '',
 		pr_body         TEXT NOT NULL DEFAULT '',
 		pr_url          TEXT NOT NULL DEFAULT '',
@@ -95,15 +96,15 @@ func (s *SQLiteStore) CreateTask(ctx context.Context, task *models.Task) error {
 		INSERT INTO tasks (
 			id, status, repo_url, branch, target_branch, prompt, context,
 			model, effort, max_budget_usd, max_runtime_min, max_turns,
-			create_pr, pr_title, pr_body, pr_url,
+			create_pr, self_review, pr_title, pr_body, pr_url,
 			allowed_tools, claude_md, env_vars,
 			instance_id, container_id, retry_count, cost_usd, error,
 			created_at, updated_at, started_at, completed_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		task.ID, task.Status, task.RepoURL, task.Branch, task.TargetBranch,
 		task.Prompt, task.Context, task.Model, task.Effort,
 		task.MaxBudgetUSD, task.MaxRuntimeMin, task.MaxTurns,
-		boolToInt(task.CreatePR), task.PRTitle, task.PRBody, task.PRURL,
+		boolToInt(task.CreatePR), boolToInt(task.SelfReview), task.PRTitle, task.PRBody, task.PRURL,
 		task.AllowedToolsJSON(), task.ClaudeMD, task.EnvVarsJSON(),
 		task.InstanceID, task.ContainerID, task.RetryCount, task.CostUSD, task.Error,
 		task.CreatedAt.Format(time.RFC3339), task.UpdatedAt.Format(time.RFC3339),
@@ -116,7 +117,7 @@ func (s *SQLiteStore) GetTask(ctx context.Context, id string) (*models.Task, err
 	row := s.db.QueryRowContext(ctx, `SELECT
 		id, status, repo_url, branch, target_branch, prompt, context,
 		model, effort, max_budget_usd, max_runtime_min, max_turns,
-		create_pr, pr_title, pr_body, pr_url,
+		create_pr, self_review, pr_title, pr_body, pr_url,
 		allowed_tools, claude_md, env_vars,
 		instance_id, container_id, retry_count, cost_usd, error,
 		created_at, updated_at, started_at, completed_at
@@ -125,7 +126,7 @@ func (s *SQLiteStore) GetTask(ctx context.Context, id string) (*models.Task, err
 }
 
 func (s *SQLiteStore) ListTasks(ctx context.Context, filter TaskFilter) ([]*models.Task, error) {
-	query := "SELECT id, status, repo_url, branch, target_branch, prompt, context, model, effort, max_budget_usd, max_runtime_min, max_turns, create_pr, pr_title, pr_body, pr_url, allowed_tools, claude_md, env_vars, instance_id, container_id, retry_count, cost_usd, error, created_at, updated_at, started_at, completed_at FROM tasks"
+	query := "SELECT id, status, repo_url, branch, target_branch, prompt, context, model, effort, max_budget_usd, max_runtime_min, max_turns, create_pr, self_review, pr_title, pr_body, pr_url, allowed_tools, claude_md, env_vars, instance_id, container_id, retry_count, cost_usd, error, created_at, updated_at, started_at, completed_at FROM tasks"
 	var args []any
 	var where []string
 
@@ -167,7 +168,7 @@ func (s *SQLiteStore) UpdateTask(ctx context.Context, task *models.Task) error {
 		UPDATE tasks SET
 			status=?, repo_url=?, branch=?, target_branch=?, prompt=?, context=?,
 			model=?, effort=?, max_budget_usd=?, max_runtime_min=?, max_turns=?,
-			create_pr=?, pr_title=?, pr_body=?, pr_url=?,
+			create_pr=?, self_review=?, pr_title=?, pr_body=?, pr_url=?,
 			allowed_tools=?, claude_md=?, env_vars=?,
 			instance_id=?, container_id=?, retry_count=?, cost_usd=?, error=?,
 			updated_at=?, started_at=?, completed_at=?
@@ -175,7 +176,7 @@ func (s *SQLiteStore) UpdateTask(ctx context.Context, task *models.Task) error {
 		task.Status, task.RepoURL, task.Branch, task.TargetBranch,
 		task.Prompt, task.Context, task.Model, task.Effort,
 		task.MaxBudgetUSD, task.MaxRuntimeMin, task.MaxTurns,
-		boolToInt(task.CreatePR), task.PRTitle, task.PRBody, task.PRURL,
+		boolToInt(task.CreatePR), boolToInt(task.SelfReview), task.PRTitle, task.PRBody, task.PRURL,
 		task.AllowedToolsJSON(), task.ClaudeMD, task.EnvVarsJSON(),
 		task.InstanceID, task.ContainerID, task.RetryCount, task.CostUSD, task.Error,
 		task.UpdatedAt.Format(time.RFC3339), timePtr(task.StartedAt), timePtr(task.CompletedAt),
@@ -255,7 +256,7 @@ type scanner interface {
 
 func scanTask(row scanner) (*models.Task, error) {
 	var t models.Task
-	var createPR int
+	var createPR, selfReview int
 	var allowedToolsJSON, envVarsJSON string
 	var createdAt, updatedAt string
 	var startedAt, completedAt sql.NullString
@@ -264,7 +265,7 @@ func scanTask(row scanner) (*models.Task, error) {
 		&t.ID, &t.Status, &t.RepoURL, &t.Branch, &t.TargetBranch,
 		&t.Prompt, &t.Context, &t.Model, &t.Effort,
 		&t.MaxBudgetUSD, &t.MaxRuntimeMin, &t.MaxTurns,
-		&createPR, &t.PRTitle, &t.PRBody, &t.PRURL,
+		&createPR, &selfReview, &t.PRTitle, &t.PRBody, &t.PRURL,
 		&allowedToolsJSON, &t.ClaudeMD, &envVarsJSON,
 		&t.InstanceID, &t.ContainerID, &t.RetryCount, &t.CostUSD, &t.Error,
 		&createdAt, &updatedAt, &startedAt, &completedAt,
@@ -277,6 +278,7 @@ func scanTask(row scanner) (*models.Task, error) {
 	}
 
 	t.CreatePR = createPR != 0
+	t.SelfReview = selfReview != 0
 	json.Unmarshal([]byte(allowedToolsJSON), &t.AllowedTools)
 	json.Unmarshal([]byte(envVarsJSON), &t.EnvVars)
 	t.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)

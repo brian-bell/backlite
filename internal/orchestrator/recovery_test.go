@@ -3,173 +3,12 @@ package orchestrator
 import (
 	"context"
 	"fmt"
-	"sync"
 	"testing"
 	"time"
 
-	"github.com/backflow-labs/backflow/internal/config"
 	"github.com/backflow-labs/backflow/internal/models"
 	"github.com/backflow-labs/backflow/internal/notify"
-	"github.com/backflow-labs/backflow/internal/store"
 )
-
-// mockStore implements store.Store for testing.
-type mockStore struct {
-	tasks     map[string]*models.Task
-	instances map[string]*models.Instance
-	mu        sync.Mutex
-}
-
-func newMockStore() *mockStore {
-	return &mockStore{
-		tasks:     make(map[string]*models.Task),
-		instances: make(map[string]*models.Instance),
-	}
-}
-
-func (s *mockStore) CreateTask(_ context.Context, task *models.Task) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.tasks[task.ID] = task
-	return nil
-}
-
-func (s *mockStore) GetTask(_ context.Context, id string) (*models.Task, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	t, ok := s.tasks[id]
-	if !ok {
-		return nil, nil
-	}
-	return t, nil
-}
-
-func (s *mockStore) ListTasks(_ context.Context, filter store.TaskFilter) ([]*models.Task, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var result []*models.Task
-	for _, t := range s.tasks {
-		if filter.Status != nil && t.Status != *filter.Status {
-			continue
-		}
-		result = append(result, t)
-	}
-	if filter.Limit > 0 && len(result) > filter.Limit {
-		result = result[:filter.Limit]
-	}
-	return result, nil
-}
-
-func (s *mockStore) UpdateTask(_ context.Context, task *models.Task) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.tasks[task.ID] = task
-	return nil
-}
-
-func (s *mockStore) DeleteTask(_ context.Context, id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.tasks, id)
-	return nil
-}
-
-func (s *mockStore) CreateInstance(_ context.Context, inst *models.Instance) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.instances[inst.InstanceID] = inst
-	return nil
-}
-
-func (s *mockStore) GetInstance(_ context.Context, id string) (*models.Instance, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	i, ok := s.instances[id]
-	if !ok {
-		return nil, nil
-	}
-	return i, nil
-}
-
-func (s *mockStore) ListInstances(_ context.Context, status *models.InstanceStatus) ([]*models.Instance, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var result []*models.Instance
-	for _, i := range s.instances {
-		if status != nil && i.Status != *status {
-			continue
-		}
-		result = append(result, i)
-	}
-	return result, nil
-}
-
-func (s *mockStore) UpdateInstance(_ context.Context, inst *models.Instance) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.instances[inst.InstanceID] = inst
-	return nil
-}
-
-func (s *mockStore) Close() error { return nil }
-
-// mockNotifier records events.
-type mockNotifier struct {
-	events []notify.Event
-	mu     sync.Mutex
-}
-
-func (n *mockNotifier) Notify(e notify.Event) error {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	n.events = append(n.events, e)
-	return nil
-}
-
-func (n *mockNotifier) eventTypes() []notify.EventType {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	var types []notify.EventType
-	for _, e := range n.events {
-		types = append(types, e.Type)
-	}
-	return types
-}
-
-// mockDockerManager wraps DockerManager to override InspectContainer for tests.
-type mockDockerManager struct {
-	inspectResults map[string]ContainerStatus
-	inspectErrors  map[string]error
-}
-
-func (m *mockDockerManager) inspect(instanceID, containerID string) (ContainerStatus, error) {
-	key := instanceID + "/" + containerID
-	if err, ok := m.inspectErrors[key]; ok {
-		return ContainerStatus{}, err
-	}
-	if status, ok := m.inspectResults[key]; ok {
-		return status, nil
-	}
-	return ContainerStatus{}, fmt.Errorf("unknown container %s", key)
-}
-
-func newTestOrchestrator(s store.Store, n notify.Notifier) *Orchestrator {
-	cfg := &config.Config{
-		Mode:              config.ModeLocal,
-		AuthMode:          config.AuthModeAPIKey,
-		ContainersPerInst: 4,
-		PollInterval:      5 * time.Second,
-	}
-	return &Orchestrator{
-		store:           s,
-		config:          cfg,
-		notifier:        n,
-		docker:          NewDockerManager(cfg),
-		scaler:          localScaler{},
-		stopCh:          make(chan struct{}),
-		inspectFailures: make(map[string]int),
-	}
-}
 
 func TestRecoverOnStartup_NoOrphans(t *testing.T) {
 	s := newMockStore()
@@ -190,12 +29,7 @@ func TestRecoverOnStartup_RunningOrphans(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
 
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:        "local",
-		Status:            models.InstanceStatusRunning,
-		MaxContainers:     4,
-		RunningContainers: 0,
-	})
+	s.CreateInstance(context.Background(), newLocalInstance())
 
 	s.CreateTask(context.Background(), &models.Task{
 		ID:          "bf_task1",
@@ -212,25 +46,20 @@ func TestRecoverOnStartup_RunningOrphans(t *testing.T) {
 
 	o.recoverOnStartup(context.Background())
 
-	// Task should be recovering
 	task, _ := s.GetTask(context.Background(), "bf_task1")
 	if task.Status != models.TaskStatusRecovering {
 		t.Errorf("task status = %q, want %q", task.Status, models.TaskStatusRecovering)
 	}
-	// Container should be preserved for inspection
 	if task.ContainerID != "abc123" {
 		t.Errorf("container ID should be preserved, got %q", task.ContainerID)
 	}
-	// o.running should reflect the previously-running task
 	if o.running != 1 {
 		t.Errorf("running = %d, want 1", o.running)
 	}
-	// Instance RunningContainers should be fixed up
 	inst, _ := s.GetInstance(context.Background(), "local")
 	if inst.RunningContainers != 1 {
 		t.Errorf("instance RunningContainers = %d, want 1", inst.RunningContainers)
 	}
-	// Should have fired recovering event
 	types := n.eventTypes()
 	if len(types) != 1 || types[0] != notify.EventTaskRecovering {
 		t.Errorf("expected [task.recovering], got %v", types)
@@ -256,14 +85,12 @@ func TestRecoverOnStartup_ProvisioningOrphans(t *testing.T) {
 	if task.Status != models.TaskStatusRecovering {
 		t.Errorf("task status = %q, want %q", task.Status, models.TaskStatusRecovering)
 	}
-	// Instance and container should be cleared
 	if task.InstanceID != "" {
 		t.Errorf("instance ID should be cleared, got %q", task.InstanceID)
 	}
 	if task.ContainerID != "" {
 		t.Errorf("container ID should be cleared, got %q", task.ContainerID)
 	}
-	// Provisioning tasks don't count toward o.running
 	if o.running != 0 {
 		t.Errorf("running = %d, want 0", o.running)
 	}
@@ -301,7 +128,6 @@ func TestRecoverOnStartup_Mixed(t *testing.T) {
 
 	o.recoverOnStartup(context.Background())
 
-	// Both should be recovering
 	t1, _ := s.GetTask(context.Background(), "bf_running")
 	t2, _ := s.GetTask(context.Background(), "bf_prov")
 	if t1.Status != models.TaskStatusRecovering {
@@ -310,7 +136,6 @@ func TestRecoverOnStartup_Mixed(t *testing.T) {
 	if t2.Status != models.TaskStatusRecovering {
 		t.Errorf("provisioning task status = %q, want recovering", t2.Status)
 	}
-	// Only the running task counts
 	if o.running != 1 {
 		t.Errorf("running = %d, want 1", o.running)
 	}
@@ -321,17 +146,12 @@ func TestRecoverOnStartup_Mixed(t *testing.T) {
 
 func TestMonitorRecovering_NoContainer(t *testing.T) {
 	s := newMockStore()
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:    "local",
-		Status:        models.InstanceStatusRunning,
-		MaxContainers: 4,
-	})
+	s.CreateInstance(context.Background(), newLocalInstance())
 	s.CreateTask(context.Background(), &models.Task{
 		ID:      "bf_noc",
 		Status:  models.TaskStatusRecovering,
 		RepoURL: "https://github.com/test/repo",
 		Prompt:  "orphaned provisioning task",
-		// No ContainerID — was provisioning
 	})
 
 	n := &mockNotifier{}
@@ -352,11 +172,7 @@ func TestMonitorRecovering_ContainerStillRunning(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
 
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:    "local",
-		Status:        models.InstanceStatusRunning,
-		MaxContainers: 4,
-	})
+	s.CreateInstance(context.Background(), newLocalInstance())
 
 	s.CreateTask(context.Background(), &models.Task{
 		ID:          "bf_alive",
@@ -369,29 +185,22 @@ func TestMonitorRecovering_ContainerStillRunning(t *testing.T) {
 	})
 
 	n := &mockNotifier{}
-	_ = newTestOrchestrator(s, n)
-
-	// Since DockerManager.InspectContainer is not an interface, we test the
-	// promote-back-to-running logic path directly.
 	mock := &mockDockerManager{
 		inspectResults: map[string]ContainerStatus{
 			"local/cont_alive": {Done: false},
 		},
 	}
+	o := newTestOrchestrator(s, n, withDocker(mock))
+
+	o.monitorRecovering(context.Background())
 
 	task, _ := s.GetTask(context.Background(), "bf_alive")
-	status, _ := mock.inspect("local", "cont_alive")
-	if status.Done {
-		t.Fatal("expected container to be running")
-	}
-	// Simulate what monitorRecovering does when container is still running
-	task.Status = models.TaskStatusRunning
-	task.Error = ""
-	s.UpdateTask(context.Background(), task)
-
-	task, _ = s.GetTask(context.Background(), "bf_alive")
 	if task.Status != models.TaskStatusRunning {
 		t.Errorf("task status = %q, want running", task.Status)
+	}
+	types := n.eventTypes()
+	if len(types) != 1 || types[0] != notify.EventTaskRunning {
+		t.Errorf("expected [task.running], got %v", types)
 	}
 }
 
@@ -418,9 +227,8 @@ func TestMonitorRecovering_ContainerExited(t *testing.T) {
 
 	n := &mockNotifier{}
 	o := newTestOrchestrator(s, n)
-	o.running = 1 // Was counted during recoverOnStartup
+	o.running = 1
 
-	// Simulate handleCompletion for an exited container
 	task, _ := s.GetTask(context.Background(), "bf_exited")
 	status := ContainerStatus{Done: true, ExitCode: 0}
 	o.handleCompletion(context.Background(), task, status)
@@ -431,6 +239,117 @@ func TestMonitorRecovering_ContainerExited(t *testing.T) {
 	}
 	if o.running != 0 {
 		t.Errorf("running = %d, want 0", o.running)
+	}
+}
+
+// --- handleRecoveringInspectError tests ---
+
+func TestHandleRecoveringInspectError_InstanceGone(t *testing.T) {
+	s := newMockStore()
+	now := time.Now().UTC()
+
+	s.CreateInstance(context.Background(), newLocalInstance())
+	s.CreateTask(context.Background(), &models.Task{
+		ID:          "bf_rgone",
+		Status:      models.TaskStatusRecovering,
+		RepoURL:     "https://github.com/test/repo",
+		Prompt:      "recovering task",
+		InstanceID:  "local",
+		ContainerID: "cont1",
+		StartedAt:   &now,
+	})
+
+	n := &mockNotifier{}
+	o := newTestOrchestrator(s, n)
+	o.running = 1
+	o.inspectFailures["bf_rgone"] = 2 // should be cleared
+
+	task, _ := s.GetTask(context.Background(), "bf_rgone")
+	o.handleRecoveringInspectError(context.Background(), task, fmt.Errorf("InvalidInstanceId: i-abc"))
+
+	task, _ = s.GetTask(context.Background(), "bf_rgone")
+	if task.Status != models.TaskStatusPending {
+		t.Errorf("status = %q, want pending (requeued)", task.Status)
+	}
+	if task.RetryCount != 1 {
+		t.Errorf("retry count = %d, want 1", task.RetryCount)
+	}
+	if o.running != 0 {
+		t.Errorf("running = %d, want 0 (wasRunning should decrement)", o.running)
+	}
+	if _, exists := o.inspectFailures["bf_rgone"]; exists {
+		t.Error("inspectFailures should be cleared on instance gone")
+	}
+}
+
+func TestHandleRecoveringInspectError_AccumulatesFailures(t *testing.T) {
+	s := newMockStore()
+	now := time.Now().UTC()
+
+	s.CreateInstance(context.Background(), newLocalInstance())
+	s.CreateTask(context.Background(), &models.Task{
+		ID:          "bf_raccum",
+		Status:      models.TaskStatusRecovering,
+		InstanceID:  "local",
+		ContainerID: "cont1",
+		StartedAt:   &now,
+	})
+
+	n := &mockNotifier{}
+	o := newTestOrchestrator(s, n)
+	o.running = 1
+
+	task, _ := s.GetTask(context.Background(), "bf_raccum")
+
+	// First two failures — should accumulate without requeueing
+	o.handleRecoveringInspectError(context.Background(), task, fmt.Errorf("connection refused"))
+	o.handleRecoveringInspectError(context.Background(), task, fmt.Errorf("connection refused"))
+
+	if o.inspectFailures["bf_raccum"] != 2 {
+		t.Errorf("inspectFailures = %d, want 2", o.inspectFailures["bf_raccum"])
+	}
+	// Task should still be recovering in the store
+	task, _ = s.GetTask(context.Background(), "bf_raccum")
+	if task.Status != models.TaskStatusRecovering {
+		t.Errorf("status = %q, want recovering (under threshold)", task.Status)
+	}
+	if o.running != 1 {
+		t.Errorf("running = %d, want 1 (not yet requeued)", o.running)
+	}
+}
+
+func TestHandleRecoveringInspectError_RequeuesAtMaxFailures(t *testing.T) {
+	s := newMockStore()
+	now := time.Now().UTC()
+
+	s.CreateInstance(context.Background(), newLocalInstance())
+	s.CreateTask(context.Background(), &models.Task{
+		ID:          "bf_rmaxfail",
+		Status:      models.TaskStatusRecovering,
+		RepoURL:     "https://github.com/test/repo",
+		Prompt:      "failing recovery",
+		InstanceID:  "local",
+		ContainerID: "cont1",
+		StartedAt:   &now,
+	})
+
+	n := &mockNotifier{}
+	o := newTestOrchestrator(s, n)
+	o.running = 1
+	o.inspectFailures["bf_rmaxfail"] = maxInspectFailures - 1
+
+	task, _ := s.GetTask(context.Background(), "bf_rmaxfail")
+	o.handleRecoveringInspectError(context.Background(), task, fmt.Errorf("connection refused"))
+
+	task, _ = s.GetTask(context.Background(), "bf_rmaxfail")
+	if task.Status != models.TaskStatusPending {
+		t.Errorf("status = %q, want pending (requeued after max failures)", task.Status)
+	}
+	if o.running != 0 {
+		t.Errorf("running = %d, want 0 (wasRunning should decrement)", o.running)
+	}
+	if _, exists := o.inspectFailures["bf_rmaxfail"]; exists {
+		t.Error("inspectFailures should be cleared after requeue")
 	}
 }
 
@@ -502,109 +421,7 @@ func TestRequeueRecoveringTask_WasProvisioning(t *testing.T) {
 	if task.RetryCount != 1 {
 		t.Errorf("retry count = %d, want 1", task.RetryCount)
 	}
-	// running should stay at 0 since wasRunning=false
 	if o.running != 0 {
 		t.Errorf("running = %d, want 0", o.running)
-	}
-}
-
-func TestMonitorCancelled_DecrementsRunning(t *testing.T) {
-	s := newMockStore()
-	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:        "local",
-		Status:            models.InstanceStatusRunning,
-		MaxContainers:     4,
-		RunningContainers: 1,
-	})
-
-	// A task that was running and then cancelled via the API
-	s.CreateTask(context.Background(), &models.Task{
-		ID:          "bf_cancel_run",
-		Status:      models.TaskStatusCancelled,
-		InstanceID:  "local",
-		ContainerID: "abc123",
-		StartedAt:   &now,
-		CompletedAt: &now,
-	})
-
-	n := &mockNotifier{}
-	o := newTestOrchestrator(s, n)
-	o.running = 1 // Was counted when originally dispatched
-
-	o.monitorCancelled(context.Background())
-
-	if o.running != 0 {
-		t.Errorf("running = %d, want 0", o.running)
-	}
-
-	task, _ := s.GetTask(context.Background(), "bf_cancel_run")
-	if task.ContainerID != "" {
-		t.Errorf("containerID = %q, want empty (should be cleared after cleanup)", task.ContainerID)
-	}
-
-	inst, _ := s.GetInstance(context.Background(), "local")
-	if inst.RunningContainers != 0 {
-		t.Errorf("RunningContainers = %d, want 0", inst.RunningContainers)
-	}
-}
-
-func TestMonitorCancelled_IgnoresWithoutContainer(t *testing.T) {
-	s := newMockStore()
-	now := time.Now().UTC()
-
-	// A cancelled task that was provisioning (no container) — should not affect o.running
-	s.CreateTask(context.Background(), &models.Task{
-		ID:          "bf_cancel_prov",
-		Status:      models.TaskStatusCancelled,
-		CompletedAt: &now,
-	})
-
-	n := &mockNotifier{}
-	o := newTestOrchestrator(s, n)
-	o.running = 0
-
-	o.monitorCancelled(context.Background())
-
-	if o.running != 0 {
-		t.Errorf("running = %d, want 0", o.running)
-	}
-}
-
-func TestMonitorCancelled_RecoveringTaskCancelled(t *testing.T) {
-	s := newMockStore()
-	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:        "local",
-		Status:            models.InstanceStatusRunning,
-		MaxContainers:     4,
-		RunningContainers: 1,
-	})
-
-	// A recovering task (previously running) that was cancelled via API
-	s.CreateTask(context.Background(), &models.Task{
-		ID:          "bf_cancel_recov",
-		Status:      models.TaskStatusCancelled,
-		InstanceID:  "local",
-		ContainerID: "def456",
-		StartedAt:   &now,
-		CompletedAt: &now,
-	})
-
-	n := &mockNotifier{}
-	o := newTestOrchestrator(s, n)
-	o.running = 1 // Was counted during recoverOnStartup
-
-	o.monitorCancelled(context.Background())
-
-	if o.running != 0 {
-		t.Errorf("running = %d, want 0", o.running)
-	}
-
-	task, _ := s.GetTask(context.Background(), "bf_cancel_recov")
-	if task.ContainerID != "" {
-		t.Errorf("containerID = %q, want empty", task.ContainerID)
 	}
 }

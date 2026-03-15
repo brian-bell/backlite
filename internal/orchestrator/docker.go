@@ -24,6 +24,14 @@ type ContainerStatus struct {
 	PRURL      string
 }
 
+// dockerClient is the interface used by the orchestrator to manage containers.
+type dockerClient interface {
+	RunAgent(ctx context.Context, instance *models.Instance, task *models.Task) (string, error)
+	InspectContainer(ctx context.Context, instanceID, containerID string) (ContainerStatus, error)
+	StopContainer(ctx context.Context, instanceID, containerID string) error
+	GetLogs(ctx context.Context, instanceID, containerID string, tail int) (string, error)
+}
+
 // DockerManager manages agent containers on remote (SSM) or local hosts.
 type DockerManager struct {
 	config    *config.Config

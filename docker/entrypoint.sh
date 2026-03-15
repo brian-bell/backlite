@@ -177,7 +177,7 @@ while [ $ATTEMPT -lt "$MAX_RETRIES" ]; do
 ${ERROR_TAIL}
 
 Please try again:
-${PROMPT}"
+${PROMPT}${GIT_INSTRUCTIONS}"
         # Rebuild args with updated prompt
         CLAUDE_ARGS=( -p "$FULL_PROMPT" --dangerously-skip-permissions --model "$MODEL" --effort "$EFFORT" --max-turns "$MAX_TURNS" --output-format stream-json --verbose )
         if [ "$AUTH_MODE" = "api_key" ]; then
@@ -264,6 +264,7 @@ If everything looks good, approve the PR. If there are real issues, request chan
 
     REVIEW_ARGS=(
         -p "$REVIEW_PROMPT"
+        --dangerously-skip-permissions
         --model "$MODEL"
         --max-turns 3
         --output-format json

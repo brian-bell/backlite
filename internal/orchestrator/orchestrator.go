@@ -280,7 +280,7 @@ func (o *Orchestrator) handleCompletion(ctx context.Context, task *models.Task, 
 			TaskID:         task.ID,
 			RepoURL:        task.RepoURL,
 			Prompt:         task.Prompt,
-			PRURL: status.PRURL,
+			PRURL:          status.PRURL,
 			AgentLogTail:   status.LogTail,
 			Timestamp:      now,
 		})

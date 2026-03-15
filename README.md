@@ -201,10 +201,12 @@ All config is via environment variables (or `.env` file).
 | `BACKFLOW_LISTEN_ADDR` | `:8080` | Server listen address |
 | `BACKFLOW_DB_PATH` | `backflow.db` | SQLite database path |
 | `AWS_REGION` | `us-east-1` | AWS region |
-| `BACKFLOW_INSTANCE_TYPE` | `t4g.medium` | EC2 instance type |
+| `BACKFLOW_INSTANCE_TYPE` | `m7g.xlarge` | EC2 instance type |
 | `BACKFLOW_LAUNCH_TEMPLATE_ID` | | From `make setup-aws` |
 | `BACKFLOW_MAX_INSTANCES` | `5` | Max EC2 instances |
-| `BACKFLOW_CONTAINERS_PER_INSTANCE` | `4` | Containers per instance |
+| `BACKFLOW_CONTAINERS_PER_INSTANCE` | `1` | Containers per instance |
+| `BACKFLOW_CONTAINER_CPUS` | `2` | CPU cores per container |
+| `BACKFLOW_CONTAINER_MEMORY_GB` | `8` | Memory (GB) per container |
 | `BACKFLOW_DEFAULT_MODEL` | `claude-sonnet-4-6` | Default Claude model |
 | `BACKFLOW_DEFAULT_MAX_BUDGET` | `10` | Default budget (USD) |
 | `BACKFLOW_DEFAULT_MAX_RUNTIME_MIN` | `30` | Default max runtime (min) |

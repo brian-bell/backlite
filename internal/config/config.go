@@ -13,6 +13,8 @@ type Mode string
 const (
 	ModeEC2   Mode = "ec2"
 	ModeLocal Mode = "local"
+
+	MaxLocalContainers = 6
 )
 
 type AuthMode string
@@ -30,17 +32,21 @@ type Config struct {
 	ListenAddr string
 
 	// Auth
-	AuthMode             AuthMode
-	AnthropicAPIKey      string
+	AuthMode              AuthMode
+	AnthropicAPIKey       string
 	ClaudeCredentialsPath string
 
 	// AWS
-	AWSRegion        string
-	InstanceType     string
-	AMI              string
-	MaxInstances     int
+	AWSRegion         string
+	InstanceType      string
+	AMI               string
+	MaxInstances      int
 	ContainersPerInst int
-	LaunchTemplateID string
+	LaunchTemplateID  string
+
+	// Container resources
+	ContainerCPUs  int
+	ContainerMemGB int
 
 	// Agent defaults
 	DefaultModel      string
@@ -75,26 +81,28 @@ func (c *Config) MaxConcurrent() int {
 
 func Load() (*Config, error) {
 	c := &Config{
-		Mode:              Mode(envOr("BACKFLOW_MODE", string(ModeEC2))),
-		ListenAddr:        envOr("BACKFLOW_LISTEN_ADDR", ":8080"),
-		AuthMode:          AuthMode(envOr("BACKFLOW_AUTH_MODE", string(AuthModeAPIKey))),
-		AnthropicAPIKey:   os.Getenv("ANTHROPIC_API_KEY"),
+		Mode:                  Mode(envOr("BACKFLOW_MODE", string(ModeEC2))),
+		ListenAddr:            envOr("BACKFLOW_LISTEN_ADDR", ":8080"),
+		AuthMode:              AuthMode(envOr("BACKFLOW_AUTH_MODE", string(AuthModeAPIKey))),
+		AnthropicAPIKey:       os.Getenv("ANTHROPIC_API_KEY"),
 		ClaudeCredentialsPath: envOr("CLAUDE_CREDENTIALS_PATH", ""),
-		AWSRegion:         envOr("AWS_REGION", "us-east-1"),
-		InstanceType:      envOr("BACKFLOW_INSTANCE_TYPE", "t4g.medium"),
-		AMI:               os.Getenv("BACKFLOW_AMI"),
-		MaxInstances:      envInt("BACKFLOW_MAX_INSTANCES", 5),
-		ContainersPerInst: envInt("BACKFLOW_CONTAINERS_PER_INSTANCE", 4),
-		LaunchTemplateID:  os.Getenv("BACKFLOW_LAUNCH_TEMPLATE_ID"),
-		DefaultModel:      envOr("BACKFLOW_DEFAULT_MODEL", "claude-sonnet-4-6"),
-		DefaultEffort:     envOr("BACKFLOW_DEFAULT_EFFORT", "high"),
-		DefaultMaxBudget:  envFloat("BACKFLOW_DEFAULT_MAX_BUDGET", 10.0),
-		DefaultMaxRuntime: time.Duration(envInt("BACKFLOW_DEFAULT_MAX_RUNTIME_MIN", 30)) * time.Minute,
-		DefaultMaxTurns:   envInt("BACKFLOW_DEFAULT_MAX_TURNS", 200),
-		GitHubToken:       os.Getenv("GITHUB_TOKEN"),
-		WebhookURL:        os.Getenv("BACKFLOW_WEBHOOK_URL"),
-		DBPath:            envOr("BACKFLOW_DB_PATH", "backflow.db"),
-		PollInterval:      time.Duration(envInt("BACKFLOW_POLL_INTERVAL_SEC", 5)) * time.Second,
+		AWSRegion:             envOr("AWS_REGION", "us-east-1"),
+		InstanceType:          envOr("BACKFLOW_INSTANCE_TYPE", "m7g.xlarge"),
+		AMI:                   os.Getenv("BACKFLOW_AMI"),
+		MaxInstances:          envInt("BACKFLOW_MAX_INSTANCES", 5),
+		ContainersPerInst:     envInt("BACKFLOW_CONTAINERS_PER_INSTANCE", 1),
+		ContainerCPUs:         envInt("BACKFLOW_CONTAINER_CPUS", 2),
+		ContainerMemGB:        envInt("BACKFLOW_CONTAINER_MEMORY_GB", 8),
+		LaunchTemplateID:      os.Getenv("BACKFLOW_LAUNCH_TEMPLATE_ID"),
+		DefaultModel:          envOr("BACKFLOW_DEFAULT_MODEL", "claude-sonnet-4-6"),
+		DefaultEffort:         envOr("BACKFLOW_DEFAULT_EFFORT", "high"),
+		DefaultMaxBudget:      envFloat("BACKFLOW_DEFAULT_MAX_BUDGET", 10.0),
+		DefaultMaxRuntime:     time.Duration(envInt("BACKFLOW_DEFAULT_MAX_RUNTIME_MIN", 30)) * time.Minute,
+		DefaultMaxTurns:       envInt("BACKFLOW_DEFAULT_MAX_TURNS", 200),
+		GitHubToken:           os.Getenv("GITHUB_TOKEN"),
+		WebhookURL:            os.Getenv("BACKFLOW_WEBHOOK_URL"),
+		DBPath:                envOr("BACKFLOW_DB_PATH", "backflow.db"),
+		PollInterval:          time.Duration(envInt("BACKFLOW_POLL_INTERVAL_SEC", 5)) * time.Second,
 	}
 
 	if events := os.Getenv("BACKFLOW_WEBHOOK_EVENTS"); events != "" {
@@ -114,6 +122,17 @@ func Load() (*Config, error) {
 
 	if c.AuthMode == AuthModeAPIKey && c.AnthropicAPIKey == "" {
 		return nil, fmt.Errorf("ANTHROPIC_API_KEY is required when BACKFLOW_AUTH_MODE=api_key")
+	}
+
+	if c.Mode == ModeLocal && c.ContainersPerInst > MaxLocalContainers {
+		return nil, fmt.Errorf("BACKFLOW_CONTAINERS_PER_INSTANCE must be <= %d in local mode, got %d", MaxLocalContainers, c.ContainersPerInst)
+	}
+
+	if c.ContainerCPUs < 1 {
+		return nil, fmt.Errorf("BACKFLOW_CONTAINER_CPUS must be >= 1, got %d", c.ContainerCPUs)
+	}
+	if c.ContainerMemGB < 1 {
+		return nil, fmt.Errorf("BACKFLOW_CONTAINER_MEMORY_GB must be >= 1, got %d", c.ContainerMemGB)
 	}
 
 	return c, nil

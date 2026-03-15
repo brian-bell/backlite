@@ -18,19 +18,19 @@ const (
 	EventTaskCompleted   EventType = "task.completed"
 	EventTaskFailed      EventType = "task.failed"
 	EventTaskNeedsInput  EventType = "task.needs_input"
-	EventTaskInterrupted  EventType = "task.interrupted"
-	EventTaskRecovering   EventType = "task.recovering"
+	EventTaskInterrupted EventType = "task.interrupted"
+	EventTaskRecovering  EventType = "task.recovering"
 )
 
 type Event struct {
-	Type           EventType `json:"event"`
-	TaskID         string    `json:"task_id"`
-	RepoURL        string    `json:"repo_url,omitempty"`
-	Prompt         string    `json:"prompt,omitempty"`
-	Message        string    `json:"message,omitempty"`
-	PRURL          string    `json:"pr_url,omitempty"`
-	AgentLogTail   string    `json:"agent_log_tail,omitempty"`
-	Timestamp      time.Time `json:"timestamp"`
+	Type         EventType `json:"event"`
+	TaskID       string    `json:"task_id"`
+	RepoURL      string    `json:"repo_url,omitempty"`
+	Prompt       string    `json:"prompt,omitempty"`
+	Message      string    `json:"message,omitempty"`
+	PRURL        string    `json:"pr_url,omitempty"`
+	AgentLogTail string    `json:"agent_log_tail,omitempty"`
+	Timestamp    time.Time `json:"timestamp"`
 }
 
 // Notifier sends notifications for task lifecycle events.

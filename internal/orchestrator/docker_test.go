@@ -229,6 +229,8 @@ func TestBuildRunCommand(t *testing.T) {
 	cfg := &config.Config{
 		AuthMode:        config.AuthModeAPIKey,
 		AnthropicAPIKey: "sk-test",
+		ContainerCPUs:   2,
+		ContainerMemGB:  8,
 	}
 	dm := NewDockerManager(cfg)
 
@@ -240,7 +242,7 @@ func TestBuildRunCommand(t *testing.T) {
 
 	cmd := dm.buildRunCommand(task)
 
-	if !strings.HasPrefix(cmd, "docker run -d --cpus=1 --memory=3g") {
+	if !strings.HasPrefix(cmd, "docker run -d --cpus=2 --memory=8g") {
 		t.Errorf("unexpected command prefix: %s", cmd)
 	}
 	if !strings.HasSuffix(cmd, "backflow-agent") {

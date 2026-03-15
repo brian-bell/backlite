@@ -6,5 +6,5 @@ import "context"
 // instances to manage.
 type localScaler struct{}
 
-func (localScaler) Evaluate(ctx context.Context)      {}
+func (localScaler) Evaluate(ctx context.Context)       {}
 func (localScaler) RequestScaleUp(ctx context.Context) {}

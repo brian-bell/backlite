@@ -138,7 +138,7 @@ func TestInstanceCRUD(t *testing.T) {
 
 	inst := &models.Instance{
 		InstanceID:        "i-test123",
-		InstanceType:      "t4g.medium",
+		InstanceType:      "m7g.xlarge",
 		AvailabilityZone:  "us-east-1a",
 		PrivateIP:         "10.0.1.5",
 		Status:            models.InstanceStatusRunning,
@@ -156,8 +156,8 @@ func TestInstanceCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetInstance: %v", err)
 	}
-	if got.InstanceType != "t4g.medium" {
-		t.Errorf("InstanceType = %q, want t4g.medium", got.InstanceType)
+	if got.InstanceType != "m7g.xlarge" {
+		t.Errorf("InstanceType = %q, want m7g.xlarge", got.InstanceType)
 	}
 	if got.MaxContainers != 4 {
 		t.Errorf("MaxContainers = %d, want 4", got.MaxContainers)

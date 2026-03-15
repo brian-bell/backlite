@@ -9,7 +9,7 @@ ECR_REPO="backflow-agent"
 IAM_ROLE="backflow-ec2-role"
 SG_NAME="backflow-agent-sg"
 LT_NAME="backflow-agent-lt"
-INSTANCE_TYPE="${BACKFLOW_INSTANCE_TYPE:-t4g.medium}"
+INSTANCE_TYPE="${BACKFLOW_INSTANCE_TYPE:-m7g.xlarge}"
 
 # Resolve AMI: use provided value or look up latest Amazon Linux 2023 for the instance arch
 AMI_ID="${BACKFLOW_AMI:-}"
@@ -136,7 +136,7 @@ echo "    Security group: ${SG_ID}"
 
 # --- Launch Template ---
 echo "==> Creating launch template..."
-USER_DATA=$(base64 -w0 scripts/user-data.sh)
+USER_DATA=$(base64 < scripts/user-data.sh | tr -d '\n')
 
 if aws ec2 describe-launch-templates \
     --launch-template-names "$LT_NAME" \

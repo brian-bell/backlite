@@ -5,10 +5,10 @@ import "time"
 type InstanceStatus string
 
 const (
-	InstanceStatusPending     InstanceStatus = "pending"
-	InstanceStatusRunning     InstanceStatus = "running"
-	InstanceStatusDraining    InstanceStatus = "draining"
-	InstanceStatusTerminated  InstanceStatus = "terminated"
+	InstanceStatusPending    InstanceStatus = "pending"
+	InstanceStatusRunning    InstanceStatus = "running"
+	InstanceStatusDraining   InstanceStatus = "draining"
+	InstanceStatusTerminated InstanceStatus = "terminated"
 )
 
 type Instance struct {

@@ -70,6 +70,13 @@ func New(s store.Store, cfg *config.Config, notifier notify.Notifier) *Orchestra
 		o.ec2 = ec2
 		o.scaler = NewScaler(s, ec2, docker, cfg)
 		o.spot = NewSpotHandler(s, ec2)
+
+		// Clean up leftover local instance from a previous local-mode run.
+		if inst, _ := s.GetInstance(context.Background(), "local"); inst != nil && inst.Status != models.InstanceStatusTerminated {
+			inst.Status = models.InstanceStatusTerminated
+			inst.RunningContainers = 0
+			s.UpdateInstance(context.Background(), inst)
+		}
 	}
 
 	return o

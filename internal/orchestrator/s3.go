@@ -12,6 +12,14 @@ import (
 	"github.com/backflow-labs/backflow/internal/config"
 )
 
+// s3Client is the interface used by the orchestrator and Fargate manager to
+// upload data to S3. S3Uploader is the production implementation.
+type s3Client interface {
+	Upload(ctx context.Context, key string, data []byte) (string, error)
+	UploadJSON(ctx context.Context, key string, data []byte) (string, error)
+	PresignGetURL(ctx context.Context, key string, expiry time.Duration) (string, error)
+}
+
 // S3Uploader uploads data to S3 (agent output, offloaded task config).
 type S3Uploader struct {
 	client *s3.Client
@@ -35,9 +43,17 @@ func NewS3Uploader(ctx context.Context, cfg *config.Config) (*S3Uploader, error)
 	}, nil
 }
 
-// Upload stores data in S3 and returns the s3:// URL.
+// Upload stores data in S3 as text/plain and returns the s3:// URL.
 func (u *S3Uploader) Upload(ctx context.Context, key string, data []byte) (string, error) {
-	contentType := "text/plain"
+	return u.upload(ctx, key, data, "text/plain")
+}
+
+// UploadJSON stores JSON data in S3 with the application/json content type.
+func (u *S3Uploader) UploadJSON(ctx context.Context, key string, data []byte) (string, error) {
+	return u.upload(ctx, key, data, "application/json")
+}
+
+func (u *S3Uploader) upload(ctx context.Context, key string, data []byte, contentType string) (string, error) {
 	_, err := u.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:      &u.bucket,
 		Key:         &key,
@@ -45,7 +61,7 @@ func (u *S3Uploader) Upload(ctx context.Context, key string, data []byte) (strin
 		ContentType: &contentType,
 	})
 	if err != nil {
-		return "", fmt.Errorf("s3 put: %w", err)
+		return "", fmt.Errorf("s3 put %s: %w", key, err)
 	}
 
 	return fmt.Sprintf("s3://%s/%s", u.bucket, key), nil

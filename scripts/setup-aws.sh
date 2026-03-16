@@ -167,7 +167,20 @@ aws s3api put-public-access-block --bucket "$S3_BUCKET" \
     --public-access-block-configuration \
     'BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true'
 
-echo "    S3 bucket: ${S3_BUCKET}"
+# Lifecycle policy: expire all objects after 7 days
+aws s3api put-bucket-lifecycle-configuration --bucket "$S3_BUCKET" \
+    --lifecycle-configuration '{
+        "Rules": [
+            {
+                "ID": "expire-after-7-days",
+                "Status": "Enabled",
+                "Filter": {},
+                "Expiration": {"Days": 7}
+            }
+        ]
+    }'
+
+echo "    S3 bucket: ${S3_BUCKET} (lifecycle: 7-day expiration)"
 
 # Add S3 policy to IAM role
 S3_POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/backflow-s3-output"
@@ -189,7 +202,14 @@ POLICYEOF
 )
 
 if aws iam get-policy --policy-arn "$S3_POLICY_ARN" 2>/dev/null; then
-    echo "    S3 policy already exists, creating new version..."
+    echo "    S3 policy already exists, pruning old versions..."
+    # IAM policies can have at most 5 versions; delete all non-default versions
+    # before creating a new one.
+    OLD_VERSIONS=$(aws iam list-policy-versions --policy-arn "$S3_POLICY_ARN" \
+        --query 'Versions[?IsDefaultVersion==`false`].VersionId' --output text)
+    for V in $OLD_VERSIONS; do
+        aws iam delete-policy-version --policy-arn "$S3_POLICY_ARN" --version-id "$V"
+    done
     aws iam create-policy-version \
         --policy-arn "$S3_POLICY_ARN" \
         --policy-document "$S3_POLICY" \

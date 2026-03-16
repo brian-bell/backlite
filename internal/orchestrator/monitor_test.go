@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -840,6 +841,220 @@ func TestHandleInspectError_KillsAtMaxFailures(t *testing.T) {
 	if len(types) != 1 || types[0] != notify.EventTaskFailed {
 		t.Errorf("expected [task.failed], got %v", types)
 	}
+}
+
+func TestSaveTaskMetadata_NilS3(t *testing.T) {
+	s := newMockStore()
+	now := time.Now().UTC()
+
+	s.CreateTask(context.Background(), &models.Task{
+		ID:          "bf_meta_nil",
+		Status:      models.TaskStatusCompleted,
+		TaskMode:    "code",
+		Harness:     models.HarnessClaudeCode,
+		RepoURL:     "https://github.com/test/repo",
+		Branch:      "main",
+		Prompt:      "do something",
+		CreatePR:    true,
+		PRURL:       "https://github.com/test/repo/pull/1",
+		CreatedAt:   now,
+		CompletedAt: &now,
+	})
+
+	o := newTestOrchestrator(s, &mockNotifier{})
+	// o.s3 is nil — should be a no-op without panicking
+	task, _ := s.GetTask(context.Background(), "bf_meta_nil")
+	o.saveTaskMetadata(context.Background(), task)
+}
+
+func TestSaveTaskMetadata_JSONSerialization(t *testing.T) {
+	now := time.Now().UTC()
+	meta := taskMetadata{
+		ID:            "bf_ser",
+		Status:        models.TaskStatusCompleted,
+		TaskMode:      "code",
+		Harness:       models.HarnessClaudeCode,
+		RepoURL:       "https://github.com/test/repo",
+		Branch:        "feature",
+		Prompt:        "implement feature",
+		Effort:        "high",
+		MaxBudgetUSD:  5.0,
+		MaxTurns:      50,
+		MaxRuntimeMin: 30,
+		CreatePR:      true,
+		SelfReview:    true,
+		PRURL:         "https://github.com/test/repo/pull/5",
+		CreatedAt:     now,
+		CompletedAt:   &now,
+	}
+
+	data, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		t.Fatalf("failed to marshal metadata: %v", err)
+	}
+
+	var decoded taskMetadata
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal metadata: %v", err)
+	}
+
+	if decoded.ID != "bf_ser" {
+		t.Errorf("ID = %q, want bf_ser", decoded.ID)
+	}
+	if decoded.Status != models.TaskStatusCompleted {
+		t.Errorf("Status = %q, want completed", decoded.Status)
+	}
+	if decoded.PRURL != "https://github.com/test/repo/pull/5" {
+		t.Errorf("PRURL = %q, want PR URL", decoded.PRURL)
+	}
+	if !decoded.CreatePR {
+		t.Error("CreatePR should be true")
+	}
+	if !decoded.SelfReview {
+		t.Error("SelfReview should be true")
+	}
+	if decoded.Effort != "high" {
+		t.Errorf("Effort = %q, want high", decoded.Effort)
+	}
+	if decoded.MaxBudgetUSD != 5.0 {
+		t.Errorf("MaxBudgetUSD = %v, want 5.0", decoded.MaxBudgetUSD)
+	}
+	if decoded.MaxTurns != 50 {
+		t.Errorf("MaxTurns = %d, want 50", decoded.MaxTurns)
+	}
+	if decoded.MaxRuntimeMin != 30 {
+		t.Errorf("MaxRuntimeMin = %d, want 30", decoded.MaxRuntimeMin)
+	}
+}
+
+func TestSaveTaskMetadata_UploadIntegration(t *testing.T) {
+	s := newMockStore()
+	now := time.Now().UTC()
+	started := now.Add(-5 * time.Minute)
+
+	task := &models.Task{
+		ID:            "bf_meta_int",
+		Status:        models.TaskStatusCompleted,
+		TaskMode:      "code",
+		Harness:       models.HarnessClaudeCode,
+		RepoURL:       "https://github.com/test/repo",
+		Branch:        "feature",
+		TargetBranch:  "main",
+		Prompt:        "implement feature",
+		Model:         "claude-sonnet-4-20250514",
+		Effort:        "high",
+		MaxBudgetUSD:  5.0,
+		MaxTurns:      50,
+		MaxRuntimeMin: 30,
+		CreatePR:      true,
+		SelfReview:    true,
+		PRURL:         "https://github.com/test/repo/pull/10",
+		CostUSD:       1.23,
+		RetryCount:    1,
+		CreatedAt:     now,
+		StartedAt:     &started,
+		CompletedAt:   &now,
+	}
+	s.CreateTask(context.Background(), task)
+
+	mockS3 := &mockS3Client{}
+	o := newTestOrchestrator(s, &mockNotifier{}, withS3(mockS3))
+
+	stored, _ := s.GetTask(context.Background(), "bf_meta_int")
+	o.saveTaskMetadata(context.Background(), stored)
+
+	// Verify exactly one upload happened
+	if len(mockS3.uploads) != 1 {
+		t.Fatalf("expected 1 upload, got %d", len(mockS3.uploads))
+	}
+
+	upload := mockS3.uploads[0]
+
+	// Verify the S3 key follows the expected pattern
+	expectedKey := "tasks/bf_meta_int/task_metadata.json"
+	if upload.key != expectedKey {
+		t.Errorf("S3 key = %q, want %q", upload.key, expectedKey)
+	}
+
+	// Verify the uploaded JSON deserializes correctly and matches task fields
+	var meta taskMetadata
+	if err := json.Unmarshal(upload.data, &meta); err != nil {
+		t.Fatalf("failed to unmarshal uploaded JSON: %v", err)
+	}
+
+	if meta.ID != "bf_meta_int" {
+		t.Errorf("ID = %q, want bf_meta_int", meta.ID)
+	}
+	if meta.Status != models.TaskStatusCompleted {
+		t.Errorf("Status = %q, want completed", meta.Status)
+	}
+	if meta.TaskMode != "code" {
+		t.Errorf("TaskMode = %q, want code", meta.TaskMode)
+	}
+	if meta.Harness != models.HarnessClaudeCode {
+		t.Errorf("Harness = %q, want claude_code", meta.Harness)
+	}
+	if meta.RepoURL != "https://github.com/test/repo" {
+		t.Errorf("RepoURL = %q", meta.RepoURL)
+	}
+	if meta.Branch != "feature" {
+		t.Errorf("Branch = %q, want feature", meta.Branch)
+	}
+	if meta.TargetBranch != "main" {
+		t.Errorf("TargetBranch = %q, want main", meta.TargetBranch)
+	}
+	if meta.Model != "claude-sonnet-4-20250514" {
+		t.Errorf("Model = %q", meta.Model)
+	}
+	if meta.Effort != "high" {
+		t.Errorf("Effort = %q, want high", meta.Effort)
+	}
+	if meta.MaxBudgetUSD != 5.0 {
+		t.Errorf("MaxBudgetUSD = %v, want 5.0", meta.MaxBudgetUSD)
+	}
+	if meta.MaxTurns != 50 {
+		t.Errorf("MaxTurns = %d, want 50", meta.MaxTurns)
+	}
+	if meta.MaxRuntimeMin != 30 {
+		t.Errorf("MaxRuntimeMin = %d, want 30", meta.MaxRuntimeMin)
+	}
+	if !meta.CreatePR {
+		t.Error("CreatePR should be true")
+	}
+	if !meta.SelfReview {
+		t.Error("SelfReview should be true")
+	}
+	if meta.PRURL != "https://github.com/test/repo/pull/10" {
+		t.Errorf("PRURL = %q", meta.PRURL)
+	}
+	if meta.CostUSD != 1.23 {
+		t.Errorf("CostUSD = %v, want 1.23", meta.CostUSD)
+	}
+	if meta.RetryCount != 1 {
+		t.Errorf("RetryCount = %d, want 1", meta.RetryCount)
+	}
+}
+
+func TestSaveTaskMetadata_UploadError(t *testing.T) {
+	s := newMockStore()
+	now := time.Now().UTC()
+
+	s.CreateTask(context.Background(), &models.Task{
+		ID:        "bf_meta_err",
+		Status:    models.TaskStatusCompleted,
+		RepoURL:   "https://github.com/test/repo",
+		Branch:    "main",
+		Prompt:    "do something",
+		CreatedAt: now,
+	})
+
+	mockS3 := &mockS3Client{err: fmt.Errorf("simulated S3 failure")}
+	o := newTestOrchestrator(s, &mockNotifier{}, withS3(mockS3))
+
+	task, _ := s.GetTask(context.Background(), "bf_meta_err")
+
+	// Should not panic on upload error — just logs and returns
+	o.saveTaskMetadata(context.Background(), task)
 }
 
 func TestIsTimedOut(t *testing.T) {

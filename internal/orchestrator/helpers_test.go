@@ -194,6 +194,38 @@ func (m *mockDockerManager) GetLogs(_ context.Context, _, _ string, _ int) (stri
 	return "", nil
 }
 
+// --- Mock S3 client ---
+
+type mockS3Client struct {
+	uploads []mockS3Upload
+	err     error
+}
+
+type mockS3Upload struct {
+	key  string
+	data []byte
+}
+
+func (m *mockS3Client) Upload(_ context.Context, key string, data []byte) (string, error) {
+	if m.err != nil {
+		return "", m.err
+	}
+	m.uploads = append(m.uploads, mockS3Upload{key: key, data: data})
+	return fmt.Sprintf("s3://test-bucket/%s", key), nil
+}
+
+func (m *mockS3Client) UploadJSON(_ context.Context, key string, data []byte) (string, error) {
+	if m.err != nil {
+		return "", m.err
+	}
+	m.uploads = append(m.uploads, mockS3Upload{key: key, data: data})
+	return fmt.Sprintf("s3://test-bucket/%s", key), nil
+}
+
+func (m *mockS3Client) PresignGetURL(_ context.Context, key string, _ time.Duration) (string, error) {
+	return fmt.Sprintf("https://test-bucket.s3.amazonaws.com/%s?presigned", key), nil
+}
+
 // --- Test orchestrator constructor ---
 
 func newTestOrchestrator(s store.Store, n notify.Notifier, opts ...func(*Orchestrator)) *Orchestrator {
@@ -220,6 +252,10 @@ func newTestOrchestrator(s store.Store, n notify.Notifier, opts ...func(*Orchest
 
 func withDocker(d dockerClient) func(*Orchestrator) {
 	return func(o *Orchestrator) { o.docker = d }
+}
+
+func withS3(s s3Client) func(*Orchestrator) {
+	return func(o *Orchestrator) { o.s3 = s }
 }
 
 // newLocalInstance creates a standard local instance for tests.

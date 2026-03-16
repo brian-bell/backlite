@@ -31,12 +31,12 @@ var errSpotInterruption = errors.New("spot interruption")
 // FargateManager manages agent containers as standalone ECS tasks.
 type FargateManager struct {
 	config *config.Config
-	s3     *S3Uploader
+	s3     s3Client
 	ecs    *ecs.Client
 	cwLogs *cloudwatchlogs.Client
 }
 
-func NewFargateManager(cfg *config.Config, s3 *S3Uploader) *FargateManager {
+func NewFargateManager(cfg *config.Config, s3 s3Client) *FargateManager {
 	return &FargateManager{config: cfg, s3: s3}
 }
 

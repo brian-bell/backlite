@@ -27,7 +27,7 @@ type Orchestrator struct {
 	docker   dockerClient
 	scaler   scaler
 	spot     *SpotHandler
-	s3       *S3Uploader
+	s3       s3Client
 
 	mu              sync.Mutex
 	running         int
@@ -35,7 +35,7 @@ type Orchestrator struct {
 	inspectFailures map[string]int // task ID -> consecutive inspect failure count
 }
 
-func New(s store.Store, cfg *config.Config, notifier notify.Notifier, s3 *S3Uploader) *Orchestrator {
+func New(s store.Store, cfg *config.Config, notifier notify.Notifier, s3 s3Client) *Orchestrator {
 	o := &Orchestrator{
 		store:           s,
 		config:          cfg,

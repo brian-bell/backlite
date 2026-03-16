@@ -137,7 +137,7 @@ func Load() (*Config, error) {
 		ECSLogStreamPrefix:    envOr("BACKFLOW_ECS_LOG_STREAM_PREFIX", "ecs"),
 		MaxConcurrentTasks:    envInt("BACKFLOW_MAX_CONCURRENT_TASKS", 5),
 		DefaultHarness:        envOr("BACKFLOW_DEFAULT_HARNESS", "claude_code"),
-		DefaultModel:          envOr("BACKFLOW_DEFAULT_MODEL", "claude-sonnet-4-6"),
+		DefaultModel:          envOr("BACKFLOW_DEFAULT_MODEL", "claude-opus-4-6"),
 		DefaultCodexModel:     envOr("BACKFLOW_DEFAULT_CODEX_MODEL", "gpt-5.4"),
 		DefaultEffort:         envOr("BACKFLOW_DEFAULT_EFFORT", "high"),
 		DefaultMaxBudget:      envFloat("BACKFLOW_DEFAULT_MAX_BUDGET", 10.0),

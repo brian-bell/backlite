@@ -108,6 +108,14 @@ func (o *Orchestrator) handleCompletion(ctx context.Context, task *models.Task, 
 	now := time.Now().UTC()
 	task.CompletedAt = &now
 	task.PRURL = status.PRURL
+	if status.CostUSD > 0 {
+		task.CostUSD = status.CostUSD
+	}
+	if status.ElapsedTimeSec > 0 {
+		task.ElapsedTimeSec = status.ElapsedTimeSec
+	} else if task.StartedAt != nil {
+		task.ElapsedTimeSec = int(now.Sub(*task.StartedAt).Seconds())
+	}
 
 	switch {
 	case status.Complete || (status.ExitCode == 0 && !status.NeedsInput):
@@ -275,6 +283,9 @@ func (o *Orchestrator) killTask(ctx context.Context, task *models.Task, reason s
 	task.Status = models.TaskStatusFailed
 	task.Error = reason
 	task.CompletedAt = &now
+	if task.StartedAt != nil {
+		task.ElapsedTimeSec = int(now.Sub(*task.StartedAt).Seconds())
+	}
 	o.store.UpdateTask(ctx, task)
 
 	o.releaseSlot(ctx, task)

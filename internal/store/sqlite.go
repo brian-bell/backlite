@@ -99,6 +99,7 @@ func (s *SQLiteStore) migrate() error {
 		"ALTER TABLE tasks ADD COLUMN output_url TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE tasks ADD COLUMN reply_channel TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE tasks ADD COLUMN review_pr_url TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE tasks ADD COLUMN elapsed_time_sec INTEGER NOT NULL DEFAULT 0",
 	}
 	for _, m := range migrations {
 		s.db.Exec(m) // ignore "duplicate column" errors
@@ -129,10 +130,10 @@ func (s *SQLiteStore) CreateTask(ctx context.Context, task *models.Task) error {
 			model, effort, max_budget_usd, max_runtime_min, max_turns,
 			create_pr, self_review, save_agent_output, pr_title, pr_body, pr_url, output_url,
 			allowed_tools, claude_md, env_vars,
-			instance_id, container_id, retry_count, cost_usd, error,
+			instance_id, container_id, retry_count, cost_usd, elapsed_time_sec, error,
 			reply_channel,
 			created_at, updated_at, started_at, completed_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		task.ID, task.Status, task.TaskMode, task.Harness, task.RepoURL, task.Branch, task.TargetBranch,
 		task.ReviewPRURL, task.ReviewPRNumber,
 		task.Prompt, task.Context, task.Model, task.Effort,
@@ -140,7 +141,7 @@ func (s *SQLiteStore) CreateTask(ctx context.Context, task *models.Task) error {
 		boolToInt(task.CreatePR), boolToInt(task.SelfReview), boolToInt(task.SaveAgentOutput),
 		task.PRTitle, task.PRBody, task.PRURL, task.OutputURL,
 		task.AllowedToolsJSON(), task.ClaudeMD, task.EnvVarsJSON(),
-		task.InstanceID, task.ContainerID, task.RetryCount, task.CostUSD, task.Error,
+		task.InstanceID, task.ContainerID, task.RetryCount, task.CostUSD, task.ElapsedTimeSec, task.Error,
 		task.ReplyChannel,
 		task.CreatedAt.Format(time.RFC3339), task.UpdatedAt.Format(time.RFC3339),
 		timePtr(task.StartedAt), timePtr(task.CompletedAt),
@@ -156,7 +157,7 @@ func (s *SQLiteStore) GetTask(ctx context.Context, id string) (*models.Task, err
 		model, effort, max_budget_usd, max_runtime_min, max_turns,
 		create_pr, self_review, save_agent_output, pr_title, pr_body, pr_url, output_url,
 		allowed_tools, claude_md, env_vars,
-		instance_id, container_id, retry_count, cost_usd, error,
+		instance_id, container_id, retry_count, cost_usd, elapsed_time_sec, error,
 		reply_channel,
 		created_at, updated_at, started_at, completed_at
 		FROM tasks WHERE id = ?`, id)
@@ -164,7 +165,7 @@ func (s *SQLiteStore) GetTask(ctx context.Context, id string) (*models.Task, err
 }
 
 func (s *SQLiteStore) ListTasks(ctx context.Context, filter TaskFilter) ([]*models.Task, error) {
-	query := "SELECT id, status, task_mode, harness, repo_url, branch, target_branch, review_pr_url, review_pr_number, prompt, context, model, effort, max_budget_usd, max_runtime_min, max_turns, create_pr, self_review, save_agent_output, pr_title, pr_body, pr_url, output_url, allowed_tools, claude_md, env_vars, instance_id, container_id, retry_count, cost_usd, error, reply_channel, created_at, updated_at, started_at, completed_at FROM tasks"
+	query := "SELECT id, status, task_mode, harness, repo_url, branch, target_branch, review_pr_url, review_pr_number, prompt, context, model, effort, max_budget_usd, max_runtime_min, max_turns, create_pr, self_review, save_agent_output, pr_title, pr_body, pr_url, output_url, allowed_tools, claude_md, env_vars, instance_id, container_id, retry_count, cost_usd, elapsed_time_sec, error, reply_channel, created_at, updated_at, started_at, completed_at FROM tasks"
 	var args []any
 	var where []string
 
@@ -209,7 +210,7 @@ func (s *SQLiteStore) UpdateTask(ctx context.Context, task *models.Task) error {
 			model=?, effort=?, max_budget_usd=?, max_runtime_min=?, max_turns=?,
 			create_pr=?, self_review=?, save_agent_output=?, pr_title=?, pr_body=?, pr_url=?, output_url=?,
 			allowed_tools=?, claude_md=?, env_vars=?,
-			instance_id=?, container_id=?, retry_count=?, cost_usd=?, error=?,
+			instance_id=?, container_id=?, retry_count=?, cost_usd=?, elapsed_time_sec=?, error=?,
 			reply_channel=?,
 			updated_at=?, started_at=?, completed_at=?
 		WHERE id = ?`,
@@ -219,7 +220,7 @@ func (s *SQLiteStore) UpdateTask(ctx context.Context, task *models.Task) error {
 		boolToInt(task.CreatePR), boolToInt(task.SelfReview), boolToInt(task.SaveAgentOutput),
 		task.PRTitle, task.PRBody, task.PRURL, task.OutputURL,
 		task.AllowedToolsJSON(), task.ClaudeMD, task.EnvVarsJSON(),
-		task.InstanceID, task.ContainerID, task.RetryCount, task.CostUSD, task.Error,
+		task.InstanceID, task.ContainerID, task.RetryCount, task.CostUSD, task.ElapsedTimeSec, task.Error,
 		task.ReplyChannel,
 		task.UpdatedAt.Format(time.RFC3339), timePtr(task.StartedAt), timePtr(task.CompletedAt),
 		task.ID,
@@ -310,7 +311,7 @@ func scanTask(row scanner) (*models.Task, error) {
 		&t.MaxBudgetUSD, &t.MaxRuntimeMin, &t.MaxTurns,
 		&createPR, &selfReview, &saveAgentOutput, &t.PRTitle, &t.PRBody, &t.PRURL, &t.OutputURL,
 		&allowedToolsJSON, &t.ClaudeMD, &envVarsJSON,
-		&t.InstanceID, &t.ContainerID, &t.RetryCount, &t.CostUSD, &t.Error,
+		&t.InstanceID, &t.ContainerID, &t.RetryCount, &t.CostUSD, &t.ElapsedTimeSec, &t.Error,
 		&t.ReplyChannel,
 		&createdAt, &updatedAt, &startedAt, &completedAt,
 	)

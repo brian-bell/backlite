@@ -80,7 +80,7 @@ type Config struct {
 	WebhookURL    string
 	WebhookEvents []string
 
-	// S3 (agent output storage)
+	// S3 (task data: agent output, offloaded config for large prompts)
 	S3Bucket string
 
 	// Database

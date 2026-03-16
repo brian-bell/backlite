@@ -292,4 +292,4 @@ All config is via environment variables (or `.env` file).
 |----------|---------|-------------|
 | `BACKFLOW_WEBHOOK_URL` | | Webhook endpoint |
 | `BACKFLOW_WEBHOOK_EVENTS` | all | Comma-separated event filter |
-| `BACKFLOW_S3_BUCKET` | | S3 bucket for agent output storage |
+| `BACKFLOW_S3_BUCKET` | | S3 bucket for task data (agent output, large prompt offload) |

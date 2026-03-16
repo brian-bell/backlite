@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"time"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -11,7 +12,7 @@ import (
 	"github.com/backflow-labs/backflow/internal/config"
 )
 
-// S3Uploader uploads agent output to S3.
+// S3Uploader uploads data to S3 (agent output, offloaded task config).
 type S3Uploader struct {
 	client *s3.Client
 	bucket string
@@ -48,4 +49,17 @@ func (u *S3Uploader) Upload(ctx context.Context, key string, data []byte) (strin
 	}
 
 	return fmt.Sprintf("s3://%s/%s", u.bucket, key), nil
+}
+
+// PresignGetURL returns a pre-signed GET URL for the given S3 key.
+func (u *S3Uploader) PresignGetURL(ctx context.Context, key string, expiry time.Duration) (string, error) {
+	presigner := s3.NewPresignClient(u.client)
+	req, err := presigner.PresignGetObject(ctx, &s3.GetObjectInput{
+		Bucket: &u.bucket,
+		Key:    &key,
+	}, s3.WithPresignExpires(expiry))
+	if err != nil {
+		return "", fmt.Errorf("s3 presign: %w", err)
+	}
+	return req.URL, nil
 }

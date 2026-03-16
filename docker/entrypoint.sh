@@ -22,6 +22,25 @@ TASK_CONTEXT="${TASK_CONTEXT:-}"
 SELF_REVIEW="${SELF_REVIEW:-false}"
 MAX_RETRIES="${MAX_RETRIES:-3}"
 
+# --- Download env vars offloaded to S3 (for large prompts/context) ---
+fetch_s3_var() {
+    local url_var="$1"
+    local target_var="$2"
+    local url="${!url_var:-}"
+    if [ -n "$url" ]; then
+        echo "==> Downloading ${target_var} from S3..."
+        local content
+        content=$(curl -fsSL "$url") || { echo "ERROR: Failed to download ${target_var} from S3" >&2; exit 1; }
+        printf -v "$target_var" '%s' "$content"
+        export "$target_var"
+    fi
+}
+
+fetch_s3_var "PROMPT_S3_URL" "PROMPT"
+fetch_s3_var "CLAUDE_MD_S3_URL" "CLAUDE_MD"
+fetch_s3_var "TASK_CONTEXT_S3_URL" "TASK_CONTEXT"
+fetch_s3_var "PR_BODY_S3_URL" "PR_BODY"
+
 WORKSPACE="/home/agent/workspace"
 STATUS_FILE="${WORKSPACE}/status.json"
 

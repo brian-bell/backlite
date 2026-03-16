@@ -17,7 +17,7 @@ func TestFargateBuildECSEnvVars(t *testing.T) {
 		AnthropicAPIKey: "sk-ant",
 		OpenAIAPIKey:    "sk-openai",
 		GitHubToken:     "ghp-test",
-	})
+	}, nil)
 
 	task := &models.Task{
 		ID:             "bf_01ABC",
@@ -221,7 +221,7 @@ func TestFargateBuildLogStreamName(t *testing.T) {
 	manager := NewFargateManager(&config.Config{
 		ECSContainerName:   "backflow-agent",
 		ECSLogStreamPrefix: "ecs",
-	})
+	}, nil)
 
 	tests := []struct {
 		name    string
@@ -262,6 +262,42 @@ func TestFargateBuildLogStreamName(t *testing.T) {
 				t.Errorf("buildLogStreamName() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestEstimateOverridesSize(t *testing.T) {
+	vars := []ecstypes.KeyValuePair{
+		ecsEnvVar("TASK_ID", "bf_01ABC"),
+		ecsEnvVar("PROMPT", "Fix the bug"),
+	}
+	size := estimateOverridesSize(vars)
+	// 200 base + (7 + 9 + 30) + (6 + 11 + 30) = 200 + 46 + 47 = 293
+	if size < 200 || size > 500 {
+		t.Errorf("estimateOverridesSize = %d, expected roughly 293", size)
+	}
+}
+
+func TestOffloadLargeEnvVarsSkipsWhenSmall(t *testing.T) {
+	manager := NewFargateManager(&config.Config{}, nil)
+	vars := []ecstypes.KeyValuePair{
+		ecsEnvVar("TASK_ID", "bf_01ABC"),
+		ecsEnvVar("PROMPT", "Fix the bug"),
+	}
+	// s3 is nil, so offload should be skipped in RunAgent.
+	// Test the function directly — with nil s3, it would panic,
+	// but estimateOverridesSize keeps it under threshold so it returns early.
+	result, err := manager.offloadLargeEnvVars(nil, "bf_01ABC", vars)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != len(vars) {
+		t.Errorf("expected %d vars, got %d", len(vars), len(result))
+	}
+	// Verify PROMPT is unchanged
+	for _, v := range result {
+		if aws.ToString(v.Name) == "PROMPT" && aws.ToString(v.Value) != "Fix the bug" {
+			t.Errorf("PROMPT was unexpectedly modified")
+		}
 	}
 }
 

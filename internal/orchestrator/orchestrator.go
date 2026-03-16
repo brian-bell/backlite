@@ -50,7 +50,7 @@ func New(s store.Store, cfg *config.Config, notifier notify.Notifier, s3 *S3Uplo
 		o.docker = NewDockerManager(cfg)
 		o.initLocalMode(s, cfg)
 	case config.ModeFargate:
-		o.docker = NewFargateManager(cfg)
+		o.docker = NewFargateManager(cfg, s3)
 		o.initFargateMode(s, cfg)
 	default:
 		docker := NewDockerManager(cfg)

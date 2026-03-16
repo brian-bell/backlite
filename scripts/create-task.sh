@@ -61,10 +61,10 @@ else
 fi
 
 # Defaults
-HARNESS="codex"
+HARNESS=""
 BRANCH=""
 TARGET_BRANCH=""
-MODEL=""
+MODEL="claude-opus-4-6"
 EFFORT="high"
 BUDGET=""
 RUNTIME=""

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -30,12 +31,13 @@ var errSpotInterruption = errors.New("spot interruption")
 // FargateManager manages agent containers as standalone ECS tasks.
 type FargateManager struct {
 	config *config.Config
+	s3     *S3Uploader
 	ecs    *ecs.Client
 	cwLogs *cloudwatchlogs.Client
 }
 
-func NewFargateManager(cfg *config.Config) *FargateManager {
-	return &FargateManager{config: cfg}
+func NewFargateManager(cfg *config.Config, s3 *S3Uploader) *FargateManager {
+	return &FargateManager{config: cfg, s3: s3}
 }
 
 func (m *FargateManager) ensureClients(ctx context.Context) error {
@@ -78,6 +80,15 @@ func (m *FargateManager) RunAgent(ctx context.Context, _ *models.Instance, task 
 		awsvpc.SecurityGroups = append([]string(nil), m.config.ECSSecurityGroups...)
 	}
 
+	envVars := m.buildECSEnvVars(task)
+	if m.s3 != nil {
+		var err error
+		envVars, err = m.offloadLargeEnvVars(ctx, task.ID, envVars)
+		if err != nil {
+			return "", fmt.Errorf("offload env vars to S3: %w", err)
+		}
+	}
+
 	input := &ecs.RunTaskInput{
 		Cluster:        aws.String(m.config.ECSCluster),
 		TaskDefinition: aws.String(m.config.ECSTaskDefinition),
@@ -93,7 +104,7 @@ func (m *FargateManager) RunAgent(ctx context.Context, _ *models.Instance, task 
 			ContainerOverrides: []ecstypes.ContainerOverride{
 				{
 					Name:        aws.String(m.containerName()),
-					Environment: m.buildECSEnvVars(task),
+					Environment: envVars,
 					Cpu:         aws.Int32(containerCPU),
 					Memory:      aws.Int32(containerMemory),
 				},
@@ -325,6 +336,85 @@ func (m *FargateManager) taskCPUUnits() int {
 
 func (m *FargateManager) taskMemoryMiB() int {
 	return m.config.ContainerMemGB * 1024
+}
+
+// ecsOverridesTarget is the target maximum size for ECS container overrides.
+// The hard ECS limit is 8192 bytes; we leave headroom for JSON structure.
+const ecsOverridesTarget = 7000
+
+// offloadableEnvVars maps env var names to their S3 URL counterparts.
+// These are the fields most likely to be large (prompt, context, etc.).
+var offloadableEnvVars = map[string]string{
+	"PROMPT":       "PROMPT_S3_URL",
+	"CLAUDE_MD":    "CLAUDE_MD_S3_URL",
+	"TASK_CONTEXT": "TASK_CONTEXT_S3_URL",
+	"PR_BODY":      "PR_BODY_S3_URL",
+}
+
+// offloadLargeEnvVars uploads large env var values to S3 and replaces them
+// with pre-signed GET URLs so the entrypoint can download them. This avoids
+// the ECS RunTask 8192-byte container overrides limit.
+func (m *FargateManager) offloadLargeEnvVars(ctx context.Context, taskID string, vars []ecstypes.KeyValuePair) ([]ecstypes.KeyValuePair, error) {
+	size := estimateOverridesSize(vars)
+	if size <= ecsOverridesTarget {
+		return vars, nil
+	}
+
+	// Find offloadable vars, sorted largest first.
+	type candidate struct {
+		index int
+		key   string
+		size  int
+	}
+	var candidates []candidate
+	for i, v := range vars {
+		key := aws.ToString(v.Name)
+		if _, ok := offloadableEnvVars[key]; ok {
+			candidates = append(candidates, candidate{i, key, len(aws.ToString(v.Value))})
+		}
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].size > candidates[j].size })
+
+	for _, c := range candidates {
+		if size <= ecsOverridesTarget {
+			break
+		}
+
+		value := aws.ToString(vars[c.index].Value)
+		if len(value) == 0 {
+			continue
+		}
+
+		s3Key := fmt.Sprintf("task-config/%s/%s", taskID, strings.ToLower(c.key))
+		if _, err := m.s3.Upload(ctx, s3Key, []byte(value)); err != nil {
+			return nil, fmt.Errorf("upload %s to S3: %w", c.key, err)
+		}
+		url, err := m.s3.PresignGetURL(ctx, s3Key, 1*time.Hour)
+		if err != nil {
+			return nil, fmt.Errorf("presign %s URL: %w", c.key, err)
+		}
+
+		urlKey := offloadableEnvVars[c.key]
+		oldSize := len(c.key) + len(value)
+		vars[c.index] = ecsEnvVar(urlKey, url)
+		newSize := len(urlKey) + len(url)
+		size -= oldSize - newSize
+
+		log.Debug().Str("task_id", taskID).Str("field", c.key).Int("original_bytes", len(value)).Msg("offloaded env var to S3")
+	}
+
+	return vars, nil
+}
+
+// estimateOverridesSize returns a rough byte count for the ECS container
+// overrides JSON. Each env var contributes its key, value, and ~30 bytes
+// of JSON structure ({"name":"…","value":"…"}).
+func estimateOverridesSize(vars []ecstypes.KeyValuePair) int {
+	size := 200 // base overhead for task override + container override structure
+	for _, v := range vars {
+		size += len(aws.ToString(v.Name)) + len(aws.ToString(v.Value)) + 30
+	}
+	return size
 }
 
 func ecsEnvVar(key, value string) ecstypes.KeyValuePair {

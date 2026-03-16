@@ -142,9 +142,9 @@ aws ec2 revoke-security-group-ingress \
 
 echo "    Security group: ${SG_ID}"
 
-# --- S3 Bucket (agent output storage) ---
-S3_BUCKET="backflow-agent-output-${ACCOUNT_ID}-${REGION}"
-echo "==> Creating S3 bucket for agent output..."
+# --- S3 Bucket (task data: agent output, offloaded config) ---
+S3_BUCKET="backflow-data-${ACCOUNT_ID}-${REGION}"
+echo "==> Creating S3 bucket for task data..."
 if aws s3api head-bucket --bucket "$S3_BUCKET" --region "$REGION" 2>/dev/null; then
     echo "    S3 bucket already exists"
 else
@@ -169,7 +169,7 @@ aws s3api put-public-access-block --bucket "$S3_BUCKET" \
 
 echo "    S3 bucket: ${S3_BUCKET}"
 
-# Add S3 write policy to IAM role
+# Add S3 policy to IAM role
 S3_POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/backflow-s3-output"
 S3_POLICY=$(cat <<POLICYEOF
 {
@@ -178,7 +178,10 @@ S3_POLICY=$(cat <<POLICYEOF
     {
       "Effect": "Allow",
       "Action": ["s3:PutObject", "s3:GetObject"],
-      "Resource": "arn:aws:s3:::${S3_BUCKET}/tasks/*"
+      "Resource": [
+        "arn:aws:s3:::${S3_BUCKET}/tasks/*",
+        "arn:aws:s3:::${S3_BUCKET}/task-config/*"
+      ]
     }
   ]
 }

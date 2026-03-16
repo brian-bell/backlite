@@ -376,14 +376,40 @@ if [ "$CREATE_PR" = "true" ] && [ "$COMPLETE" = "true" ]; then
     fi
 fi
 
-# --- Comment prompt on PR ---
+# --- Comment prompt and metadata on PR ---
 if [ -n "$PR_URL" ]; then
-    echo "==> Commenting prompt on PR..."
-    COMMENT_BODY="## Backflow Agent Prompt
+    echo "==> Commenting task info on PR..."
 
-\`\`\`
-${PROMPT}
-\`\`\`"
+    # Extract actual cost from agent output (stream-json result line)
+    ACTUAL_COST=$(grep '"type":"result"' "$CLAUDE_LOG" 2>/dev/null | tail -1 | jq -r '.total_cost_usd // empty' 2>/dev/null || true)
+
+    # Format prompt as markdown quote
+    QUOTED_PROMPT=$(echo "$PROMPT" | sed 's/^/> /')
+
+    COMMENT_BODY="## Backflow Task
+
+${QUOTED_PROMPT}
+
+| Field | Value |
+|-------|-------|
+| Task ID | \`${TASK_ID:-unknown}\` |
+| Harness | \`${HARNESS}\` |
+| Model | \`${MODEL}\` |
+| Effort | \`${EFFORT}\` |
+| Max Budget | \`\$${MAX_BUDGET_USD}\` |"
+    if [ -n "$ACTUAL_COST" ] && [ "$ACTUAL_COST" != "0" ]; then
+        COMMENT_BODY="${COMMENT_BODY}
+| Cost | \`\$${ACTUAL_COST}\` |"
+    fi
+    COMMENT_BODY="${COMMENT_BODY}
+| Max Turns | \`${MAX_TURNS}\` |
+| Auth Mode | \`${AUTH_MODE}\` |
+| Attempts | \`${ATTEMPT}/${MAX_RETRIES}\` |"
+    if [ "$SELF_REVIEW" = "true" ]; then
+        COMMENT_BODY="${COMMENT_BODY}
+| Self-Review | enabled |"
+    fi
+
     gh pr comment "$PR_URL" --body "$COMMENT_BODY" 2>/dev/null || true
 fi
 
@@ -401,6 +427,7 @@ PR URL: ${PR_URL}
 Review the PR by:
 1. Read the full diff with: gh pr diff ${PR_URL}
 2. Look at the PR description with: gh pr view ${PR_URL}
+3. Post your review using: gh pr review ${PR_URL} --comment --body '<your review>'
 
 Focus on:
 - Bugs and logic errors
@@ -413,40 +440,37 @@ Do NOT comment on:
 - Minor naming preferences
 - Things that are working correctly
 
-Respond with your review findings. If everything looks good, say so. If there are real issues, explain what needs fixing."
-
-    REVIEW_ARGS=(
-        -p "$REVIEW_PROMPT"
-        --dangerously-skip-permissions
-        --model "$MODEL"
-        --max-turns 10
-        --output-format stream-json
-        --verbose
-    )
-    if [ "$AUTH_MODE" = "api_key" ]; then
-        REVIEW_ARGS+=(--max-budget-usd "$REVIEW_BUDGET")
-    fi
+You MUST post your review as a comment on the PR using the gh CLI. Do not just print your review to stdout."
 
     REVIEW_LOG="${WORKSPACE}/review_output.log"
     set +e
-    claude "${REVIEW_ARGS[@]}" 2>&1 | tee "$REVIEW_LOG"
+    if [ "$HARNESS" = "codex" ]; then
+        REVIEW_CODEX_ARGS=(
+            exec
+            --model "$MODEL"
+            --dangerously-bypass-approvals-and-sandbox
+            "$REVIEW_PROMPT"
+        )
+        codex "${REVIEW_CODEX_ARGS[@]}" 2>&1 | tee "$REVIEW_LOG"
+    else
+        REVIEW_ARGS=(
+            -p "$REVIEW_PROMPT"
+            --dangerously-skip-permissions
+            --model "$MODEL"
+            --max-turns 10
+            --output-format stream-json
+            --verbose
+        )
+        if [ "$AUTH_MODE" = "api_key" ]; then
+            REVIEW_ARGS+=(--max-budget-usd "$REVIEW_BUDGET")
+        fi
+        claude "${REVIEW_ARGS[@]}" 2>&1 | tee "$REVIEW_LOG"
+    fi
     REVIEW_EXIT=${PIPESTATUS[0]}
     set -e
 
     if [ $REVIEW_EXIT -eq 0 ]; then
         echo "==> Self-review completed successfully"
-
-        # Extract review text from stream-json result line
-        REVIEW_TEXT=$(grep '"type":"result"' "$REVIEW_LOG" | tail -1 | jq -r '.result // empty' 2>/dev/null)
-        if [ -n "$REVIEW_TEXT" ]; then
-            echo "==> Posting review feedback as PR comment..."
-            COMMENT_BODY="## Self-Review (automated)
-
-${REVIEW_TEXT}"
-            gh pr comment "$PR_URL" --body "$COMMENT_BODY" 2>/dev/null || echo "==> Failed to post review comment"
-        else
-            echo "==> No review text to post"
-        fi
     else
         echo "==> Self-review failed (exit code: ${REVIEW_EXIT}), continuing anyway"
     fi

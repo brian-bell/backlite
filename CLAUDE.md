@@ -67,6 +67,8 @@ Node.js 20 image with Claude Code CLI + git + gh. `entrypoint.sh`: clone → che
 
 Configured per-task via the `harness` field or globally via `BACKFLOW_DEFAULT_HARNESS`.
 
+PR comments include actual cost for `claude_code` (extracted from `total_cost_usd` in stream-json output). Codex CLI doesn't report cost in dollars — only raw token counts via `--json` — so cost is omitted for `codex` harness runs.
+
 ## Auth modes
 
 - **`api_key`** — Anthropic API key via `ANTHROPIC_API_KEY`, concurrent agents (max_instances × containers_per_instance)

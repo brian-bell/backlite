@@ -77,9 +77,9 @@ PRs are created by default. Use `--no-pr` to skip.
 ### PR Reviews
 
 ```bash
-./scripts/review-pr.sh https://github.com/org/repo 42
-./scripts/review-pr.sh https://github.com/org/repo 42 --prompt "Focus on security issues"
-./scripts/review-pr.sh https://github.com/org/repo 42 --model claude-sonnet-4-6 --budget 5
+./scripts/review-pr.sh https://github.com/org/repo/pull/42
+./scripts/review-pr.sh https://github.com/org/repo/pull/42 --prompt "Focus on security issues"
+./scripts/review-pr.sh https://github.com/org/repo/pull/42 --harness codex --budget 5
 ```
 
 ### Direct API

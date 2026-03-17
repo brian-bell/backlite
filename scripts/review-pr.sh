@@ -9,6 +9,7 @@ set -euo pipefail
 # Examples:
 #   ./scripts/review-pr.sh https://github.com/org/repo/pull/42
 #   ./scripts/review-pr.sh https://github.com/org/repo/pull/42 --model claude-sonnet-4-6
+#   ./scripts/review-pr.sh https://github.com/org/repo/pull/42 --harness codex
 #   ./scripts/review-pr.sh https://github.com/org/repo/pull/42 --prompt "Focus on security issues"
 #   ./scripts/review-pr.sh https://github.com/org/repo/pull/42 --budget 5 --effort low
 
@@ -23,7 +24,8 @@ Arguments:
 
 Options:
   --prompt <text>         Custom review instructions
-  --model <model>         Claude model to use (default: claude-opus-4-6)
+  --harness <name>        Agent harness: claude_code (default) or codex
+  --model <model>         Model to use (default: claude-opus-4-6 or gpt-5.4 for codex)
   --effort <level>        Reasoning effort: low, medium, high (default: high)
   --budget <usd>          Max budget in USD
   --runtime <min>         Max runtime in minutes
@@ -50,7 +52,8 @@ fi
 
 # Defaults
 PROMPT=""
-MODEL="claude-opus-4-6"
+HARNESS=""
+MODEL=""
 EFFORT="high"
 BUDGET=""
 RUNTIME=""
@@ -62,6 +65,7 @@ declare -a ENV_VARS=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --prompt)       PROMPT="$2"; shift 2 ;;
+        --harness)      HARNESS="$2"; shift 2 ;;
         --model)        MODEL="$2"; shift 2 ;;
         --effort)       EFFORT="$2"; shift 2 ;;
         --budget)       BUDGET="$2"; shift 2 ;;
@@ -78,6 +82,7 @@ done
 JSON=$(jq -n \
     --arg pr_url "$PR_URL" \
     --arg prompt "$PROMPT" \
+    --arg harness "$HARNESS" \
     --arg model "$MODEL" \
     --arg effort "$EFFORT" \
     --arg budget "$BUDGET" \
@@ -92,6 +97,7 @@ JSON=$(jq -n \
         self_review: false
     }
     + if $prompt != "" then {prompt: $prompt} else {} end
+    + if $harness != "" then {harness: $harness} else {} end
     + if $model != "" then {model: $model} else {} end
     + if $effort != "" then {effort: $effort} else {} end
     + if $budget != "" then {max_budget_usd: ($budget | tonumber)} else {} end

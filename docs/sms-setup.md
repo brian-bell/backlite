@@ -53,7 +53,8 @@ This endpoint receives incoming texts, authorizes the sender, parses the message
 - `Fix the login bug` — uses sender's default repo
 - `github.com/org/repo Fix the login bug` — explicit repo
 - `Implement the issue https://github.com/org/repo/issues/123` — issue URL infers the repo automatically
-- `Review the PR https://github.com/org/repo/pull/42` — PR URL infers the repo automatically
+- `https://github.com/org/repo/pull/42` — PR URL auto-detects review mode (sets `task_mode=review`, infers repo)
+- `Review https://github.com/org/repo/pull/42 for security issues` — PR URL auto-detects review mode, remaining text becomes the review prompt
 
 The task is created with a `reply_channel` of `sms:+15559876543` so results go back to you.
 

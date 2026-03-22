@@ -92,13 +92,19 @@ curl -X POST http://localhost:8080/api/v1/tasks \
     "create_pr": true
   }'
 
-# Review a PR
+# Review a PR (auto-detects review mode from PR URL in prompt)
 curl -X POST http://localhost:8080/api/v1/tasks \
   -H "Content-Type: application/json" \
   -d '{
-    "repo_url": "https://github.com/org/repo",
+    "prompt": "Review https://github.com/org/repo/pull/42"
+  }'
+
+# Explicit review mode
+curl -X POST http://localhost:8080/api/v1/tasks \
+  -H "Content-Type: application/json" \
+  -d '{
     "task_mode": "review",
-    "review_pr_number": 42
+    "review_pr_url": "https://github.com/org/repo/pull/42"
   }'
 
 # Codex harness (requires OPENAI_API_KEY)
@@ -131,7 +137,7 @@ curl -X POST http://localhost:8080/api/v1/tasks \
 |-------|------|-------------|
 | `repo_url` | string | **Required.** Repository URL |
 | `prompt` | string | **Required for code mode.** Agent instructions |
-| `task_mode` | string | `code` (default) or `review` |
+| `task_mode` | string | `code` (default) or `review`; auto-detected from PR URLs in prompt when unset |
 | `harness` | string | `codex` (default) or `claude_code` |
 | `model` | string | Model override (default: `claude-sonnet-4-6` / `gpt-5.4-mini` for codex) |
 | `effort` | string | `low`, `medium` (default), `high`, or `xhigh` |
@@ -141,7 +147,8 @@ curl -X POST http://localhost:8080/api/v1/tasks \
 | `self_review` | bool | Agent self-reviews the PR after creation |
 | `pr_title` | string | Custom PR title |
 | `pr_body` | string | Custom PR body |
-| `review_pr_number` | int | PR number (required for `review` mode) |
+| `review_pr_url` | string | Full PR URL (e.g. `https://github.com/org/repo/pull/42`); auto-populates `repo_url` and `review_pr_number` |
+| `review_pr_number` | int | PR number (legacy; prefer `review_pr_url`) |
 | `max_budget_usd` | float | Budget cap in USD (default: 10) |
 | `max_runtime_min` | int | Runtime cap in minutes (default: 30) |
 | `max_turns` | int | Max conversation turns (default: 200) |

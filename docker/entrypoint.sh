@@ -141,22 +141,32 @@ You MUST post your review as a comment on the PR using the gh CLI. Do not just p
         fi
     fi
 
-    CLAUDE_ARGS=(
-        -p "$FULL_REVIEW_PROMPT"
-        --dangerously-skip-permissions
-        --model "$MODEL"
-        --effort "$EFFORT"
-        --max-turns "$MAX_TURNS"
-        --output-format stream-json
-        --verbose
-    )
-    if [ "$AUTH_MODE" = "api_key" ]; then
-        CLAUDE_ARGS+=(--max-budget-usd "$MAX_BUDGET_USD")
-    fi
-
     CLAUDE_LOG="${WORKSPACE}/claude_output.log"
     set +e
-    claude "${CLAUDE_ARGS[@]}" 2>&1 | tee "$CLAUDE_LOG"
+    if [ "$HARNESS" = "codex" ]; then
+        CODEX_REVIEW_ARGS=(
+            exec
+            --model "$MODEL"
+            -c "model_reasoning_effort=${EFFORT}"
+            --dangerously-bypass-approvals-and-sandbox
+            "$FULL_REVIEW_PROMPT"
+        )
+        codex "${CODEX_REVIEW_ARGS[@]}" 2>&1 | tee "$CLAUDE_LOG"
+    else
+        CLAUDE_ARGS=(
+            -p "$FULL_REVIEW_PROMPT"
+            --dangerously-skip-permissions
+            --model "$MODEL"
+            --effort "$EFFORT"
+            --max-turns "$MAX_TURNS"
+            --output-format stream-json
+            --verbose
+        )
+        if [ "$AUTH_MODE" = "api_key" ]; then
+            CLAUDE_ARGS+=(--max-budget-usd "$MAX_BUDGET_USD")
+        fi
+        claude "${CLAUDE_ARGS[@]}" 2>&1 | tee "$CLAUDE_LOG"
+    fi
     CLAUDE_EXIT=${PIPESTATUS[0]}
     CLAUDE_OUTPUT=$(cat "$CLAUDE_LOG")
     set -e

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -137,12 +138,30 @@ func InboundHandler(db store.Store, cfg *config.Config, messenger Messenger) htt
 			return
 		}
 
-		// Parse SMS into repo + prompt
-		repoURL, prompt, err := ParseTaskFromSMS(body, sender.DefaultRepo)
-		if err != nil {
-			log.Warn().Err(err).Str("from", from).Msg("sms: failed to parse task")
-			writeTwiML(w, fmt.Sprintf("Error: %s", err.Error()))
-			return
+		// Auto-detect review mode from the raw SMS body before URL extraction.
+		taskMode := models.TaskModeCode
+		reviewPRURL := ""
+		reviewPRNumber := 0
+		var repoURL, prompt string
+
+		if inf := models.InferReviewMode(body); inf != nil {
+			taskMode = models.TaskModeReview
+			reviewPRURL = inf.PRURL
+			reviewPRNumber = inf.PRNumber
+			repoURL = inf.RepoURL
+			// Strip the PR URL from the body to get a prompt; default if empty.
+			prompt = strings.TrimSpace(strings.Replace(body, reviewPRURL, "", 1))
+			if prompt == "" {
+				prompt = fmt.Sprintf("Review pull request %s", reviewPRURL)
+			}
+		} else {
+			var err error
+			repoURL, prompt, err = ParseTaskFromSMS(body, sender.DefaultRepo)
+			if err != nil {
+				log.Warn().Err(err).Str("from", from).Msg("sms: failed to parse task")
+				writeTwiML(w, fmt.Sprintf("Error: %s", err.Error()))
+				return
+			}
 		}
 
 		now := time.Now().UTC()
@@ -154,16 +173,18 @@ func InboundHandler(db store.Store, cfg *config.Config, messenger Messenger) htt
 		task := &models.Task{
 			ID:              "bf_" + ulid.Make().String(),
 			Status:          models.TaskStatusPending,
-			TaskMode:        models.TaskModeCode,
+			TaskMode:        taskMode,
 			Harness:         harness,
 			RepoURL:         repoURL,
+			ReviewPRURL:     reviewPRURL,
+			ReviewPRNumber:  reviewPRNumber,
 			Prompt:          prompt,
 			Model:           defaultModel,
 			Effort:          cfg.DefaultEffort,
 			MaxBudgetUSD:    cfg.DefaultMaxBudget,
 			MaxRuntimeMin:   int(cfg.DefaultMaxRuntime.Minutes()),
 			MaxTurns:        cfg.DefaultMaxTurns,
-			CreatePR:        true,
+			CreatePR:        taskMode != models.TaskModeReview,
 			SelfReview:      false,
 			SaveAgentOutput: true,
 			ReplyChannel:    fmt.Sprintf("%s:%s", ChannelSMS, from),

@@ -254,6 +254,88 @@ func TestInboundHandler_MissingFields(t *testing.T) {
 	}
 }
 
+func TestInboundHandler_AutoDetectsReviewMode(t *testing.T) {
+	db := &mockStore{
+		senders: map[string]*models.AllowedSender{
+			"sms:+15551234567": {
+				ChannelType: "sms",
+				Address:     "+15551234567",
+				DefaultRepo: "https://github.com/backflow-labs/backflow",
+				Enabled:     true,
+			},
+		},
+	}
+	handler := InboundHandler(db, newTestConfig(), NoopMessenger{})
+
+	w := postForm(handler, url.Values{
+		"From": {"+15551234567"},
+		"Body": {"Review https://github.com/backflow-labs/backflow/pull/115"},
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if len(db.tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(db.tasks))
+	}
+	task := db.tasks[0]
+	if task.TaskMode != models.TaskModeReview {
+		t.Errorf("task_mode = %q, want %q", task.TaskMode, models.TaskModeReview)
+	}
+	if task.ReviewPRURL != "https://github.com/backflow-labs/backflow/pull/115" {
+		t.Errorf("review_pr_url = %q", task.ReviewPRURL)
+	}
+	if task.RepoURL != "https://github.com/backflow-labs/backflow" {
+		t.Errorf("repo_url = %q", task.RepoURL)
+	}
+	if task.ReviewPRNumber != 115 {
+		t.Errorf("review_pr_number = %d, want 115", task.ReviewPRNumber)
+	}
+	if task.CreatePR {
+		t.Error("expected create_pr false for review mode")
+	}
+}
+
+func TestInboundHandler_ReviewModePRURLOnly(t *testing.T) {
+	db := &mockStore{
+		senders: map[string]*models.AllowedSender{
+			"sms:+15551234567": {
+				ChannelType: "sms",
+				Address:     "+15551234567",
+				DefaultRepo: "https://github.com/backflow-labs/backflow",
+				Enabled:     true,
+			},
+		},
+	}
+	handler := InboundHandler(db, newTestConfig(), NoopMessenger{})
+
+	// SMS body is just a PR URL with no additional prompt text.
+	w := postForm(handler, url.Values{
+		"From": {"+15551234567"},
+		"Body": {"https://github.com/backflow-labs/backflow/pull/115"},
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(db.tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(db.tasks))
+	}
+	task := db.tasks[0]
+	if task.TaskMode != models.TaskModeReview {
+		t.Errorf("task_mode = %q, want %q", task.TaskMode, models.TaskModeReview)
+	}
+	if task.ReviewPRURL != "https://github.com/backflow-labs/backflow/pull/115" {
+		t.Errorf("review_pr_url = %q", task.ReviewPRURL)
+	}
+	if task.RepoURL != "https://github.com/backflow-labs/backflow" {
+		t.Errorf("repo_url = %q, want https://github.com/backflow-labs/backflow", task.RepoURL)
+	}
+	if task.Prompt == "" {
+		t.Error("expected a default prompt for review mode")
+	}
+}
+
 // --- Twilio signature validation tests ---
 
 // signRequest computes a valid X-Twilio-Signature for the given URL and params.

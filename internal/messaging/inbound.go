@@ -165,32 +165,19 @@ func InboundHandler(db store.Store, cfg *config.Config, messenger Messenger) htt
 		}
 
 		now := time.Now().UTC()
-		harness := models.Harness(cfg.DefaultHarness)
-		defaultModel := cfg.DefaultClaudeModel
-		if harness == models.HarnessCodex {
-			defaultModel = cfg.DefaultCodexModel
-		}
 		task := &models.Task{
-			ID:              "bf_" + ulid.Make().String(),
-			Status:          models.TaskStatusPending,
-			TaskMode:        taskMode,
-			Harness:         harness,
-			RepoURL:         repoURL,
-			ReviewPRURL:     reviewPRURL,
-			ReviewPRNumber:  reviewPRNumber,
-			Prompt:          prompt,
-			Model:           defaultModel,
-			Effort:          cfg.DefaultEffort,
-			MaxBudgetUSD:    cfg.DefaultMaxBudget,
-			MaxRuntimeMin:   int(cfg.DefaultMaxRuntime.Minutes()),
-			MaxTurns:        cfg.DefaultMaxTurns,
-			CreatePR:        taskMode != models.TaskModeReview,
-			SelfReview:      false,
-			SaveAgentOutput: true,
-			ReplyChannel:    fmt.Sprintf("%s:%s", ChannelSMS, from),
-			CreatedAt:       now,
-			UpdatedAt:       now,
+			ID:             "bf_" + ulid.Make().String(),
+			Status:         models.TaskStatusPending,
+			TaskMode:       taskMode,
+			RepoURL:        repoURL,
+			ReviewPRURL:    reviewPRURL,
+			ReviewPRNumber: reviewPRNumber,
+			Prompt:         prompt,
+			ReplyChannel:   fmt.Sprintf("%s:%s", ChannelSMS, from),
+			CreatedAt:      now,
+			UpdatedAt:      now,
 		}
+		cfg.TaskDefaults(taskMode).Apply(task, nil)
 
 		if err := db.CreateTask(r.Context(), task); err != nil {
 			log.Error().Err(err).Msg("sms: failed to create task")

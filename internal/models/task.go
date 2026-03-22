@@ -126,8 +126,8 @@ type CreateTaskRequest struct {
 	MaxBudgetUSD    float64           `json:"max_budget_usd,omitempty"`
 	MaxRuntimeMin   int               `json:"max_runtime_min,omitempty"`
 	MaxTurns        int               `json:"max_turns,omitempty"`
-	CreatePR        bool              `json:"create_pr"`
-	SelfReview      bool              `json:"self_review"`
+	CreatePR        *bool             `json:"create_pr,omitempty"`
+	SelfReview      *bool             `json:"self_review,omitempty"`
 	SaveAgentOutput *bool             `json:"save_agent_output,omitempty"`
 	PRTitle         string            `json:"pr_title,omitempty"`
 	PRBody          string            `json:"pr_body,omitempty"`

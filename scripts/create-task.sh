@@ -27,13 +27,14 @@ Options:
   --plan <file>           Read prompt from a file (use instead of <prompt> arg)
   --branch <name>         Working branch name
   --target-branch <name>  Target branch (default: main)
-  --harness <name>        Agent harness: claude_code (default) or codex
-  --model <model>         Model to use (default: server default for the selected harness)
-  --effort <level>        Reasoning effort: low, medium, high (default: medium)
+  --harness <name>        Agent harness: claude_code or codex (defaults to server setting)
+  --model <model>         Model to use (defaults to server setting for the selected harness)
+  --effort <level>        Reasoning effort: low, medium, high (defaults to server setting)
   --budget <usd>          Max budget in USD
   --runtime <min>         Max runtime in minutes
   --turns <n>             Max conversation turns
-  --no-pr                 Skip pull request creation (PR is created by default)
+  --pr                    Create pull request (defaults to server setting)
+  --no-pr                 Skip pull request creation
   --pr-title <title>      PR title
   --pr-body <body>        PR body
   --claude-md <text>      Extra CLAUDE.md content to inject
@@ -60,18 +61,18 @@ else
     shift 1
 fi
 
-# Defaults
+# Defaults — empty means "let the server decide"
 HARNESS=""
 BRANCH=""
 TARGET_BRANCH=""
 MODEL=""
-EFFORT="medium"
+EFFORT=""
 BUDGET=""
 RUNTIME=""
 TURNS=""
-CREATE_PR=true
-SELF_REVIEW=false
-SAVE_AGENT_OUTPUT=true
+CREATE_PR=""
+SELF_REVIEW=""
+SAVE_AGENT_OUTPUT=""
 PR_TITLE=""
 PR_BODY=""
 CLAUDE_MD=""
@@ -96,6 +97,7 @@ while [ $# -gt 0 ]; do
         --budget)       BUDGET="$2"; shift 2 ;;
         --runtime)      RUNTIME="$2"; shift 2 ;;
         --turns)        TURNS="$2"; shift 2 ;;
+        --pr)           CREATE_PR=true; shift ;;
         --no-pr)        CREATE_PR=false; shift ;;
         --no-save-output) SAVE_AGENT_OUTPUT=false; shift ;;
         --self-review)  SELF_REVIEW=true; shift ;;
@@ -126,19 +128,16 @@ JSON=$(jq -n \
     --arg budget "$BUDGET" \
     --arg runtime "$RUNTIME" \
     --arg turns "$TURNS" \
-    --argjson create_pr "$CREATE_PR" \
-    --argjson self_review "$SELF_REVIEW" \
-    --argjson save_agent_output "$SAVE_AGENT_OUTPUT" \
+    --arg create_pr "$CREATE_PR" \
+    --arg self_review "$SELF_REVIEW" \
+    --arg save_agent_output "$SAVE_AGENT_OUTPUT" \
     --arg pr_title "$PR_TITLE" \
     --arg pr_body "$PR_BODY" \
     --arg claude_md "$CLAUDE_MD" \
     --arg context "$CONTEXT" \
     '{
         repo_url: $repo_url,
-        prompt: $prompt,
-        create_pr: $create_pr,
-        self_review: $self_review,
-        save_agent_output: $save_agent_output
+        prompt: $prompt
     }
     + if $harness != "" then {harness: $harness} else {} end
     + if $branch != "" then {branch: $branch} else {} end
@@ -148,6 +147,9 @@ JSON=$(jq -n \
     + if $budget != "" then {max_budget_usd: ($budget | tonumber)} else {} end
     + if $runtime != "" then {max_runtime_min: ($runtime | tonumber)} else {} end
     + if $turns != "" then {max_turns: ($turns | tonumber)} else {} end
+    + if $create_pr != "" then {create_pr: ($create_pr == "true")} else {} end
+    + if $self_review != "" then {self_review: ($self_review == "true")} else {} end
+    + if $save_agent_output != "" then {save_agent_output: ($save_agent_output == "true")} else {} end
     + if $pr_title != "" then {pr_title: $pr_title} else {} end
     + if $pr_body != "" then {pr_body: $pr_body} else {} end
     + if $claude_md != "" then {claude_md: $claude_md} else {} end

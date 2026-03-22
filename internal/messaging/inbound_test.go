@@ -95,6 +95,8 @@ func newTestConfig() *config.Config {
 		DefaultHarness:     "claude_code",
 		DefaultClaudeModel: "claude-sonnet-4-6",
 		DefaultEffort:      "medium",
+		DefaultCreatePR:    true,
+		DefaultSaveOutput:  true,
 	}
 }
 
@@ -333,6 +335,53 @@ func TestInboundHandler_ReviewModePRURLOnly(t *testing.T) {
 	}
 	if task.Prompt == "" {
 		t.Error("expected a default prompt for review mode")
+	}
+}
+
+func TestInboundHandler_TaskDefaults(t *testing.T) {
+	db := &mockStore{
+		senders: map[string]*models.AllowedSender{
+			"sms:+15551234567": {
+				ChannelType: "sms",
+				Address:     "+15551234567",
+				DefaultRepo: "https://github.com/backflow-labs/backflow",
+				Enabled:     true,
+			},
+		},
+	}
+	handler := InboundHandler(db, newTestConfig(), NoopMessenger{})
+
+	w := postForm(handler, url.Values{
+		"From": {"+15551234567"},
+		"Body": {"Fix the flaky test"},
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if len(db.tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(db.tasks))
+	}
+	task := db.tasks[0]
+
+	// Verify defaults applied from config
+	if task.Harness != "claude_code" && task.Harness != "codex" {
+		t.Errorf("Harness = %q, want claude_code or codex", task.Harness)
+	}
+	if task.Model == "" {
+		t.Error("Model is empty, want non-empty default")
+	}
+	if task.Effort != "medium" {
+		t.Errorf("Effort = %q, want %q", task.Effort, "medium")
+	}
+	if !task.CreatePR {
+		t.Error("CreatePR = false, want true")
+	}
+	if task.SelfReview {
+		t.Error("SelfReview = true, want false")
+	}
+	if !task.SaveAgentOutput {
+		t.Error("SaveAgentOutput = false, want true")
 	}
 }
 

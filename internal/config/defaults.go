@@ -1,0 +1,113 @@
+package config
+
+import "github.com/backflow-labs/backflow/internal/models"
+
+// TaskDefaults holds resolved default values for new tasks.
+type TaskDefaults struct {
+	Harness         string
+	ClaudeModel     string
+	CodexModel      string
+	Effort          string
+	MaxBudgetUSD    float64
+	MaxRuntimeMin   int
+	MaxTurns        int
+	CreatePR        bool
+	SelfReview      bool
+	SaveAgentOutput bool
+}
+
+// BoolOverrides carries optional boolean overrides from the caller.
+// A nil pointer means "use the default"; a non-nil pointer means "use this value."
+type BoolOverrides struct {
+	CreatePR        *bool
+	SelfReview      *bool
+	SaveAgentOutput *bool
+}
+
+// TaskDefaults returns resolved defaults for the given task mode.
+func (c *Config) TaskDefaults(taskMode string) TaskDefaults {
+	d := TaskDefaults{
+		Harness:         c.DefaultHarness,
+		ClaudeModel:     c.DefaultClaudeModel,
+		CodexModel:      c.DefaultCodexModel,
+		Effort:          c.DefaultEffort,
+		MaxBudgetUSD:    c.DefaultMaxBudget,
+		MaxRuntimeMin:   int(c.DefaultMaxRuntime.Minutes()),
+		MaxTurns:        c.DefaultMaxTurns,
+		CreatePR:        c.DefaultCreatePR,
+		SelfReview:      c.DefaultSelfReview,
+		SaveAgentOutput: c.DefaultSaveOutput,
+	}
+
+	if taskMode == models.TaskModeReview {
+		d.CreatePR = false
+	}
+
+	return d
+}
+
+// Apply fills zero-value fields on task with defaults. Boolean fields use
+// overrides when non-nil, otherwise the default. Model is resolved based on
+// the task's actual harness after defaulting.
+func (d TaskDefaults) Apply(task *models.Task, overrides *BoolOverrides) {
+	if task.Harness == "" {
+		task.Harness = models.Harness(d.Harness)
+	}
+	if task.Model == "" {
+		if task.Harness == models.HarnessCodex {
+			task.Model = d.CodexModel
+		} else {
+			task.Model = d.ClaudeModel
+		}
+	}
+	if task.Effort == "" {
+		task.Effort = d.Effort
+	}
+	if task.MaxBudgetUSD == 0 {
+		task.MaxBudgetUSD = d.MaxBudgetUSD
+	}
+	if task.MaxRuntimeMin == 0 {
+		task.MaxRuntimeMin = d.MaxRuntimeMin
+	}
+	if task.MaxTurns == 0 {
+		task.MaxTurns = d.MaxTurns
+	}
+
+	// Booleans: use override if provided, otherwise default.
+	// Review mode always forces CreatePR=false regardless of override.
+	if task.TaskMode == models.TaskModeReview {
+		task.CreatePR = false
+	} else {
+		task.CreatePR = boolOrDefault(overrides.createPR(), d.CreatePR)
+	}
+	task.SelfReview = boolOrDefault(overrides.selfReview(), d.SelfReview)
+	task.SaveAgentOutput = boolOrDefault(overrides.saveAgentOutput(), d.SaveAgentOutput)
+}
+
+func boolOrDefault(override *bool, def bool) bool {
+	if override != nil {
+		return *override
+	}
+	return def
+}
+
+func (o *BoolOverrides) createPR() *bool {
+	if o == nil {
+		return nil
+	}
+	return o.CreatePR
+}
+
+func (o *BoolOverrides) selfReview() *bool {
+	if o == nil {
+		return nil
+	}
+	return o.SelfReview
+}
+
+func (o *BoolOverrides) saveAgentOutput() *bool {
+	if o == nil {
+		return nil
+	}
+	return o.SaveAgentOutput
+}

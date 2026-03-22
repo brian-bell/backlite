@@ -73,6 +73,11 @@ type Config struct {
 	DefaultMaxRuntime  time.Duration
 	DefaultMaxTurns    int
 
+	// Boolean defaults
+	DefaultCreatePR   bool
+	DefaultSelfReview bool
+	DefaultSaveOutput bool
+
 	// GitHub
 	GitHubToken string
 
@@ -151,9 +156,9 @@ func Load() (*Config, error) {
 		CloudWatchLogGroup:    os.Getenv("BACKFLOW_CLOUDWATCH_LOG_GROUP"),
 		ECSLogStreamPrefix:    envOr("BACKFLOW_ECS_LOG_STREAM_PREFIX", "ecs"),
 		MaxConcurrentTasks:    envInt("BACKFLOW_MAX_CONCURRENT_TASKS", 5),
-		DefaultHarness:        envOr("BACKFLOW_DEFAULT_HARNESS", "codex"),
+		DefaultHarness:        envOr("BACKFLOW_DEFAULT_HARNESS", "claude_code"),
 		DefaultClaudeModel:    envOr("BACKFLOW_DEFAULT_CLAUDE_MODEL", "claude-sonnet-4-6"),
-		DefaultCodexModel:     envOr("BACKFLOW_DEFAULT_CODEX_MODEL", "gpt-5.4-mini"),
+		DefaultCodexModel:     envOr("BACKFLOW_DEFAULT_CODEX_MODEL", "gpt-5.4"),
 		DefaultEffort:         envOr("BACKFLOW_DEFAULT_EFFORT", "medium"),
 		DefaultMaxBudget:      envFloat("BACKFLOW_DEFAULT_MAX_BUDGET", 10.0),
 		DefaultMaxRuntime:     time.Duration(envInt("BACKFLOW_DEFAULT_MAX_RUNTIME_MIN", 30)) * time.Minute,
@@ -173,6 +178,10 @@ func Load() (*Config, error) {
 		DatabaseURL:           os.Getenv("BACKFLOW_DATABASE_URL"),
 		PollInterval:          time.Duration(envInt("BACKFLOW_POLL_INTERVAL_SEC", 5)) * time.Second,
 	}
+
+	c.DefaultCreatePR = envBool("BACKFLOW_DEFAULT_CREATE_PR", true)
+	c.DefaultSelfReview = envBool("BACKFLOW_DEFAULT_SELF_REVIEW", false)
+	c.DefaultSaveOutput = envBool("BACKFLOW_DEFAULT_SAVE_AGENT_OUTPUT", true)
 
 	c.SMSProvider = envOr("BACKFLOW_SMS_PROVIDER", "")
 	c.TwilioAccountSID = os.Getenv("TWILIO_ACCOUNT_SID")

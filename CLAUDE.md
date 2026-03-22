@@ -52,13 +52,13 @@ Two goroutines: chi REST API on `:8080` + polling orchestrator (5s default). Thr
 - **store/** — `Store` interface + PostgreSQL (`pgxpool`, goose migrations)
 - **models/** — `Task`, `Instance`, `AllowedSender`, and `DiscordInstall` structs with status enums. `FindFirstURL` / `InferReviewMode` auto-detect review mode when a prompt's first URL is a GitHub PR URL.
 - **discord/** — Discord interaction handler (Ed25519 signature verification, PING/PONG, interaction routing)
-- **config/** — Env-var config (`BACKFLOW_*` prefix), three modes (`ec2`/`local`/`fargate`)
+- **config/** — Env-var config (`BACKFLOW_*` prefix), three modes (`ec2`/`local`/`fargate`). `TaskDefaults(taskMode)` returns resolved defaults; `Apply(task, overrides)` fills zero-value fields using `*bool` overrides (nil = use default, non-nil = use pointed value)
 - **notify/** — `Notifier` interface, `WebhookNotifier` (HTTP POST, 3 retries, event filtering), `DiscordNotifier` (lifecycle messages in channel + per-task threads), `NoopNotifier`, `EventBus` (async fan-out delivery via buffered channel), `NewEvent` constructor with `EventOption` functional options, `MessagingNotifier` (SMS via Twilio for reply channels)
 - **messaging/** — `Messenger` interface, `TwilioMessenger` (outbound SMS), inbound SMS webhook handler, message parsing
 
 ### Agent container (`docker/`)
 
-Node.js 20 image with Claude Code CLI + Codex CLI + git + gh. `entrypoint.sh`: clone → checkout → inject CLAUDE.md → run agent (with retry up to 3 attempts) → commit → push → create PR → optional self-review. Supports two harnesses: `claude_code` (`--output-format stream-json`, `--max-turns`) and `codex` (default, `exec --dangerously-bypass-approvals-and-sandbox`). Both harnesses work in code and review modes. Writes `status.json` for Docker-based modes and emits a `BACKFLOW_STATUS_JSON:` line for Fargate log parsing.
+Node.js 20 image with Claude Code CLI + Codex CLI + git + gh. `entrypoint.sh`: clone → checkout → inject CLAUDE.md → run agent (with retry up to 3 attempts) → commit → push → create PR → optional self-review. Supports two harnesses: `claude_code` (`--output-format stream-json`, `--max-turns`) and `codex` (`exec --dangerously-bypass-approvals-and-sandbox`). Both harnesses work in code and review modes. Writes `status.json` for Docker-based modes and emits a `BACKFLOW_STATUS_JSON:` line for Fargate log parsing.
 
 ### Statuses
 
@@ -98,7 +98,7 @@ If the Slack webhook URL is set, `cmd/backflow/main.go` logs that the subscriber
 ## Harnesses
 
 - **`claude_code`** — Claude Code CLI. Requires `ANTHROPIC_API_KEY` or Max subscription credentials.
-- **`codex`** (default) — OpenAI Codex CLI. Requires `OPENAI_API_KEY`. Defaults to `gpt-5.4-mini` model.
+- **`codex`** — OpenAI Codex CLI. Requires `OPENAI_API_KEY`.
 
 Configured per-task via the `harness` field or globally via `BACKFLOW_DEFAULT_HARNESS`.
 

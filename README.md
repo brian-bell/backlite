@@ -47,7 +47,7 @@ This routes `https://$BACKFLOW_DOMAIN` to `localhost:8080`. Set the domain as th
 
 ## Submitting Tasks
 
-PRs are created by default. Use `--no-pr` to skip.
+Scripts pass through only explicitly-set options; the server applies defaults for anything omitted. Use `--pr` / `--no-pr` to override the server's `BACKFLOW_DEFAULT_CREATE_PR` setting.
 
 ```bash
 # Simple task (creates PR by default)
@@ -83,13 +83,12 @@ PRs are created by default. Use `--no-pr` to skip.
 ### Direct API
 
 ```bash
-# Create a coding task
+# Create a coding task (server applies defaults for create_pr, effort, etc.)
 curl -X POST http://localhost:8080/api/v1/tasks \
   -H "Content-Type: application/json" \
   -d '{
     "repo_url": "https://github.com/org/repo",
-    "prompt": "Fix the bug",
-    "create_pr": true
+    "prompt": "Fix the bug"
   }'
 
 # Review a PR (auto-detects review mode from PR URL in prompt)
@@ -113,8 +112,7 @@ curl -X POST http://localhost:8080/api/v1/tasks \
   -d '{
     "repo_url": "https://github.com/org/repo",
     "prompt": "Fix the bug",
-    "harness": "codex",
-    "create_pr": true
+    "harness": "codex"
   }'
 ```
 
@@ -137,26 +135,26 @@ curl -X POST http://localhost:8080/api/v1/tasks \
 |-------|------|-------------|
 | `repo_url` | string | **Required.** Repository URL |
 | `prompt` | string | **Required for code mode.** Agent instructions |
-| `task_mode` | string | `code` (default) or `review`; auto-detected from PR URLs in prompt when unset |
-| `harness` | string | `codex` (default) or `claude_code` |
-| `model` | string | Model override (default: `claude-sonnet-4-6` / `gpt-5.4-mini` for codex) |
-| `effort` | string | `low`, `medium` (default), `high`, or `xhigh` |
+| `task_mode` | string | `code` or `review`; auto-detected from PR URLs in prompt when unset |
+| `harness` | string | `codex` or `claude_code` |
+| `model` | string | Model override (per-harness; see server config) |
+| `effort` | string | `low`, `medium`, `high`, or `xhigh` |
 | `branch` | string | Working branch name |
-| `target_branch` | string | Target branch (default: main) |
-| `create_pr` | bool | Create a PR on completion |
-| `self_review` | bool | Agent self-reviews the PR after creation |
+| `target_branch` | string | Target branch |
+| `create_pr` | bool | Create a PR on completion (omit to use server default) |
+| `self_review` | bool | Agent self-reviews the PR after creation (omit to use server default) |
 | `pr_title` | string | Custom PR title |
 | `pr_body` | string | Custom PR body |
 | `review_pr_url` | string | Full PR URL (e.g. `https://github.com/org/repo/pull/42`); auto-populates `repo_url` and `review_pr_number` |
 | `review_pr_number` | int | PR number (legacy; prefer `review_pr_url`) |
-| `max_budget_usd` | float | Budget cap in USD (default: 10) |
-| `max_runtime_min` | int | Runtime cap in minutes (default: 30) |
-| `max_turns` | int | Max conversation turns (default: 200) |
+| `max_budget_usd` | float | Budget cap in USD |
+| `max_runtime_min` | int | Runtime cap in minutes |
+| `max_turns` | int | Max conversation turns |
 | `context` | string | Additional context appended to prompt |
 | `claude_md` | string | Extra CLAUDE.md content injected into the repo |
 | `allowed_tools` | []string | Restrict agent tool access |
 | `env_vars` | map | Extra env vars passed to the container |
-| `save_agent_output` | bool | Save agent output to S3 (default: true if S3 configured) |
+| `save_agent_output` | bool | Save agent output to S3 (omit to use server default) |
 
 ## Monitoring and Operations
 
@@ -255,17 +253,22 @@ All config via environment variables or `.env` file. See `.env.example` for the 
 
 ### Agent Defaults
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `BACKFLOW_DEFAULT_HARNESS` | `codex` | `claude_code` or `codex` |
-| `BACKFLOW_DEFAULT_CLAUDE_MODEL` | `claude-sonnet-4-6` | Default model for Claude Code |
-| `BACKFLOW_DEFAULT_CODEX_MODEL` | `gpt-5.4-mini` | Default model for Codex |
-| `BACKFLOW_DEFAULT_EFFORT` | `medium` | Reasoning effort (`low`, `medium`, `high`, `xhigh`) |
-| `BACKFLOW_DEFAULT_MAX_BUDGET` | `10` | Budget cap (USD) |
-| `BACKFLOW_DEFAULT_MAX_RUNTIME_MIN` | `30` | Runtime cap (minutes) |
-| `BACKFLOW_DEFAULT_MAX_TURNS` | `200` | Max conversation turns |
-| `BACKFLOW_CONTAINER_CPUS` | `2` | CPU cores per container |
-| `BACKFLOW_CONTAINER_MEMORY_GB` | `8` | Memory (GB) per container |
+Defaults are set in `internal/config/config.go` and can be overridden via env vars. See `.env.example` for current values.
+
+| Variable | Description |
+|----------|-------------|
+| `BACKFLOW_DEFAULT_HARNESS` | `claude_code` or `codex` |
+| `BACKFLOW_DEFAULT_CLAUDE_MODEL` | Default model for Claude Code |
+| `BACKFLOW_DEFAULT_CODEX_MODEL` | Default model for Codex |
+| `BACKFLOW_DEFAULT_EFFORT` | Reasoning effort (`low`, `medium`, `high`, `xhigh`) |
+| `BACKFLOW_DEFAULT_MAX_BUDGET` | Budget cap (USD) |
+| `BACKFLOW_DEFAULT_MAX_RUNTIME_MIN` | Runtime cap (minutes) |
+| `BACKFLOW_DEFAULT_MAX_TURNS` | Max conversation turns |
+| `BACKFLOW_DEFAULT_CREATE_PR` | Create PR by default |
+| `BACKFLOW_DEFAULT_SELF_REVIEW` | Self-review by default |
+| `BACKFLOW_DEFAULT_SAVE_AGENT_OUTPUT` | Save agent output by default |
+| `BACKFLOW_CONTAINER_CPUS` | CPU cores per container |
+| `BACKFLOW_CONTAINER_MEMORY_GB` | Memory (GB) per container |
 
 ### EC2 Mode
 

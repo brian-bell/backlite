@@ -45,43 +45,42 @@ func (h *Handlers) CreateTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now().UTC()
-	taskMode := withDefault(req.TaskMode, models.TaskModeCode)
-	harness := models.Harness(withDefault(req.Harness, h.config.DefaultHarness))
-
-	// Pick harness-specific default model
-	defaultModel := h.config.DefaultClaudeModel
-	if harness == models.HarnessCodex {
-		defaultModel = h.config.DefaultCodexModel
+	taskMode := req.TaskMode
+	if taskMode == "" {
+		taskMode = models.TaskModeCode
 	}
 
 	task := &models.Task{
-		ID:              "bf_" + ulid.Make().String(),
-		Status:          models.TaskStatusPending,
-		TaskMode:        taskMode,
-		Harness:         harness,
-		RepoURL:         req.RepoURL,
-		Branch:          req.Branch,
-		TargetBranch:    req.TargetBranch,
-		ReviewPRURL:     req.ReviewPRURL,
-		ReviewPRNumber:  req.ReviewPRNumber,
-		Prompt:          req.Prompt,
-		Context:         req.Context,
-		Model:           withDefault(req.Model, defaultModel),
-		Effort:          withDefault(req.Effort, h.config.DefaultEffort),
-		MaxBudgetUSD:    withDefaultFloat(req.MaxBudgetUSD, h.config.DefaultMaxBudget),
-		MaxRuntimeMin:   withDefaultInt(req.MaxRuntimeMin, int(h.config.DefaultMaxRuntime.Minutes())),
-		MaxTurns:        withDefaultInt(req.MaxTurns, h.config.DefaultMaxTurns),
+		ID:             "bf_" + ulid.Make().String(),
+		Status:         models.TaskStatusPending,
+		TaskMode:       taskMode,
+		Harness:        models.Harness(req.Harness),
+		RepoURL:        req.RepoURL,
+		Branch:         req.Branch,
+		TargetBranch:   req.TargetBranch,
+		ReviewPRURL:    req.ReviewPRURL,
+		ReviewPRNumber: req.ReviewPRNumber,
+		Prompt:         req.Prompt,
+		Context:        req.Context,
+		Model:          req.Model,
+		Effort:         req.Effort,
+		MaxBudgetUSD:   req.MaxBudgetUSD,
+		MaxRuntimeMin:  req.MaxRuntimeMin,
+		MaxTurns:       req.MaxTurns,
+		PRTitle:        req.PRTitle,
+		PRBody:         req.PRBody,
+		AllowedTools:   req.AllowedTools,
+		ClaudeMD:       req.ClaudeMD,
+		EnvVars:        req.EnvVars,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+
+	h.config.TaskDefaults(taskMode).Apply(task, &config.BoolOverrides{
 		CreatePR:        req.CreatePR,
 		SelfReview:      req.SelfReview,
-		SaveAgentOutput: req.SaveAgentOutput == nil || *req.SaveAgentOutput,
-		PRTitle:         req.PRTitle,
-		PRBody:          req.PRBody,
-		AllowedTools:    req.AllowedTools,
-		ClaudeMD:        req.ClaudeMD,
-		EnvVars:         req.EnvVars,
-		CreatedAt:       now,
-		UpdatedAt:       now,
-	}
+		SaveAgentOutput: req.SaveAgentOutput,
+	})
 
 	if err := h.store.CreateTask(r.Context(), task); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create task")
@@ -220,25 +219,4 @@ func (h *Handlers) HealthCheck(w http.ResponseWriter, r *http.Request) {
 		"status":    "ok",
 		"auth_mode": string(h.config.AuthMode),
 	})
-}
-
-func withDefault(val, fallback string) string {
-	if val == "" {
-		return fallback
-	}
-	return val
-}
-
-func withDefaultFloat(val, fallback float64) float64 {
-	if val == 0 {
-		return fallback
-	}
-	return val
-}
-
-func withDefaultInt(val, fallback int) int {
-	if val == 0 {
-		return fallback
-	}
-	return val
 }

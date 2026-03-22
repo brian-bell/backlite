@@ -1,6 +1,6 @@
 .PHONY: build run test clean docker-build docker-build-local docker-push docker-deploy lint \
        db-pending db-provisioning db-running db-completed db-failed db-interrupted db-cancelled db-recovering \
-       setup-aws deps tunnel cloudflared-setup test-docker-status-writer
+       setup-aws deps tunnel cloudflared-setup test-docker-status-writer copy-env
 
 BINARY := backflow
 PKG := github.com/backflow-labs/backflow
@@ -101,6 +101,9 @@ tunnel:
 
 cloudflared-setup:
 	@$(ENV); bash scripts/cloudflared-setup.sh
+
+copy-env:
+	cp ~/dev/etc/.env .env
 
 deps:
 	go mod tidy

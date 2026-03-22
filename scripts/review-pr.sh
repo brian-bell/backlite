@@ -24,9 +24,9 @@ Arguments:
 
 Options:
   --prompt <text>         Custom review instructions
-  --harness <name>        Agent harness: claude_code (default) or codex
-  --model <model>         Model to use (default: claude-sonnet-4-6 or gpt-5.4 for codex)
-  --effort <level>        Reasoning effort: low, medium, high (default: medium)
+  --harness <name>        Agent harness: claude_code or codex (defaults to server setting)
+  --model <model>         Model to use (defaults to server setting for the selected harness)
+  --effort <level>        Reasoning effort: low, medium, high (defaults to server setting)
   --budget <usd>          Max budget in USD
   --runtime <min>         Max runtime in minutes
   --turns <n>             Max conversation turns
@@ -50,11 +50,11 @@ if ! [[ "$PR_URL" =~ /pull/[0-9]+(/|$) ]]; then
     exit 1
 fi
 
-# Defaults
+# Defaults — empty means "let the server decide"
 PROMPT=""
 HARNESS=""
 MODEL=""
-EFFORT="medium"
+EFFORT=""
 BUDGET=""
 RUNTIME=""
 TURNS=""
@@ -92,9 +92,7 @@ JSON=$(jq -n \
     --arg context "$CONTEXT" \
     '{
         task_mode: "review",
-        review_pr_url: $pr_url,
-        create_pr: false,
-        self_review: false
+        review_pr_url: $pr_url
     }
     + if $prompt != "" then {prompt: $prompt} else {} end
     + if $harness != "" then {harness: $harness} else {} end

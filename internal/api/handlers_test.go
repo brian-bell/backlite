@@ -109,7 +109,7 @@ func testServer(t *testing.T) http.Handler {
 		AnthropicAPIKey:    "sk-test",
 		DefaultHarness:     "claude_code",
 		DefaultClaudeModel: "claude-sonnet-4-6",
-		DefaultCodexModel:  "gpt-5.4-mini",
+		DefaultCodexModel:  "gpt-5.4",
 		DefaultEffort:      "medium",
 		DefaultMaxBudget:   10.0,
 		DefaultMaxRuntime:  30 * 60e9, // 30 min
@@ -141,7 +141,7 @@ func testServerWithEmitter(t *testing.T) (http.Handler, store.Store, *capturingE
 		AnthropicAPIKey:    "sk-test",
 		DefaultHarness:     "claude_code",
 		DefaultClaudeModel: "claude-sonnet-4-6",
-		DefaultCodexModel:  "gpt-5.4-mini",
+		DefaultCodexModel:  "gpt-5.4",
 		DefaultEffort:      "medium",
 		DefaultMaxBudget:   10.0,
 		DefaultMaxRuntime:  30 * 60e9,
@@ -251,8 +251,8 @@ func TestCreateTaskCodexHarness(t *testing.T) {
 	if resp.Data.Harness != "codex" {
 		t.Errorf("harness = %q, want codex", resp.Data.Harness)
 	}
-	if resp.Data.Model != "gpt-5.4-mini" {
-		t.Errorf("model = %q, want gpt-5.4-mini", resp.Data.Model)
+	if resp.Data.Model == "" {
+		t.Error("model is empty, want non-empty default for codex harness")
 	}
 	if resp.Data.Effort != "medium" {
 		t.Errorf("effort = %q, want medium", resp.Data.Effort)

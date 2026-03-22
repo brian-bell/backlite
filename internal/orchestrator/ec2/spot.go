@@ -1,4 +1,4 @@
-package orchestrator
+package ec2
 
 import (
 	"context"
@@ -9,17 +9,18 @@ import (
 	"github.com/backflow-labs/backflow/internal/store"
 )
 
+// SpotHandler polls running instances for spot termination notices and
+// re-queues affected tasks.
 type SpotHandler struct {
 	store store.Store
-	ec2   *EC2Manager
+	ec2   *Manager
 }
 
-func NewSpotHandler(s store.Store, ec2 *EC2Manager) *SpotHandler {
+func NewSpotHandler(s store.Store, ec2 *Manager) *SpotHandler {
 	return &SpotHandler{store: s, ec2: ec2}
 }
 
 // CheckInterruptions polls running instances for spot termination notices.
-// Called periodically by the orchestrator.
 func (h *SpotHandler) CheckInterruptions(ctx context.Context) {
 	running := models.InstanceStatusRunning
 	instances, err := h.store.ListInstances(ctx, &running)
@@ -47,7 +48,6 @@ func (h *SpotHandler) isInterrupted(ctx context.Context, instanceID string) (boo
 		return false, err
 	}
 
-	// Check if the instance state indicates it's being terminated
 	if inst.State != nil {
 		state := inst.State.Name
 		if state == "shutting-down" || state == "terminated" {
@@ -59,10 +59,8 @@ func (h *SpotHandler) isInterrupted(ctx context.Context, instanceID string) (boo
 }
 
 func (h *SpotHandler) handleInterruption(ctx context.Context, inst *models.Instance) {
-	// Mark instance as draining
 	h.store.UpdateInstanceStatus(ctx, inst.InstanceID, models.InstanceStatusDraining)
 
-	// Find all running tasks on this instance and re-queue them
 	running := models.TaskStatusRunning
 	tasks, err := h.store.ListTasks(ctx, store.TaskFilter{Status: &running})
 	if err != nil {

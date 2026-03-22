@@ -1,4 +1,4 @@
-package orchestrator
+package fargate
 
 import (
 	"strings"
@@ -10,10 +10,14 @@ import (
 
 	"github.com/backflow-labs/backflow/internal/config"
 	"github.com/backflow-labs/backflow/internal/models"
+	"github.com/backflow-labs/backflow/internal/orchestrator"
 )
 
+// Compile-time check: *Manager must satisfy orchestrator.Runner.
+var _ orchestrator.Runner = (*Manager)(nil)
+
 func TestFargateBuildECSEnvVars(t *testing.T) {
-	manager := NewFargateManager(&config.Config{
+	manager := NewManager(&config.Config{
 		AuthMode:        config.AuthModeAPIKey,
 		AnthropicAPIKey: "sk-ant",
 		OpenAIAPIKey:    "sk-openai",
@@ -97,52 +101,32 @@ func TestFargateMapECSTaskStatus(t *testing.T) {
 		wantFail  bool
 	}{
 		{
-			name: "running task",
-			task: ecstypes.Task{
-				LastStatus: aws.String("RUNNING"),
-				Containers: []ecstypes.Container{
-					{Name: aws.String("backflow-agent")},
-				},
-			},
+			name:     "running task",
+			task:     ecstypes.Task{LastStatus: aws.String("RUNNING"), Containers: []ecstypes.Container{{Name: aws.String("backflow-agent")}}},
 			wantDone: false,
 		},
 		{
-			name: "stopped success",
-			task: ecstypes.Task{
-				LastStatus: aws.String("STOPPED"),
-				Containers: []ecstypes.Container{
-					{Name: aws.String("backflow-agent"), ExitCode: aws.Int32(0)},
-				},
-			},
+			name:     "stopped success",
+			task:     ecstypes.Task{LastStatus: aws.String("STOPPED"), Containers: []ecstypes.Container{{Name: aws.String("backflow-agent"), ExitCode: aws.Int32(0)}}},
 			wantDone: true,
 			wantCode: 0,
 		},
 		{
-			name: "stopped failure",
-			task: ecstypes.Task{
-				LastStatus: aws.String("STOPPED"),
-				Containers: []ecstypes.Container{
-					{Name: aws.String("backflow-agent"), ExitCode: aws.Int32(137)},
-				},
-			},
+			name:      "stopped failure",
+			task:      ecstypes.Task{LastStatus: aws.String("STOPPED"), Containers: []ecstypes.Container{{Name: aws.String("backflow-agent"), ExitCode: aws.Int32(137)}}},
 			wantDone:  true,
 			wantCode:  137,
 			wantError: "container exited with code 137",
 		},
 		{
-			name: "stopped before container exit code available",
-			task: ecstypes.Task{
-				LastStatus:    aws.String("STOPPED"),
-				StoppedReason: aws.String("Task failed to start"),
-			},
+			name:      "stopped before container exit code available",
+			task:      ecstypes.Task{LastStatus: aws.String("STOPPED"), StoppedReason: aws.String("Task failed to start")},
 			wantDone:  true,
 			wantError: "Task failed to start",
 		},
 		{
-			name: "unknown status",
-			task: ecstypes.Task{
-				LastStatus: aws.String("MYSTERY"),
-			},
+			name:     "unknown status",
+			task:     ecstypes.Task{LastStatus: aws.String("MYSTERY")},
 			wantFail: true,
 		},
 	}
@@ -238,7 +222,7 @@ func TestFargateParseStatusFromLogEvents_EscapedMultilineError(t *testing.T) {
 }
 
 func TestFargateBuildLogStreamName(t *testing.T) {
-	manager := NewFargateManager(&config.Config{
+	manager := NewManager(&config.Config{
 		ECSContainerName:   "backflow-agent",
 		ECSLogStreamPrefix: "ecs",
 	}, nil)
@@ -249,21 +233,9 @@ func TestFargateBuildLogStreamName(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
-		{
-			name:    "short task arn",
-			taskARN: "arn:aws:ecs:us-east-1:123456789012:task/0123456789abcdef",
-			want:    "ecs/backflow-agent/0123456789abcdef",
-		},
-		{
-			name:    "long task arn",
-			taskARN: "arn:aws:ecs:us-east-1:123456789012:task/backflow/0123456789abcdef",
-			want:    "ecs/backflow-agent/0123456789abcdef",
-		},
-		{
-			name:    "invalid arn",
-			taskARN: "not-an-arn",
-			wantErr: true,
-		},
+		{name: "short task arn", taskARN: "arn:aws:ecs:us-east-1:123456789012:task/0123456789abcdef", want: "ecs/backflow-agent/0123456789abcdef"},
+		{name: "long task arn", taskARN: "arn:aws:ecs:us-east-1:123456789012:task/backflow/0123456789abcdef", want: "ecs/backflow-agent/0123456789abcdef"},
+		{name: "invalid arn", taskARN: "not-an-arn", wantErr: true},
 	}
 
 	for _, tt := range tests {
@@ -291,21 +263,17 @@ func TestEstimateOverridesSize(t *testing.T) {
 		ecsEnvVar("PROMPT", "Fix the bug"),
 	}
 	size := estimateOverridesSize(vars)
-	// 200 base + (7 + 9 + 30) + (6 + 11 + 30) = 200 + 46 + 47 = 293
 	if size < 200 || size > 500 {
 		t.Errorf("estimateOverridesSize = %d, expected roughly 293", size)
 	}
 }
 
 func TestOffloadLargeEnvVarsSkipsWhenSmall(t *testing.T) {
-	manager := NewFargateManager(&config.Config{}, nil)
+	manager := NewManager(&config.Config{}, nil)
 	vars := []ecstypes.KeyValuePair{
 		ecsEnvVar("TASK_ID", "bf_01ABC"),
 		ecsEnvVar("PROMPT", "Fix the bug"),
 	}
-	// s3 is nil, so offload should be skipped in RunAgent.
-	// Test the function directly — with nil s3, it would panic,
-	// but estimateOverridesSize keeps it under threshold so it returns early.
 	result, err := manager.offloadLargeEnvVars(nil, "bf_01ABC", vars)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -313,7 +281,6 @@ func TestOffloadLargeEnvVarsSkipsWhenSmall(t *testing.T) {
 	if len(result) != len(vars) {
 		t.Errorf("expected %d vars, got %d", len(vars), len(result))
 	}
-	// Verify PROMPT is unchanged
 	for _, v := range result {
 		if aws.ToString(v.Name) == "PROMPT" && aws.ToString(v.Value) != "Fix the bug" {
 			t.Errorf("PROMPT was unexpectedly modified")

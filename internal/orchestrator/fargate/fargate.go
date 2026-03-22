@@ -1,9 +1,8 @@
-package orchestrator
+package fargate
 
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -20,27 +19,24 @@ import (
 
 	"github.com/backflow-labs/backflow/internal/config"
 	"github.com/backflow-labs/backflow/internal/models"
+	"github.com/backflow-labs/backflow/internal/orchestrator"
 )
 
 const backflowStatusLogPrefix = "BACKFLOW_STATUS_JSON:"
 
-// errSpotInterruption is returned when an ECS task is stopped due to Fargate
-// Spot capacity reclamation. It is checked via errors.Is in isInstanceGone.
-var errSpotInterruption = errors.New("spot interruption")
-
-// FargateManager manages agent containers as standalone ECS tasks.
-type FargateManager struct {
+// Manager manages agent containers as standalone ECS tasks.
+type Manager struct {
 	config *config.Config
-	s3     s3Client
+	s3     orchestrator.S3Client
 	ecs    *ecs.Client
 	cwLogs *cloudwatchlogs.Client
 }
 
-func NewFargateManager(cfg *config.Config, s3 s3Client) *FargateManager {
-	return &FargateManager{config: cfg, s3: s3}
+func NewManager(cfg *config.Config, s3 orchestrator.S3Client) *Manager {
+	return &Manager{config: cfg, s3: s3}
 }
 
-func (m *FargateManager) ensureClients(ctx context.Context) error {
+func (m *Manager) ensureClients(ctx context.Context) error {
 	if m.ecs != nil && m.cwLogs != nil {
 		return nil
 	}
@@ -59,7 +55,13 @@ func (m *FargateManager) ensureClients(ctx context.Context) error {
 	return nil
 }
 
-func (m *FargateManager) RunAgent(ctx context.Context, _ *models.Instance, task *models.Task) (string, error) {
+// GetAgentOutput retrieves the agent's output from CloudWatch logs since there
+// is no host to docker-cp from in Fargate mode.
+func (m *Manager) GetAgentOutput(ctx context.Context, instanceID, containerID string) (string, error) {
+	return m.GetLogs(ctx, instanceID, containerID, 0)
+}
+
+func (m *Manager) RunAgent(ctx context.Context, _ *models.Instance, task *models.Task) (string, error) {
 	if err := m.ensureClients(ctx); err != nil {
 		return "", err
 	}
@@ -147,9 +149,9 @@ func (m *FargateManager) RunAgent(ctx context.Context, _ *models.Instance, task 
 	return taskARN, nil
 }
 
-func (m *FargateManager) InspectContainer(ctx context.Context, _, containerID string) (ContainerStatus, error) {
+func (m *Manager) InspectContainer(ctx context.Context, _, containerID string) (orchestrator.ContainerStatus, error) {
 	if err := m.ensureClients(ctx); err != nil {
-		return ContainerStatus{}, err
+		return orchestrator.ContainerStatus{}, err
 	}
 
 	output, err := m.ecs.DescribeTasks(ctx, &ecs.DescribeTasksInput{
@@ -157,23 +159,23 @@ func (m *FargateManager) InspectContainer(ctx context.Context, _, containerID st
 		Tasks:   []string{containerID},
 	})
 	if err != nil {
-		return ContainerStatus{}, fmt.Errorf("describe ecs task: %w", err)
+		return orchestrator.ContainerStatus{}, fmt.Errorf("describe ecs task: %w", err)
 	}
 	if len(output.Failures) > 0 {
-		return ContainerStatus{}, fmt.Errorf("describe ecs task failed: %s", formatECSFailure(output.Failures[0]))
+		return orchestrator.ContainerStatus{}, fmt.Errorf("describe ecs task failed: %s", formatECSFailure(output.Failures[0]))
 	}
 	if len(output.Tasks) == 0 {
-		return ContainerStatus{}, fmt.Errorf("ecs task %s not found", containerID)
+		return orchestrator.ContainerStatus{}, fmt.Errorf("ecs task %s not found", containerID)
 	}
 
 	task := output.Tasks[0]
 	if isSpotInterruptionReason(aws.ToString(task.StoppedReason)) {
-		return ContainerStatus{}, fmt.Errorf("%w: %s", errSpotInterruption, aws.ToString(task.StoppedReason))
+		return orchestrator.ContainerStatus{}, fmt.Errorf("%w: %s", orchestrator.ErrSpotInterruption, aws.ToString(task.StoppedReason))
 	}
 
 	status, err := mapECSTaskStatus(task, m.containerName())
 	if err != nil {
-		return ContainerStatus{}, err
+		return orchestrator.ContainerStatus{}, err
 	}
 
 	if status.Done {
@@ -199,7 +201,7 @@ func (m *FargateManager) InspectContainer(ctx context.Context, _, containerID st
 	return status, nil
 }
 
-func (m *FargateManager) StopContainer(ctx context.Context, _, containerID string) error {
+func (m *Manager) StopContainer(ctx context.Context, _, containerID string) error {
 	if err := m.ensureClients(ctx); err != nil {
 		return err
 	}
@@ -215,7 +217,7 @@ func (m *FargateManager) StopContainer(ctx context.Context, _, containerID strin
 	return nil
 }
 
-func (m *FargateManager) GetLogs(ctx context.Context, _, containerID string, tail int) (string, error) {
+func (m *Manager) GetLogs(ctx context.Context, _, containerID string, tail int) (string, error) {
 	if err := m.ensureClients(ctx); err != nil {
 		return "", err
 	}
@@ -227,7 +229,7 @@ func (m *FargateManager) GetLogs(ctx context.Context, _, containerID string, tai
 	return formatLogEvents(events), nil
 }
 
-func (m *FargateManager) buildECSEnvVars(task *models.Task) []ecstypes.KeyValuePair {
+func (m *Manager) buildECSEnvVars(task *models.Task) []ecstypes.KeyValuePair {
 	vars := []ecstypes.KeyValuePair{
 		ecsEnvVar("TASK_ID", task.ID),
 		ecsEnvVar("TASK_MODE", task.TaskMode),
@@ -282,7 +284,7 @@ func (m *FargateManager) buildECSEnvVars(task *models.Task) []ecstypes.KeyValueP
 	return vars
 }
 
-func (m *FargateManager) getLogEvents(ctx context.Context, containerID string, tail int) ([]cloudwatchlogstypes.OutputLogEvent, error) {
+func (m *Manager) getLogEvents(ctx context.Context, containerID string, tail int) ([]cloudwatchlogstypes.OutputLogEvent, error) {
 	if tail <= 0 {
 		tail = 100
 	}
@@ -304,7 +306,7 @@ func (m *FargateManager) getLogEvents(ctx context.Context, containerID string, t
 	return output.Events, nil
 }
 
-func (m *FargateManager) buildLogStreamName(taskARN string) (string, error) {
+func (m *Manager) buildLogStreamName(taskARN string) (string, error) {
 	taskID, err := taskIDFromARN(taskARN)
 	if err != nil {
 		return "", err
@@ -312,41 +314,37 @@ func (m *FargateManager) buildLogStreamName(taskARN string) (string, error) {
 	return fmt.Sprintf("%s/%s/%s", m.logStreamPrefix(), m.containerName(), taskID), nil
 }
 
-func (m *FargateManager) containerName() string {
+func (m *Manager) containerName() string {
 	if m.config.ECSContainerName != "" {
 		return m.config.ECSContainerName
 	}
 	return "backflow-agent"
 }
 
-func (m *FargateManager) logStreamPrefix() string {
+func (m *Manager) logStreamPrefix() string {
 	if m.config.ECSLogStreamPrefix != "" {
 		return m.config.ECSLogStreamPrefix
 	}
 	return "ecs"
 }
 
-func (m *FargateManager) launchType() string {
+func (m *Manager) launchType() string {
 	if m.config.ECSLaunchType != "" {
 		return m.config.ECSLaunchType
 	}
 	return "FARGATE_SPOT"
 }
 
-func (m *FargateManager) taskCPUUnits() int {
+func (m *Manager) taskCPUUnits() int {
 	return m.config.ContainerCPUs * 1024
 }
 
-func (m *FargateManager) taskMemoryMiB() int {
+func (m *Manager) taskMemoryMiB() int {
 	return m.config.ContainerMemGB * 1024
 }
 
-// ecsOverridesTarget is the target maximum size for ECS container overrides.
-// The hard ECS limit is 8192 bytes; we leave headroom for JSON structure.
 const ecsOverridesTarget = 7000
 
-// offloadableEnvVars maps env var names to their S3 URL counterparts.
-// These are the fields most likely to be large (prompt, context, etc.).
 var offloadableEnvVars = map[string]string{
 	"PROMPT":       "PROMPT_S3_URL",
 	"CLAUDE_MD":    "CLAUDE_MD_S3_URL",
@@ -354,16 +352,12 @@ var offloadableEnvVars = map[string]string{
 	"PR_BODY":      "PR_BODY_S3_URL",
 }
 
-// offloadLargeEnvVars uploads large env var values to S3 and replaces them
-// with pre-signed GET URLs so the entrypoint can download them. This avoids
-// the ECS RunTask 8192-byte container overrides limit.
-func (m *FargateManager) offloadLargeEnvVars(ctx context.Context, taskID string, vars []ecstypes.KeyValuePair) ([]ecstypes.KeyValuePair, error) {
+func (m *Manager) offloadLargeEnvVars(ctx context.Context, taskID string, vars []ecstypes.KeyValuePair) ([]ecstypes.KeyValuePair, error) {
 	size := estimateOverridesSize(vars)
 	if size <= ecsOverridesTarget {
 		return vars, nil
 	}
 
-	// Find offloadable vars, sorted largest first.
 	type candidate struct {
 		index int
 		key   string
@@ -409,11 +403,8 @@ func (m *FargateManager) offloadLargeEnvVars(ctx context.Context, taskID string,
 	return vars, nil
 }
 
-// estimateOverridesSize returns a rough byte count for the ECS container
-// overrides JSON. Each env var contributes its key, value, and ~30 bytes
-// of JSON structure ({"name":"…","value":"…"}).
 func estimateOverridesSize(vars []ecstypes.KeyValuePair) int {
-	size := 200 // base overhead for task override + container override structure
+	size := 200
 	for _, v := range vars {
 		size += len(aws.ToString(v.Name)) + len(aws.ToString(v.Value)) + 30
 	}
@@ -444,9 +435,9 @@ func formatECSFailure(failure ecstypes.Failure) string {
 	return strings.Join(parts, ": ")
 }
 
-func mapECSTaskStatus(task ecstypes.Task, containerName string) (ContainerStatus, error) {
+func mapECSTaskStatus(task ecstypes.Task, containerName string) (orchestrator.ContainerStatus, error) {
 	state := aws.ToString(task.LastStatus)
-	status := ContainerStatus{}
+	status := orchestrator.ContainerStatus{}
 
 	switch state {
 	case "PROVISIONING", "PENDING", "ACTIVATING", "RUNNING":
@@ -454,7 +445,7 @@ func mapECSTaskStatus(task ecstypes.Task, containerName string) (ContainerStatus
 	case "DEACTIVATING", "STOPPING", "DEPROVISIONING", "STOPPED":
 		status.Done = true
 	default:
-		return ContainerStatus{}, fmt.Errorf("unknown ECS task status: %s", state)
+		return orchestrator.ContainerStatus{}, fmt.Errorf("unknown ECS task status: %s", state)
 	}
 
 	container := findECSContainer(task.Containers, containerName)
@@ -483,24 +474,24 @@ func findECSContainer(containers []ecstypes.Container, containerName string) *ec
 	return &containers[0]
 }
 
-func parseStatusFromLogEvents(events []cloudwatchlogstypes.OutputLogEvent) (agentStatus, bool) {
+func parseStatusFromLogEvents(events []cloudwatchlogstypes.OutputLogEvent) (orchestrator.AgentStatus, bool) {
 	for i := len(events) - 1; i >= 0; i-- {
 		message := strings.TrimSpace(aws.ToString(events[i].Message))
 		if !strings.HasPrefix(message, backflowStatusLogPrefix) {
 			continue
 		}
 
-		var status agentStatus
+		var status orchestrator.AgentStatus
 		payload := strings.TrimSpace(strings.TrimPrefix(message, backflowStatusLogPrefix))
 		if payload == "" {
-			return agentStatus{}, false
+			return orchestrator.AgentStatus{}, false
 		}
 		if err := json.Unmarshal([]byte(payload), &status); err != nil {
-			return agentStatus{}, false
+			return orchestrator.AgentStatus{}, false
 		}
 		return status, true
 	}
-	return agentStatus{}, false
+	return orchestrator.AgentStatus{}, false
 }
 
 func formatLogEvents(events []cloudwatchlogstypes.OutputLogEvent) string {

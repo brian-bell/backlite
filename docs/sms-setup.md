@@ -63,7 +63,7 @@ The task is created with a `reply_channel` of `sms:+15559876543` so results go b
 ## 6. Deployment Notes
 
 - **A2P 10DLC registration is required** for outbound SMS to US numbers. Twilio will block or filter application-to-person messages from unregistered 10-digit long codes. Register your brand and campaign in the Twilio Console under **Messaging > Trust Hub > A2P 10DLC** before going to production.
-- Twilio webhooks require a **publicly reachable URL** — use `cloudflared tunnel --url http://localhost:8080` for local dev (no account needed, see the [Local Tunnel](../README.md#local-tunnel-for-smswebhooks) section in the README)
+- Twilio webhooks require a **publicly reachable URL** — use `cloudflared tunnel --url http://localhost:8080` for local dev (no account needed, see the [Local Tunnel](../README.md#local-tunnel-for-webhooks) section in the README)
 - The Twilio integration uses raw HTTP (no SDK dependency), with 3 retries and exponential backoff
 - `max_subscription` auth mode runs one agent at a time, so inbound SMS tasks queue up serially
 - `max_subscription` is not supported in `fargate` mode

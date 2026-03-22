@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/rs/zerolog/log"
 
@@ -10,8 +9,6 @@ import (
 	"github.com/backflow-labs/backflow/internal/notify"
 	"github.com/backflow-labs/backflow/internal/store"
 )
-
-var errNoCapacity = fmt.Errorf("no instance capacity available")
 
 // dispatchPending finds pending tasks and dispatches them to available instances,
 // up to the maximum concurrency limit.

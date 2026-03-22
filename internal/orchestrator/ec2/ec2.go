@@ -1,4 +1,4 @@
-package orchestrator
+package ec2
 
 import (
 	"context"
@@ -13,16 +13,17 @@ import (
 	"github.com/backflow-labs/backflow/internal/config"
 )
 
-type EC2Manager struct {
+// Manager handles EC2 instance lifecycle (launch, terminate, describe).
+type Manager struct {
 	config *config.Config
 	client *ec2.Client
 }
 
-func NewEC2Manager(cfg *config.Config) *EC2Manager {
-	return &EC2Manager{config: cfg}
+func NewManager(cfg *config.Config) *Manager {
+	return &Manager{config: cfg}
 }
 
-func (m *EC2Manager) ensureClient(ctx context.Context) error {
+func (m *Manager) ensureClient(ctx context.Context) error {
 	if m.client != nil {
 		return nil
 	}
@@ -34,7 +35,7 @@ func (m *EC2Manager) ensureClient(ctx context.Context) error {
 	return nil
 }
 
-func (m *EC2Manager) LaunchSpotInstance(ctx context.Context) (string, error) {
+func (m *Manager) LaunchSpotInstance(ctx context.Context) (string, error) {
 	if err := m.ensureClient(ctx); err != nil {
 		return "", err
 	}
@@ -52,7 +53,6 @@ func (m *EC2Manager) LaunchSpotInstance(ctx context.Context) (string, error) {
 	}
 
 	if m.config.LaunchTemplateID != "" {
-		// Let the launch template provide ImageId, InstanceType, tags, etc.
 		input.LaunchTemplate = &types.LaunchTemplateSpecification{
 			LaunchTemplateId: aws.String(m.config.LaunchTemplateID),
 			Version:          aws.String("$Latest"),
@@ -87,7 +87,7 @@ func (m *EC2Manager) LaunchSpotInstance(ctx context.Context) (string, error) {
 	return instanceID, nil
 }
 
-func (m *EC2Manager) TerminateInstance(ctx context.Context, instanceID string) error {
+func (m *Manager) TerminateInstance(ctx context.Context, instanceID string) error {
 	if err := m.ensureClient(ctx); err != nil {
 		return err
 	}
@@ -103,7 +103,7 @@ func (m *EC2Manager) TerminateInstance(ctx context.Context, instanceID string) e
 	return nil
 }
 
-func (m *EC2Manager) DescribeInstance(ctx context.Context, instanceID string) (*types.Instance, error) {
+func (m *Manager) DescribeInstance(ctx context.Context, instanceID string) (*types.Instance, error) {
 	if err := m.ensureClient(ctx); err != nil {
 		return nil, err
 	}

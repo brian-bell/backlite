@@ -1,9 +1,8 @@
-package orchestrator
+package docker
 
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -17,7 +16,7 @@ import (
 )
 
 // runCommand routes to either local or SSM execution based on config mode.
-func (m *DockerManager) runCommand(ctx context.Context, instanceID, command string) (string, error) {
+func (m *Manager) runCommand(ctx context.Context, instanceID, command string) (string, error) {
 	if m.config.Mode == config.ModeLocal {
 		return m.runLocalCommand(ctx, command)
 	}
@@ -25,7 +24,7 @@ func (m *DockerManager) runCommand(ctx context.Context, instanceID, command stri
 }
 
 // runLocalCommand executes a bash command on the local machine.
-func (m *DockerManager) runLocalCommand(ctx context.Context, command string) (string, error) {
+func (m *Manager) runLocalCommand(ctx context.Context, command string) (string, error) {
 	cmd := exec.CommandContext(ctx, "bash", "-c", command)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -46,7 +45,7 @@ func (m *DockerManager) runLocalCommand(ctx context.Context, command string) (st
 
 // runSSMCommand sends a shell command to an EC2 instance via AWS SSM and waits
 // for the result (up to 5 minutes).
-func (m *DockerManager) runSSMCommand(ctx context.Context, instanceID, command string) (string, error) {
+func (m *Manager) runSSMCommand(ctx context.Context, instanceID, command string) (string, error) {
 	if err := m.ensureClient(ctx); err != nil {
 		return "", err
 	}
@@ -79,7 +78,7 @@ func (m *DockerManager) runSSMCommand(ctx context.Context, instanceID, command s
 
 // ssmDiagnosticError fetches stderr/stdout from a failed SSM invocation to
 // produce a more useful error message.
-func (m *DockerManager) ssmDiagnosticError(ctx context.Context, input *ssm.GetCommandInvocationInput, waitErr error) error {
+func (m *Manager) ssmDiagnosticError(ctx context.Context, input *ssm.GetCommandInvocationInput, waitErr error) error {
 	out, err := m.ssmClient.GetCommandInvocation(ctx, input)
 	if err != nil {
 		return fmt.Errorf("wait for command: %w", waitErr)
@@ -97,7 +96,7 @@ func (m *DockerManager) ssmDiagnosticError(ctx context.Context, input *ssm.GetCo
 }
 
 // ensureClient lazily initializes the AWS SSM client.
-func (m *DockerManager) ensureClient(ctx context.Context) error {
+func (m *Manager) ensureClient(ctx context.Context) error {
 	if m.ssmClient != nil {
 		return nil
 	}
@@ -107,38 +106,4 @@ func (m *DockerManager) ensureClient(ctx context.Context) error {
 	}
 	m.ssmClient = ssm.NewFromConfig(cfg)
 	return nil
-}
-
-// shellEscape wraps a string in single quotes, escaping any embedded single
-// quotes so it is safe to interpolate into a shell command.
-func shellEscape(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
-}
-
-// isInstanceGone returns true if the error indicates the EC2 instance no
-// longer exists or is not reachable via SSM (e.g. terminated, shutting down),
-// or if a Fargate Spot task was interrupted.
-func isInstanceGone(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, errSpotInterruption) {
-		return true
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "invalidinstanceid")
-}
-
-// isHexString returns true if s is a non-empty string of hex characters (used
-// to validate Docker container IDs).
-func isHexString(s string) bool {
-	if len(s) == 0 {
-		return false
-	}
-	for _, c := range s {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
-			return false
-		}
-	}
-	return true
 }

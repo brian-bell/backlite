@@ -22,6 +22,7 @@ const (
 // Discord interaction response types.
 const (
 	ResponseTypePong                   = 1
+	ResponseTypeChannelMessage         = 4
 	ResponseTypeDeferredChannelMessage = 5
 )
 
@@ -31,9 +32,25 @@ type Interaction struct {
 	Data json.RawMessage `json:"data,omitempty"`
 }
 
+// CommandData contains the parsed command name from an application command interaction.
+type CommandData struct {
+	Name string `json:"name"`
+}
+
 // InteractionResponse is sent back to Discord.
 type InteractionResponse struct {
 	Type int `json:"type"`
+}
+
+// ChannelMessageResponse sends an immediate message back to the channel.
+type ChannelMessageResponse struct {
+	Type int         `json:"type"`
+	Data MessageData `json:"data"`
+}
+
+// MessageData is the content payload inside a channel message response.
+type MessageData struct {
+	Content string `json:"content"`
 }
 
 // InteractionHandler returns an http.HandlerFunc that verifies and routes
@@ -73,13 +90,39 @@ func InteractionHandler(publicKey ed25519.PublicKey) http.HandlerFunc {
 		case InteractionTypePing:
 			log.Info().Msg("discord: PING received, responding with PONG")
 			respondJSON(w, InteractionResponse{Type: ResponseTypePong})
-		case InteractionTypeApplicationCommand, InteractionTypeMessageComponent, InteractionTypeModalSubmit:
+		case InteractionTypeApplicationCommand:
+			handleApplicationCommand(w, interaction)
+		case InteractionTypeMessageComponent, InteractionTypeModalSubmit:
 			log.Info().Int("type", interaction.Type).Msg("discord: interaction received (stub)")
 			respondJSON(w, InteractionResponse{Type: ResponseTypeDeferredChannelMessage})
 		default:
 			log.Warn().Int("type", interaction.Type).Msg("discord: unknown interaction type")
 			http.Error(w, "unknown interaction type", http.StatusBadRequest)
 		}
+	}
+}
+
+func handleApplicationCommand(w http.ResponseWriter, interaction Interaction) {
+	var cmd CommandData
+	if err := json.Unmarshal(interaction.Data, &cmd); err != nil {
+		log.Warn().Err(err).Msg("discord: failed to parse command data")
+		http.Error(w, "invalid command data", http.StatusBadRequest)
+		return
+	}
+
+	log.Info().Str("command", cmd.Name).Msg("discord: application command received")
+
+	switch cmd.Name {
+	case "backflow":
+		respondJSON(w, ChannelMessageResponse{
+			Type: ResponseTypeChannelMessage,
+			Data: MessageData{Content: "Backflow is running."},
+		})
+	default:
+		respondJSON(w, ChannelMessageResponse{
+			Type: ResponseTypeChannelMessage,
+			Data: MessageData{Content: fmt.Sprintf("Unknown command: %s", cmd.Name)},
+		})
 	}
 }
 

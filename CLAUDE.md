@@ -43,11 +43,12 @@ Two goroutines: chi REST API on `:8080` + polling orchestrator (5s default). Thr
 - `DELETE /tasks/{id}` — Cancel task (sets status to `cancelled`)
 - `GET /tasks/{id}/logs` — Stream container logs
 - `POST /webhooks/discord` — Discord interaction endpoint (signature-verified)
+- `POST /webhooks/sms/inbound` — Twilio inbound SMS webhook
 
 ### Key modules (`internal/`)
 
 - **api/** — chi router, handlers, JSON responses, `LogFetcher` interface
-- **orchestrator/** — Poll loop (`orchestrator.go`), EC2 scaling (`ec2.go`, `scaler.go`), Docker via SSM (`docker.go`), Fargate ECS/CloudWatch runner (`fargate.go`), spot interruption handling (`spot.go`), local mode (`local.go`)
+- **orchestrator/** — Poll loop (`orchestrator.go`), dispatch (`dispatch.go`), monitoring (`monitor.go`), recovery (`recovery.go`), local mode (`local.go`). Subpackages: `docker/` (Docker container management via SSM or local exec), `ec2/` (EC2 lifecycle, auto-scaler, spot interruption handler), `fargate/` (ECS/Fargate runner, CloudWatch log parsing), `s3/` (agent output upload)
 - **store/** — `Store` interface + PostgreSQL (`pgxpool`, goose migrations)
 - **models/** — `Task`, `Instance`, `AllowedSender`, and `DiscordInstall` structs with status enums
 - **discord/** — Discord interaction handler (Ed25519 signature verification, PING/PONG, interaction routing)
@@ -85,7 +86,7 @@ Optional env vars:
 - `BACKFLOW_DISCORD_ALLOWED_ROLES` (comma-separated role IDs for mutation authorization)
 - `BACKFLOW_DISCORD_EVENTS` (comma-separated event filter; nil = all events)
 
-At startup, Backflow persists the install config to the `discord_installs` table, mounts the interaction handler at `/webhooks/discord`, and subscribes a `DiscordNotifier` stub to the event bus. Actual Discord message delivery will be implemented in a future issue.
+At startup, Backflow persists the install config to the `discord_installs` table, registers the `/backflow` slash command via the Discord API, mounts the interaction handler at `/webhooks/discord`, and subscribes a `DiscordNotifier` stub to the event bus. Actual Discord message delivery will be implemented in a future issue.
 
 ### Slack notification stub
 
@@ -96,8 +97,8 @@ If the Slack webhook URL is set, `cmd/backflow/main.go` logs that the subscriber
 
 ## Harnesses
 
-- **`claude_code`** (default) — Claude Code CLI. Requires `ANTHROPIC_API_KEY` or Max subscription credentials.
-- **`codex`** — OpenAI Codex CLI. Requires `OPENAI_API_KEY`. Defaults to `gpt-5.4-mini` model.
+- **`claude_code`** — Claude Code CLI. Requires `ANTHROPIC_API_KEY` or Max subscription credentials.
+- **`codex`** (default) — OpenAI Codex CLI. Requires `OPENAI_API_KEY`. Defaults to `gpt-5.4-mini` model.
 
 Configured per-task via the `harness` field or globally via `BACKFLOW_DEFAULT_HARNESS`.
 

@@ -20,6 +20,10 @@ import (
 	"github.com/backflow-labs/backflow/internal/models"
 	"github.com/backflow-labs/backflow/internal/notify"
 	"github.com/backflow-labs/backflow/internal/orchestrator"
+	orchdocker "github.com/backflow-labs/backflow/internal/orchestrator/docker"
+	orchec2 "github.com/backflow-labs/backflow/internal/orchestrator/ec2"
+	orchfargate "github.com/backflow-labs/backflow/internal/orchestrator/fargate"
+	orchs3 "github.com/backflow-labs/backflow/internal/orchestrator/s3"
 	"github.com/backflow-labs/backflow/internal/store"
 )
 
@@ -77,7 +81,7 @@ func main() {
 		bus.Subscribe(notify.NewMessagingNotifier(messenger, cfg.SMSEvents))
 	}
 
-	s3Uploader, err := orchestrator.NewS3Uploader(context.Background(), cfg)
+	s3Uploader, err := orchs3.NewUploader(context.Background(), cfg)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to create S3 uploader")
 	}
@@ -85,7 +89,26 @@ func main() {
 		log.Info().Str("bucket", cfg.S3Bucket).Msg("S3 storage enabled")
 	}
 
-	orch := orchestrator.New(db, cfg, bus, s3Uploader)
+	// Wire runner, scaler, and spot checker based on operating mode
+	var runner orchestrator.Runner
+	var scaler orchestrator.Scaler
+	var spot orchestrator.SpotChecker
+
+	switch cfg.Mode {
+	case config.ModeLocal:
+		runner = orchdocker.NewManager(cfg)
+		scaler = orchestrator.NoopScaler{}
+	case config.ModeFargate:
+		runner = orchfargate.NewManager(cfg, s3Uploader)
+		scaler = orchestrator.NoopScaler{}
+	default:
+		runner = orchdocker.NewManager(cfg)
+		ec2mgr := orchec2.NewManager(cfg)
+		scaler = orchec2.NewScaler(db, ec2mgr, cfg)
+		spot = orchec2.NewSpotHandler(db, ec2mgr)
+	}
+
+	orch := orchestrator.New(db, cfg, bus, runner, scaler, spot, s3Uploader)
 
 	router := api.NewServer(db, cfg, orch.Docker())
 
@@ -114,6 +137,10 @@ func main() {
 		}
 		if err := db.UpsertDiscordInstall(context.Background(), install); err != nil {
 			log.Fatal().Err(err).Msg("failed to persist discord install state")
+		}
+
+		if err := discord.RegisterCommands("", cfg.DiscordAppID, cfg.DiscordBotToken); err != nil {
+			log.Error().Err(err).Msg("failed to register discord slash commands")
 		}
 
 		bus.Subscribe(notify.NewDiscordNotifier(cfg.DiscordEvents))

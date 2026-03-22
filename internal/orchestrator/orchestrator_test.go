@@ -14,7 +14,7 @@ func TestInitLocalMode_DBError_DoesNotCreateInstance(t *testing.T) {
 	bus, _ := newTestBus()
 	defer bus.Close()
 	o := newTestOrchestrator(ms, bus)
-	o.initLocalMode(ms, o.config)
+	o.initLocalMode()
 
 	// On a real DB error, initLocalMode should bail out — not create an instance.
 	if _, exists := ms.instances["local"]; exists {
@@ -35,7 +35,7 @@ func TestInitEC2Mode_DBError_DoesNotTerminateLocalInstance(t *testing.T) {
 	bus, _ := newTestBus()
 	defer bus.Close()
 	o := newTestOrchestrator(ms, bus)
-	o.initEC2Mode(ms, o.config, NewDockerManager(o.config))
+	o.initEC2Mode()
 
 	// Should not have terminated the local instance — we couldn't confirm it exists.
 	if ms.instances["local"].Status == models.InstanceStatusTerminated {
@@ -55,7 +55,7 @@ func TestInitFargateMode_DBError_DoesNotCreateInstance(t *testing.T) {
 	defer bus.Close()
 	o := newTestOrchestrator(ms, bus)
 	o.config.MaxConcurrentTasks = 5
-	o.initFargateMode(ms, o.config)
+	o.initFargateMode()
 
 	// On a real DB error, initFargateMode should bail out — not create an instance.
 	if _, exists := ms.instances["fargate"]; exists {

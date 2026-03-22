@@ -295,7 +295,7 @@ func (n *mockNotifier) eventTypes() []notify.EventType {
 	return types
 }
 
-// --- Mock docker manager (implements dockerClient) ---
+// --- Mock docker manager (implements Runner) ---
 
 type mockDockerManager struct {
 	inspectResults map[string]ContainerStatus
@@ -338,6 +338,10 @@ func (m *mockDockerManager) StopContainer(_ context.Context, _, _ string) error 
 
 func (m *mockDockerManager) GetLogs(_ context.Context, _, _ string, _ int) (string, error) {
 	return "", nil
+}
+
+func (m *mockDockerManager) GetAgentOutput(_ context.Context, _, _ string) (string, error) {
+	return "", fmt.Errorf("not implemented")
 }
 
 // --- Mock S3 client ---
@@ -394,8 +398,8 @@ func newTestOrchestrator(s store.Store, bus *notify.EventBus, opts ...func(*Orch
 		store:           s,
 		config:          cfg,
 		bus:             bus,
-		docker:          NewDockerManager(cfg),
-		scaler:          localScaler{},
+		docker:          &mockDockerManager{},
+		scaler:          NoopScaler{},
 		stopCh:          make(chan struct{}),
 		inspectFailures: make(map[string]int),
 	}
@@ -405,11 +409,11 @@ func newTestOrchestrator(s store.Store, bus *notify.EventBus, opts ...func(*Orch
 	return o
 }
 
-func withDocker(d dockerClient) func(*Orchestrator) {
+func withDocker(d Runner) func(*Orchestrator) {
 	return func(o *Orchestrator) { o.docker = d }
 }
 
-func withS3(s s3Client) func(*Orchestrator) {
+func withS3(s S3Client) func(*Orchestrator) {
 	return func(o *Orchestrator) { o.s3 = s }
 }
 

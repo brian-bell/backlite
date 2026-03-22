@@ -1,4 +1,4 @@
-package orchestrator
+package docker
 
 import (
 	"context"
@@ -11,44 +11,23 @@ import (
 
 	"github.com/backflow-labs/backflow/internal/config"
 	"github.com/backflow-labs/backflow/internal/models"
+	"github.com/backflow-labs/backflow/internal/orchestrator"
 )
 
-// ContainerStatus represents the current state of an agent container.
-type ContainerStatus struct {
-	Done           bool
-	Complete       bool
-	ExitCode       int
-	NeedsInput     bool
-	Question       string
-	Error          string
-	LogTail        string
-	PRURL          string
-	CostUSD        float64
-	ElapsedTimeSec int
-}
-
-// dockerClient is the interface used by the orchestrator to manage containers.
-type dockerClient interface {
-	RunAgent(ctx context.Context, instance *models.Instance, task *models.Task) (string, error)
-	InspectContainer(ctx context.Context, instanceID, containerID string) (ContainerStatus, error)
-	StopContainer(ctx context.Context, instanceID, containerID string) error
-	GetLogs(ctx context.Context, instanceID, containerID string, tail int) (string, error)
-}
-
-// DockerManager manages agent containers on remote (SSM) or local hosts.
-type DockerManager struct {
+// Manager manages agent containers on remote (SSM) or local hosts.
+type Manager struct {
 	config    *config.Config
 	ssmClient *ssm.Client
 }
 
-// NewDockerManager creates a new DockerManager.
-func NewDockerManager(cfg *config.Config) *DockerManager {
-	return &DockerManager{config: cfg}
+// NewManager creates a new Manager.
+func NewManager(cfg *config.Config) *Manager {
+	return &Manager{config: cfg}
 }
 
 // RunAgent starts a new agent container on the given instance for the task.
 // Returns the container ID on success.
-func (m *DockerManager) RunAgent(ctx context.Context, instance *models.Instance, task *models.Task) (string, error) {
+func (m *Manager) RunAgent(ctx context.Context, instance *models.Instance, task *models.Task) (string, error) {
 	cmd := m.buildRunCommand(task)
 
 	output, err := m.runCommand(ctx, instance.InstanceID, cmd)
@@ -70,19 +49,19 @@ func (m *DockerManager) RunAgent(ctx context.Context, instance *models.Instance,
 
 // InspectContainer checks a container's status and reads the agent's
 // status.json if the container has exited.
-func (m *DockerManager) InspectContainer(ctx context.Context, instanceID, containerID string) (ContainerStatus, error) {
+func (m *Manager) InspectContainer(ctx context.Context, instanceID, containerID string) (orchestrator.ContainerStatus, error) {
 	cmd := fmt.Sprintf(
 		"docker inspect --format '{{.State.Status}} {{.State.ExitCode}}' %s 2>/dev/null && docker logs --tail 20 %s 2>&1",
 		containerID, containerID,
 	)
 	output, err := m.runCommand(ctx, instanceID, cmd)
 	if err != nil {
-		return ContainerStatus{}, err
+		return orchestrator.ContainerStatus{}, err
 	}
 
 	status, err := parseInspectOutput(output)
 	if err != nil {
-		return ContainerStatus{}, err
+		return orchestrator.ContainerStatus{}, err
 	}
 
 	if status.Done {
@@ -93,20 +72,20 @@ func (m *DockerManager) InspectContainer(ctx context.Context, instanceID, contai
 }
 
 // StopContainer stops and removes a container.
-func (m *DockerManager) StopContainer(ctx context.Context, instanceID, containerID string) error {
+func (m *Manager) StopContainer(ctx context.Context, instanceID, containerID string) error {
 	cmd := fmt.Sprintf("docker stop -t 30 %s 2>/dev/null; docker rm %s 2>/dev/null", containerID, containerID)
 	_, err := m.runCommand(ctx, instanceID, cmd)
 	return err
 }
 
 // GetLogs retrieves the last N lines of a container's logs.
-func (m *DockerManager) GetLogs(ctx context.Context, instanceID, containerID string, tail int) (string, error) {
+func (m *Manager) GetLogs(ctx context.Context, instanceID, containerID string, tail int) (string, error) {
 	cmd := fmt.Sprintf("docker logs --tail %d %s 2>&1", tail, containerID)
 	return m.runCommand(ctx, instanceID, cmd)
 }
 
 // buildRunCommand constructs the full `docker run` command for an agent task.
-func (m *DockerManager) buildRunCommand(task *models.Task) string {
+func (m *Manager) buildRunCommand(task *models.Task) string {
 	envFlags := m.buildEnvFlags(task)
 	volumeFlags := m.buildVolumeFlags()
 
@@ -121,7 +100,7 @@ func (m *DockerManager) buildRunCommand(task *models.Task) string {
 
 // buildEnvFlags assembles the -e flags for the docker run command from the
 // task configuration and global config.
-func (m *DockerManager) buildEnvFlags(task *models.Task) []string {
+func (m *Manager) buildEnvFlags(task *models.Task) []string {
 	flags := []string{
 		envFlag("TASK_ID", task.ID),
 		envFlag("TASK_MODE", shellEscape(task.TaskMode)),
@@ -141,7 +120,6 @@ func (m *DockerManager) buildEnvFlags(task *models.Task) []string {
 		envFlag("AUTH_MODE", string(m.config.AuthMode)),
 	}
 
-	// Optional task fields
 	if task.PRTitle != "" {
 		flags = append(flags, envFlag("PR_TITLE", shellEscape(task.PRTitle)))
 	}
@@ -155,7 +133,6 @@ func (m *DockerManager) buildEnvFlags(task *models.Task) []string {
 		flags = append(flags, envFlag("TASK_CONTEXT", shellEscape(task.Context)))
 	}
 
-	// Auth credentials
 	if m.config.AuthMode == config.AuthModeAPIKey {
 		flags = append(flags, envFlag("ANTHROPIC_API_KEY", m.config.AnthropicAPIKey))
 	}
@@ -166,7 +143,6 @@ func (m *DockerManager) buildEnvFlags(task *models.Task) []string {
 		flags = append(flags, envFlag("GITHUB_TOKEN", m.config.GitHubToken))
 	}
 
-	// Custom env vars from the task
 	for k, v := range task.EnvVars {
 		flags = append(flags, envFlag(k, shellEscape(v)))
 	}
@@ -176,7 +152,7 @@ func (m *DockerManager) buildEnvFlags(task *models.Task) []string {
 
 // buildVolumeFlags returns the -v flag for mounting Claude credentials when
 // using Max subscription auth, or an empty string otherwise.
-func (m *DockerManager) buildVolumeFlags() string {
+func (m *Manager) buildVolumeFlags() string {
 	if m.config.AuthMode == config.AuthModeMaxSubscription && m.config.ClaudeCredentialsPath != "" {
 		return fmt.Sprintf("-v %s:/home/agent/.claude:ro", m.config.ClaudeCredentialsPath)
 	}
@@ -188,32 +164,20 @@ func envFlag(key, value string) string {
 	return fmt.Sprintf("-e %s=%s", key, value)
 }
 
-// agentStatus is the JSON structure written by the agent entrypoint to
-// /home/agent/workspace/status.json inside the container.
-type agentStatus struct {
-	NeedsInput     bool    `json:"needs_input"`
-	Question       string  `json:"question"`
-	Complete       bool    `json:"complete"`
-	Error          string  `json:"error"`
-	PRURL          string  `json:"pr_url"`
-	CostUSD        float64 `json:"cost_usd,omitempty"`
-	ElapsedTimeSec int     `json:"elapsed_time_sec,omitempty"`
-}
-
 // parseInspectOutput parses the combined output of `docker inspect` +
 // `docker logs` into a ContainerStatus.
-func parseInspectOutput(output string) (ContainerStatus, error) {
+func parseInspectOutput(output string) (orchestrator.ContainerStatus, error) {
 	lines := strings.SplitN(output, "\n", 2)
 	if len(lines) == 0 {
-		return ContainerStatus{}, fmt.Errorf("empty inspect output")
+		return orchestrator.ContainerStatus{}, fmt.Errorf("empty inspect output")
 	}
 
 	parts := strings.Fields(lines[0])
 	if len(parts) < 2 {
-		return ContainerStatus{}, fmt.Errorf("unexpected inspect format: %s", lines[0])
+		return orchestrator.ContainerStatus{}, fmt.Errorf("unexpected inspect format: %s", lines[0])
 	}
 
-	status := ContainerStatus{}
+	status := orchestrator.ContainerStatus{}
 	if len(lines) > 1 {
 		status.LogTail = lines[1]
 	}
@@ -232,7 +196,7 @@ func parseInspectOutput(output string) (ContainerStatus, error) {
 
 // enrichFromStatusJSON reads the agent's status.json from the container and
 // merges its fields into the ContainerStatus.
-func (m *DockerManager) enrichFromStatusJSON(ctx context.Context, instanceID, containerID string, status *ContainerStatus) {
+func (m *Manager) enrichFromStatusJSON(ctx context.Context, instanceID, containerID string, status *orchestrator.ContainerStatus) {
 	cmd := fmt.Sprintf("f=$(mktemp) && docker cp %s:/home/agent/workspace/status.json \"$f\" 2>/dev/null && cat \"$f\" && rm -f \"$f\"", containerID)
 	statusJSON, err := m.runCommand(ctx, instanceID, cmd)
 	if err != nil {
@@ -240,7 +204,7 @@ func (m *DockerManager) enrichFromStatusJSON(ctx context.Context, instanceID, co
 		return
 	}
 
-	var agent agentStatus
+	var agent orchestrator.AgentStatus
 	if err := json.Unmarshal([]byte(statusJSON), &agent); err != nil {
 		log.Warn().Err(err).Str("container", containerID[:12]).Str("raw", statusJSON[:min(len(statusJSON), 200)]).Msg("failed to parse status.json")
 		return
@@ -257,4 +221,30 @@ func (m *DockerManager) enrichFromStatusJSON(ctx context.Context, instanceID, co
 	if agent.Error != "" {
 		status.Error = agent.Error
 	}
+}
+
+// GetAgentOutput extracts the agent's output log from a container via docker cp.
+func (m *Manager) GetAgentOutput(ctx context.Context, instanceID, containerID string) (string, error) {
+	cmd := fmt.Sprintf("f=$(mktemp) && docker cp %s:/home/agent/workspace/claude_output.log \"$f\" 2>/dev/null && cat \"$f\" && rm -f \"$f\"", containerID)
+	return m.runCommand(ctx, instanceID, cmd)
+}
+
+// shellEscape wraps a string in single quotes, escaping any embedded single
+// quotes so it is safe to interpolate into a shell command.
+func shellEscape(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
+}
+
+// isHexString returns true if s is a non-empty string of hex characters (used
+// to validate Docker container IDs).
+func isHexString(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
 }

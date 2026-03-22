@@ -76,9 +76,11 @@ The endpoint must be publicly reachable over HTTPS. For local development, use `
 
 **Install state persistence:** At startup, Backflow writes the Discord configuration to the `discord_installs` table in PostgreSQL. This ensures the integration survives service restarts without losing context about which guild/channel to target.
 
+**Slash command registration:** At startup, Backflow registers a `/backflow` slash command via the Discord bulk-overwrite endpoint. This happens automatically when `BACKFLOW_DISCORD_APP_ID` is set — no manual command creation is needed in the Developer Portal.
+
 **Event notifications:** Backflow subscribes a Discord notifier to the event bus. When task lifecycle events fire (`task.created`, `task.running`, `task.completed`, etc.), the notifier receives them. Event filtering via `BACKFLOW_DISCORD_EVENTS` works the same as webhook and SMS filters — `nil` means all events, a CSV list restricts delivery.
 
-**Current limitations:** The Discord integration is in its foundation phase. Interaction routing currently returns a deferred acknowledgment for all commands — slash command handling, modals, buttons, and thread-based notifications will be added in future releases.
+**Current limitations:** The Discord integration is in its foundation phase. Interaction routing currently returns a deferred acknowledgment for all commands — full slash command responses, modals, buttons, and thread-based notifications will be added in future releases.
 
 ## 7. Deployment Notes
 

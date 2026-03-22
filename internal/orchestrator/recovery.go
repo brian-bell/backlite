@@ -122,7 +122,7 @@ func (o *Orchestrator) monitorRecovering(ctx context.Context) {
 // handleRecoveringInspectError handles inspect failures for recovering tasks,
 // requeuing on instance loss or after repeated failures.
 func (o *Orchestrator) handleRecoveringInspectError(ctx context.Context, task *models.Task, err error) {
-	if isInstanceGone(err) {
+	if IsInstanceGone(err) {
 		log.Warn().Str("task_id", task.ID).Msg("recovery: instance gone, re-queuing")
 		delete(o.inspectFailures, task.ID)
 		o.requeueRecoveringTask(ctx, task, "instance gone", true)

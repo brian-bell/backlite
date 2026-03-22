@@ -1,4 +1,4 @@
-package orchestrator
+package docker
 
 import (
 	"strings"
@@ -6,7 +6,11 @@ import (
 
 	"github.com/backflow-labs/backflow/internal/config"
 	"github.com/backflow-labs/backflow/internal/models"
+	"github.com/backflow-labs/backflow/internal/orchestrator"
 )
+
+// Compile-time check: *Manager must satisfy orchestrator.Runner.
+var _ orchestrator.Runner = (*Manager)(nil)
 
 func TestEnvFlag(t *testing.T) {
 	got := envFlag("FOO", "bar")
@@ -105,7 +109,7 @@ func TestBuildEnvFlags(t *testing.T) {
 		AnthropicAPIKey: "sk-test-key",
 		GitHubToken:     "ghp_testtoken",
 	}
-	dm := NewDockerManager(cfg)
+	dm := NewManager(cfg)
 
 	task := &models.Task{
 		ID:           "bf_01ABC",
@@ -127,7 +131,6 @@ func TestBuildEnvFlags(t *testing.T) {
 	flags := dm.buildEnvFlags(task)
 	joined := strings.Join(flags, " ")
 
-	// Required flags
 	mustContain := []string{
 		"-e TASK_ID=bf_01ABC",
 		"-e REPO_URL=",
@@ -152,11 +155,9 @@ func TestBuildEnvFlags(t *testing.T) {
 		}
 	}
 
-	// PRBody is empty, should not appear
 	if strings.Contains(joined, "PR_BODY") {
 		t.Error("PR_BODY should not be set when empty")
 	}
-	// Context is empty, should not appear
 	if strings.Contains(joined, "TASK_CONTEXT") {
 		t.Error("TASK_CONTEXT should not be set when empty")
 	}
@@ -166,7 +167,7 @@ func TestBuildEnvFlags_MaxSubscription(t *testing.T) {
 	cfg := &config.Config{
 		AuthMode: config.AuthModeMaxSubscription,
 	}
-	dm := NewDockerManager(cfg)
+	dm := NewManager(cfg)
 
 	task := &models.Task{
 		ID:      "bf_01ABC",
@@ -216,7 +217,7 @@ func TestBuildVolumeFlags(t *testing.T) {
 				AuthMode:              tt.authMode,
 				ClaudeCredentialsPath: tt.credPath,
 			}
-			dm := NewDockerManager(cfg)
+			dm := NewManager(cfg)
 			got := dm.buildVolumeFlags()
 			if got != tt.want {
 				t.Errorf("buildVolumeFlags() = %q, want %q", got, tt.want)
@@ -232,7 +233,7 @@ func TestBuildRunCommand(t *testing.T) {
 		ContainerCPUs:   2,
 		ContainerMemGB:  8,
 	}
-	dm := NewDockerManager(cfg)
+	dm := NewManager(cfg)
 
 	task := &models.Task{
 		ID:      "bf_01ABC",
@@ -250,5 +251,53 @@ func TestBuildRunCommand(t *testing.T) {
 	}
 	if !strings.Contains(cmd, "-e TASK_ID=bf_01ABC") {
 		t.Error("command missing TASK_ID")
+	}
+}
+
+func TestShellEscape(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"hello", "'hello'"},
+		{"", "''"},
+		{"it's a test", "'it'\"'\"'s a test'"},
+		{"no special chars", "'no special chars'"},
+		{"multi'quote'test", "'multi'\"'\"'quote'\"'\"'test'"},
+		{"spaces and\ttabs", "'spaces and\ttabs'"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := shellEscape(tt.input)
+			if got != tt.want {
+				t.Errorf("shellEscape(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsHexString(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{"valid lowercase", "abcdef0123456789", true},
+		{"valid uppercase", "ABCDEF0123456789", true},
+		{"valid mixed", "aAbBcC123", true},
+		{"valid short", "a", true},
+		{"empty string", "", false},
+		{"contains g", "abcdefg", false},
+		{"contains space", "abc def", false},
+		{"contains dash", "abc-def", false},
+		{"typical container id", "d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isHexString(tt.input)
+			if got != tt.want {
+				t.Errorf("isHexString(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
 	}
 }

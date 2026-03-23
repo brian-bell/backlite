@@ -58,8 +58,8 @@ func TestInteractionHandler_CreateCommand_OpensModal(t *testing.T) {
 	if resp.Data.CustomID != modalIDCreate {
 		t.Errorf("custom_id = %q, want %q", resp.Data.CustomID, modalIDCreate)
 	}
-	if len(resp.Data.Components) != 5 {
-		t.Errorf("components = %d, want 5", len(resp.Data.Components))
+	if len(resp.Data.Components) != 3 {
+		t.Errorf("components = %d, want 3", len(resp.Data.Components))
 	}
 }
 
@@ -94,8 +94,7 @@ func TestInteractionHandler_ModalSubmit_Success(t *testing.T) {
 	handler := InteractionHandler(pub, nil, HandlerActions{CreateTask: fakeCreateTask(created, nil)})
 
 	body := buildModalSubmitBody(modalIDCreate, map[string]string{
-		fieldRepoURL: "https://github.com/owner/repo",
-		fieldPrompt:  "Add tests",
+		fieldPrompt: "Add tests",
 	})
 	rr := postInteraction(handler, priv, body)
 
@@ -112,39 +111,13 @@ func TestInteractionHandler_ModalSubmit_Success(t *testing.T) {
 	if !strings.Contains(resp.Data.Content, created.ID) {
 		t.Errorf("content = %q, want task ID %s", resp.Data.Content, created.ID)
 	}
-	if !strings.Contains(resp.Data.Content, "https://github.com/owner/repo") {
-		t.Errorf("content = %q, want repo URL", resp.Data.Content)
-	}
-}
-
-func TestInteractionHandler_ModalSubmit_MissingRepoURL(t *testing.T) {
-	pub, priv := testKeyPair(t)
-	handler := InteractionHandler(pub, nil, HandlerActions{CreateTask: fakeCreateTask(fakeTask(), nil)})
-
-	body := buildModalSubmitBody(modalIDCreate, map[string]string{
-		fieldPrompt: "Add tests",
-	})
-	rr := postInteraction(handler, priv, body)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
-	}
-	var resp ChannelMessageResponse
-	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if !strings.Contains(resp.Data.Content, "repo_url is required") {
-		t.Errorf("content = %q, want repo_url required message", resp.Data.Content)
-	}
 }
 
 func TestInteractionHandler_ModalSubmit_MissingPrompt(t *testing.T) {
 	pub, priv := testKeyPair(t)
 	handler := InteractionHandler(pub, nil, HandlerActions{CreateTask: fakeCreateTask(fakeTask(), nil)})
 
-	body := buildModalSubmitBody(modalIDCreate, map[string]string{
-		fieldRepoURL: "https://github.com/owner/repo",
-	})
+	body := buildModalSubmitBody(modalIDCreate, map[string]string{})
 	rr := postInteraction(handler, priv, body)
 
 	if rr.Code != http.StatusOK {
@@ -164,7 +137,6 @@ func TestInteractionHandler_ModalSubmit_InvalidBudget(t *testing.T) {
 	handler := InteractionHandler(pub, nil, HandlerActions{CreateTask: fakeCreateTask(fakeTask(), nil)})
 
 	body := buildModalSubmitBody(modalIDCreate, map[string]string{
-		fieldRepoURL:   "https://github.com/owner/repo",
 		fieldPrompt:    "Add tests",
 		fieldBudgetUSD: "not-a-number",
 	})
@@ -187,8 +159,7 @@ func TestInteractionHandler_ModalSubmit_NilCreator(t *testing.T) {
 	handler := InteractionHandler(pub, nil, HandlerActions{})
 
 	body := buildModalSubmitBody(modalIDCreate, map[string]string{
-		fieldRepoURL: "https://github.com/owner/repo",
-		fieldPrompt:  "Add tests",
+		fieldPrompt: "Add tests",
 	})
 	rr := postInteraction(handler, priv, body)
 
@@ -209,8 +180,7 @@ func TestInteractionHandler_ModalSubmit_CreatorError(t *testing.T) {
 	handler := InteractionHandler(pub, nil, HandlerActions{CreateTask: fakeCreateTask(nil, fmt.Errorf("db connection refused"))})
 
 	body := buildModalSubmitBody(modalIDCreate, map[string]string{
-		fieldRepoURL: "https://github.com/owner/repo",
-		fieldPrompt:  "Add tests",
+		fieldPrompt: "Add tests",
 	})
 	rr := postInteraction(handler, priv, body)
 
@@ -236,9 +206,7 @@ func TestInteractionHandler_ModalSubmit_WithHarnessAndBudget(t *testing.T) {
 	handler := InteractionHandler(pub, nil, HandlerActions{CreateTask: creator})
 
 	body := buildModalSubmitBody(modalIDCreate, map[string]string{
-		fieldRepoURL:   "https://github.com/owner/repo",
 		fieldPrompt:    "Refactor auth",
-		fieldBranch:    "feature/auth",
 		fieldHarness:   "claude_code",
 		fieldBudgetUSD: "7.50",
 	})
@@ -250,14 +218,8 @@ func TestInteractionHandler_ModalSubmit_WithHarnessAndBudget(t *testing.T) {
 	if capturedReq == nil {
 		t.Fatal("createTask was not called")
 	}
-	if capturedReq.RepoURL != "https://github.com/owner/repo" {
-		t.Errorf("RepoURL = %q", capturedReq.RepoURL)
-	}
 	if capturedReq.Prompt != "Refactor auth" {
 		t.Errorf("Prompt = %q", capturedReq.Prompt)
-	}
-	if capturedReq.Branch != "feature/auth" {
-		t.Errorf("Branch = %q", capturedReq.Branch)
 	}
 	if capturedReq.Harness != "claude_code" {
 		t.Errorf("Harness = %q, want claude_code", capturedReq.Harness)
@@ -285,7 +247,7 @@ func TestCreateModal_OptionalFieldsSerializeRequiredFalse(t *testing.T) {
 	json.NewDecoder(rr.Body).Decode(&raw)
 	rawJSON := string(raw["data"])
 
-	optionalFields := []string{fieldBranch, fieldHarness, fieldBudgetUSD}
+	optionalFields := []string{fieldHarness, fieldBudgetUSD}
 	for _, field := range optionalFields {
 		// Find this field's component and verify required is false.
 		var resp ModalResponse

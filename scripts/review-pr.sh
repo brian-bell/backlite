@@ -91,8 +91,7 @@ JSON=$(jq -n \
     --arg claude_md "$CLAUDE_MD" \
     --arg context "$CONTEXT" \
     '{
-        task_mode: "review",
-        review_pr_url: $pr_url
+        prompt: ("Review " + $pr_url)
     }
     + if $prompt != "" then {prompt: $prompt} else {} end
     + if $harness != "" then {harness: $harness} else {} end

@@ -42,6 +42,7 @@ func (c *Config) TaskDefaults(taskMode string) TaskDefaults {
 	if taskMode == models.TaskModeReview {
 		d.CreatePR = false
 	}
+	// Auto mode uses the same defaults as code mode (superset).
 
 	return d
 }

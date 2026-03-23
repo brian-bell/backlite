@@ -30,12 +30,11 @@ If `BACKFLOW_SMS_PROVIDER` is unset or empty, SMS is fully disabled (noop). Set 
 Inbound SMS (creating tasks via text) requires pre-authorized senders in the `allowed_senders` table. Insert rows directly in Postgres:
 
 ```sql
-INSERT INTO allowed_senders (channel_type, address, default_repo, enabled, created_at)
-VALUES ('sms', '+15559876543', 'https://github.com/org/repo', true, now());
+INSERT INTO allowed_senders (channel_type, address, enabled, created_at)
+VALUES ('sms', '+15559876543', true, now());
 ```
 
 - `address` — the sender's phone number in E.164 format
-- `default_repo` — optional; used when the SMS body doesn't include a repo URL
 - `enabled` — set to `false` to revoke access without deleting
 
 ## 4. Configure Twilio Inbound Webhook

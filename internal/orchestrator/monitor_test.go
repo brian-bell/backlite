@@ -322,6 +322,52 @@ func TestHandleCompletion_Failure(t *testing.T) {
 	}
 }
 
+func TestHandleCompletion_PropagatesInferredFields(t *testing.T) {
+	s := newMockStore()
+	now := time.Now().UTC()
+
+	s.CreateInstance(context.Background(), newLocalInstance())
+
+	s.CreateTask(context.Background(), &models.Task{
+		ID:          "bf_inferred",
+		Status:      models.TaskStatusRunning,
+		TaskMode:    "auto",
+		Prompt:      "fix the bug in https://github.com/test/repo",
+		InstanceID:  "local",
+		ContainerID: "cont1",
+		StartedAt:   &now,
+	})
+
+	bus, _ := newTestBus()
+	o := newTestOrchestrator(s, bus)
+	o.running = 1
+
+	task, _ := s.GetTask(context.Background(), "bf_inferred")
+	o.handleCompletion(context.Background(), task, ContainerStatus{
+		Done:         true,
+		Complete:     true,
+		PRURL:        "https://github.com/test/repo/pull/99",
+		RepoURL:      "https://github.com/test/repo",
+		TargetBranch: "main",
+		TaskMode:     "code",
+	})
+	bus.Close()
+
+	task, _ = s.GetTask(context.Background(), "bf_inferred")
+	if task.Status != models.TaskStatusCompleted {
+		t.Errorf("status = %q, want completed", task.Status)
+	}
+	if task.RepoURL != "https://github.com/test/repo" {
+		t.Errorf("RepoURL = %q, want %q", task.RepoURL, "https://github.com/test/repo")
+	}
+	if task.TargetBranch != "main" {
+		t.Errorf("TargetBranch = %q, want %q", task.TargetBranch, "main")
+	}
+	if task.TaskMode != "code" {
+		t.Errorf("TaskMode = %q, want %q", task.TaskMode, "code")
+	}
+}
+
 func TestKillTask(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()

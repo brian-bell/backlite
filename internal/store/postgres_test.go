@@ -489,6 +489,55 @@ func TestPG_CompleteTask(t *testing.T) {
 	}
 }
 
+func TestPG_CompleteTask_InferredFields(t *testing.T) {
+	s := testPostgresStore(t)
+	ctx := context.Background()
+	pgTestTask(t, s) // creates with RepoURL="https://github.com/test/repo", TaskMode="code"
+
+	result := TaskResult{
+		Status:       models.TaskStatusCompleted,
+		RepoURL:      "https://github.com/inferred/repo",
+		TargetBranch: "develop",
+		TaskMode:     "code",
+	}
+	if err := s.CompleteTask(ctx, "bf_TEST001", result); err != nil {
+		t.Fatalf("CompleteTask: %v", err)
+	}
+
+	got, _ := s.GetTask(ctx, "bf_TEST001")
+	if got.RepoURL != "https://github.com/inferred/repo" {
+		t.Errorf("RepoURL = %q, want %q", got.RepoURL, "https://github.com/inferred/repo")
+	}
+	if got.TargetBranch != "develop" {
+		t.Errorf("TargetBranch = %q, want %q", got.TargetBranch, "develop")
+	}
+	if got.TaskMode != "code" {
+		t.Errorf("TaskMode = %q, want %q", got.TaskMode, "code")
+	}
+}
+
+func TestPG_CompleteTask_InferredFieldsCoalesce(t *testing.T) {
+	s := testPostgresStore(t)
+	ctx := context.Background()
+	pgTestTask(t, s) // creates with RepoURL="https://github.com/test/repo"
+
+	// Complete with empty inferred fields — should NOT overwrite existing values
+	result := TaskResult{
+		Status: models.TaskStatusCompleted,
+	}
+	if err := s.CompleteTask(ctx, "bf_TEST001", result); err != nil {
+		t.Fatalf("CompleteTask: %v", err)
+	}
+
+	got, _ := s.GetTask(ctx, "bf_TEST001")
+	if got.RepoURL != "https://github.com/test/repo" {
+		t.Errorf("RepoURL was clobbered: %q, want %q", got.RepoURL, "https://github.com/test/repo")
+	}
+	if got.TaskMode != models.TaskModeCode {
+		t.Errorf("TaskMode was clobbered: %q, want %q", got.TaskMode, models.TaskModeCode)
+	}
+}
+
 func TestPG_RequeueTask(t *testing.T) {
 	s := testPostgresStore(t)
 	ctx := context.Background()
@@ -700,7 +749,6 @@ func TestPG_CreateAllowedSender(t *testing.T) {
 	sender := &models.AllowedSender{
 		ChannelType: "sms",
 		Address:     "+15551234567",
-		DefaultRepo: "https://github.com/test/repo",
 		Enabled:     true,
 		CreatedAt:   time.Now().UTC().Truncate(time.Microsecond),
 	}
@@ -718,9 +766,6 @@ func TestPG_CreateAllowedSender(t *testing.T) {
 	if got.Address != "+15551234567" {
 		t.Errorf("Address = %q", got.Address)
 	}
-	if got.DefaultRepo != "https://github.com/test/repo" {
-		t.Errorf("DefaultRepo = %q", got.DefaultRepo)
-	}
 	if !got.Enabled {
 		t.Error("Enabled should be true")
 	}
@@ -734,18 +779,17 @@ func TestPG_ReviewTaskCRUD(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Microsecond)
 
 	task := &models.Task{
-		ID:             "bf_REVIEW01",
-		Status:         models.TaskStatusPending,
-		TaskMode:       models.TaskModeReview,
-		RepoURL:        "https://github.com/test/repo",
-		ReviewPRURL:    "https://github.com/test/repo/pull/42",
-		ReviewPRNumber: 42,
-		Prompt:         "Focus on security",
-		Model:          "claude-sonnet-4-6",
-		MaxBudgetUSD:   5.0,
-		MaxTurns:       50,
-		CreatedAt:      now,
-		UpdatedAt:      now,
+		ID:           "bf_REVIEW01",
+		Status:       models.TaskStatusPending,
+		TaskMode:     models.TaskModeReview,
+		RepoURL:      "https://github.com/test/repo",
+		PRURL:        "https://github.com/test/repo/pull/42",
+		Prompt:       "Focus on security",
+		Model:        "claude-sonnet-4-6",
+		MaxBudgetUSD: 5.0,
+		MaxTurns:     50,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 	if err := s.CreateTask(ctx, task); err != nil {
 		t.Fatalf("CreateTask: %v", err)
@@ -758,11 +802,8 @@ func TestPG_ReviewTaskCRUD(t *testing.T) {
 	if got.TaskMode != models.TaskModeReview {
 		t.Errorf("TaskMode = %q, want %q", got.TaskMode, models.TaskModeReview)
 	}
-	if got.ReviewPRURL != "https://github.com/test/repo/pull/42" {
-		t.Errorf("ReviewPRURL = %q", got.ReviewPRURL)
-	}
-	if got.ReviewPRNumber != 42 {
-		t.Errorf("ReviewPRNumber = %d, want 42", got.ReviewPRNumber)
+	if got.PRURL != "https://github.com/test/repo/pull/42" {
+		t.Errorf("PRURL = %q", got.PRURL)
 	}
 }
 

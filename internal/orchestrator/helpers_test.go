@@ -152,6 +152,15 @@ func (s *mockStore) CompleteTask(_ context.Context, id string, result store.Task
 		t.OutputURL = result.OutputURL
 		t.CostUSD = result.CostUSD
 		t.ElapsedTimeSec = result.ElapsedTimeSec
+		if result.RepoURL != "" {
+			t.RepoURL = result.RepoURL
+		}
+		if result.TargetBranch != "" {
+			t.TargetBranch = result.TargetBranch
+		}
+		if result.TaskMode != "" {
+			t.TaskMode = result.TaskMode
+		}
 		now := time.Now().UTC()
 		t.CompletedAt = &now
 	}

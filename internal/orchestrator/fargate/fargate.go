@@ -192,6 +192,9 @@ func (m *Manager) InspectContainer(ctx context.Context, _, containerID string) (
 			status.PRURL = agent.PRURL
 			status.CostUSD = agent.CostUSD
 			status.ElapsedTimeSec = agent.ElapsedTimeSec
+			status.RepoURL = agent.RepoURL
+			status.TargetBranch = agent.TargetBranch
+			status.TaskMode = agent.TaskMode
 			if agent.Error != "" {
 				status.Error = agent.Error
 			}
@@ -237,8 +240,6 @@ func (m *Manager) buildECSEnvVars(task *models.Task) []ecstypes.KeyValuePair {
 		ecsEnvVar("REPO_URL", task.RepoURL),
 		ecsEnvVar("BRANCH", task.Branch),
 		ecsEnvVar("TARGET_BRANCH", task.TargetBranch),
-		ecsEnvVar("REVIEW_PR_URL", task.ReviewPRURL),
-		ecsEnvVar("REVIEW_PR_NUMBER", strconv.Itoa(task.ReviewPRNumber)),
 		ecsEnvVar("PROMPT", task.Prompt),
 		ecsEnvVar("MODEL", task.Model),
 		ecsEnvVar("EFFORT", task.Effort),

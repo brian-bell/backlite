@@ -160,7 +160,7 @@ func TestHealthCheck(t *testing.T) {
 func TestCreateAndGetTask(t *testing.T) {
 	srv := testServer(t)
 
-	body := `{"repo_url":"https://github.com/test/repo","prompt":"Fix the bug","create_pr":true}`
+	body := `{"prompt":"fix bug in https://github.com/test/repo","create_pr":true}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -220,7 +220,7 @@ func TestListTasks(t *testing.T) {
 func TestCreateTaskCodexHarness(t *testing.T) {
 	srv := testServer(t)
 
-	body := `{"repo_url":"https://github.com/test/repo","prompt":"Fix the bug","harness":"codex"}`
+	body := `{"prompt":"fix bug in https://github.com/test/repo","harness":"codex"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -255,7 +255,7 @@ func TestCreateTaskCodexHarness(t *testing.T) {
 func TestCreateTaskInvalidHarness(t *testing.T) {
 	srv := testServer(t)
 
-	body := `{"repo_url":"https://github.com/test/repo","prompt":"Fix the bug","harness":"invalid"}`
+	body := `{"prompt":"fix bug in https://github.com/test/repo","harness":"invalid"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -270,7 +270,7 @@ func TestCreateTaskInvalidHarness(t *testing.T) {
 func TestCreateTaskValidation(t *testing.T) {
 	srv := testServer(t)
 
-	body := `{"repo_url":"","prompt":""}`
+	body := `{"prompt":""}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -297,7 +297,7 @@ func TestGetTaskNotFound(t *testing.T) {
 func TestCreateReviewTask(t *testing.T) {
 	srv := testServer(t)
 
-	body := `{"task_mode":"review","review_pr_url":"https://github.com/test/repo/pull/42","prompt":"Focus on security"}`
+	body := `{"prompt":"Review https://github.com/test/repo/pull/42 focusing on security"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -310,67 +310,14 @@ func TestCreateReviewTask(t *testing.T) {
 
 	var resp struct {
 		Data struct {
-			ID             string `json:"id"`
-			TaskMode       string `json:"task_mode"`
-			ReviewPRURL    string `json:"review_pr_url"`
-			ReviewPRNumber int    `json:"review_pr_number"`
-			RepoURL        string `json:"repo_url"`
+			ID       string `json:"id"`
+			TaskMode string `json:"task_mode"`
 		} `json:"data"`
 	}
 	json.NewDecoder(w.Body).Decode(&resp)
 
-	if resp.Data.TaskMode != "review" {
-		t.Errorf("task_mode = %q, want review", resp.Data.TaskMode)
-	}
-	if resp.Data.ReviewPRURL != "https://github.com/test/repo/pull/42" {
-		t.Errorf("review_pr_url = %q, want https://github.com/test/repo/pull/42", resp.Data.ReviewPRURL)
-	}
-	if resp.Data.ReviewPRNumber != 42 {
-		t.Errorf("review_pr_number = %d, want 42", resp.Data.ReviewPRNumber)
-	}
-	if resp.Data.RepoURL != "https://github.com/test/repo" {
-		t.Errorf("repo_url = %q, want https://github.com/test/repo", resp.Data.RepoURL)
-	}
-}
-
-func TestCreateReviewTaskBackwardCompat(t *testing.T) {
-	srv := testServer(t)
-
-	body := `{"task_mode":"review","repo_url":"https://github.com/test/repo","review_pr_number":42}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", bytes.NewBufferString(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	srv.ServeHTTP(w, req)
-
-	if w.Code != http.StatusCreated {
-		t.Fatalf("create status = %d, want %d, body: %s", w.Code, http.StatusCreated, w.Body.String())
-	}
-
-	var resp struct {
-		Data struct {
-			ReviewPRURL string `json:"review_pr_url"`
-		} `json:"data"`
-	}
-	json.NewDecoder(w.Body).Decode(&resp)
-
-	if resp.Data.ReviewPRURL != "https://github.com/test/repo/pull/42" {
-		t.Errorf("review_pr_url = %q, want https://github.com/test/repo/pull/42", resp.Data.ReviewPRURL)
-	}
-}
-
-func TestCreateReviewTaskMissingPR(t *testing.T) {
-	srv := testServer(t)
-
-	body := `{"task_mode":"review","repo_url":"https://github.com/test/repo"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", bytes.NewBufferString(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	srv.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	if resp.Data.TaskMode != "auto" {
+		t.Errorf("task_mode = %q, want auto", resp.Data.TaskMode)
 	}
 }
 
@@ -378,7 +325,7 @@ func TestDeleteTask(t *testing.T) {
 	srv := testServer(t)
 
 	// Create a task first
-	body := `{"repo_url":"https://github.com/test/repo","prompt":"Fix it"}`
+	body := `{"prompt":"fix it in https://github.com/test/repo"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -431,7 +378,6 @@ func TestNewTask_Integration(t *testing.T) {
 	emitter := &capturingEmitter{}
 
 	req := &models.CreateTaskRequest{
-		RepoURL: "https://github.com/test/repo",
 		Prompt:  "Add tests for auth module",
 		Harness: "claude_code",
 	}
@@ -446,9 +392,6 @@ func TestNewTask_Integration(t *testing.T) {
 	}
 	if task.Status != "pending" {
 		t.Errorf("status = %q, want pending", task.Status)
-	}
-	if task.RepoURL != "https://github.com/test/repo" {
-		t.Errorf("repo_url = %q", task.RepoURL)
 	}
 	if task.Prompt != "Add tests for auth module" {
 		t.Errorf("prompt = %q", task.Prompt)
@@ -483,7 +426,7 @@ func TestDeleteTask_EmitsCancelledEvent(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a task via API
-	body := `{"repo_url":"https://github.com/test/repo","prompt":"Fix it"}`
+	body := `{"prompt":"fix it in https://github.com/test/repo"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()

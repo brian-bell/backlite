@@ -26,8 +26,7 @@ func TestNewTask_StoreError_ReturnsErrStoreFailure(t *testing.T) {
 	cfg := &config.Config{}
 	s := &mockStore{createErr: fmt.Errorf("connection refused")}
 	req := &models.CreateTaskRequest{
-		RepoURL: "https://github.com/owner/repo",
-		Prompt:  "Fix bug",
+		Prompt: "Fix bug",
 	}
 
 	_, err := NewTask(context.Background(), req, s, cfg, nil)
@@ -43,8 +42,7 @@ func TestNewTask_ValidationError_NotStoreFailure(t *testing.T) {
 	cfg := &config.Config{}
 	s := &mockStore{}
 	req := &models.CreateTaskRequest{
-		RepoURL: "",
-		Prompt:  "",
+		Prompt: "",
 	}
 
 	_, err := NewTask(context.Background(), req, s, cfg, nil)

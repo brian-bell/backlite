@@ -75,8 +75,6 @@ func newTestSQLiteDB(t *testing.T) *sql.DB {
 			repo_url         TEXT NOT NULL,
 			branch           TEXT NOT NULL DEFAULT '',
 			target_branch    TEXT NOT NULL DEFAULT '',
-			review_pr_url    TEXT NOT NULL DEFAULT '',
-			review_pr_number INTEGER NOT NULL DEFAULT 0,
 			prompt           TEXT NOT NULL,
 			context          TEXT NOT NULL DEFAULT '',
 			model            TEXT NOT NULL DEFAULT '',
@@ -122,7 +120,6 @@ func newTestSQLiteDB(t *testing.T) *sql.DB {
 		CREATE TABLE allowed_senders (
 			channel_type TEXT NOT NULL,
 			address      TEXT NOT NULL,
-			default_repo TEXT NOT NULL DEFAULT '',
 			enabled      INTEGER NOT NULL DEFAULT 1,
 			created_at   TEXT NOT NULL,
 			PRIMARY KEY (channel_type, address)
@@ -364,8 +361,8 @@ func TestMigrate_AllowedSenders(t *testing.T) {
 	createdAt := "2025-03-10T12:00:00Z"
 
 	_, err := sqliteDB.Exec(`INSERT INTO allowed_senders (
-		channel_type, address, default_repo, enabled, created_at
-	) VALUES ('sms', '+15551234567', 'https://github.com/test/repo', 1, ?)`,
+		channel_type, address, enabled, created_at
+	) VALUES ('sms', '+15551234567', 1, ?)`,
 		createdAt)
 	if err != nil {
 		t.Fatalf("seed sqlite allowed_sender: %v", err)
@@ -376,14 +373,14 @@ func TestMigrate_AllowedSenders(t *testing.T) {
 	}
 
 	var (
-		channelType, address, defaultRepo string
-		enabled                           bool
-		pgCreatedAt                       time.Time
+		channelType, address string
+		enabled              bool
+		pgCreatedAt          time.Time
 	)
 	err = pgPool.QueryRow(ctx, `SELECT
-		channel_type, address, default_repo, enabled, created_at
+		channel_type, address, enabled, created_at
 	FROM allowed_senders WHERE channel_type = 'sms' AND address = '+15551234567'`).Scan(
-		&channelType, &address, &defaultRepo, &enabled, &pgCreatedAt,
+		&channelType, &address, &enabled, &pgCreatedAt,
 	)
 	if err != nil {
 		t.Fatalf("query postgres: %v", err)
@@ -394,9 +391,6 @@ func TestMigrate_AllowedSenders(t *testing.T) {
 	}
 	if address != "+15551234567" {
 		t.Errorf("address = %q", address)
-	}
-	if defaultRepo != "https://github.com/test/repo" {
-		t.Errorf("default_repo = %q", defaultRepo)
 	}
 	if !enabled {
 		t.Error("enabled should be true (was 1)")

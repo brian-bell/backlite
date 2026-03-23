@@ -31,9 +31,7 @@ const ResponseTypeModal = 9
 // Modal field custom_id constants.
 const (
 	modalIDCreate  = "backflow_create"
-	fieldRepoURL   = "repo_url"
 	fieldPrompt    = "prompt"
-	fieldBranch    = "branch"
 	fieldHarness   = "harness"
 	fieldBudgetUSD = "budget_usd"
 )
@@ -92,34 +90,12 @@ func openCreateModal(w http.ResponseWriter) {
 					Type: ComponentTypeActionRow,
 					Components: []TextInput{{
 						Type:        ComponentTypeTextInput,
-						CustomID:    fieldRepoURL,
-						Label:       "Repository URL",
-						Style:       TextInputStyleShort,
-						Required:    true,
-						Placeholder: "https://github.com/owner/repo",
-					}},
-				},
-				{
-					Type: ComponentTypeActionRow,
-					Components: []TextInput{{
-						Type:        ComponentTypeTextInput,
 						CustomID:    fieldPrompt,
 						Label:       "Task description",
 						Style:       TextInputStyleParagraph,
 						Required:    true,
-						Placeholder: "Describe what you want the agent to do...",
+						Placeholder: "Describe what you want the agent to do (include repo URL)...",
 						MaxLength:   2000,
-					}},
-				},
-				{
-					Type: ComponentTypeActionRow,
-					Components: []TextInput{{
-						Type:        ComponentTypeTextInput,
-						CustomID:    fieldBranch,
-						Label:       "Branch (optional)",
-						Style:       TextInputStyleShort,
-						Required:    false,
-						Placeholder: "Leave empty for default branch",
 					}},
 				},
 				{
@@ -154,20 +130,11 @@ func openCreateModal(w http.ResponseWriter) {
 func handleCreateSubmit(ctx context.Context, w http.ResponseWriter, data ModalSubmitData, createTask CreateTaskFunc) {
 	// Extract modal field values.
 	fields := extractModalFields(data.Components)
-	repoURL := strings.TrimSpace(fields[fieldRepoURL])
 	prompt := strings.TrimSpace(fields[fieldPrompt])
-	branch := strings.TrimSpace(fields[fieldBranch])
 	harness := strings.TrimSpace(fields[fieldHarness])
 	budgetStr := strings.TrimSpace(fields[fieldBudgetUSD])
 
 	// Validate required fields locally before calling CreateTaskFunc.
-	if repoURL == "" {
-		respondJSON(w, ChannelMessageResponse{
-			Type: ResponseTypeChannelMessage,
-			Data: MessageData{Content: "repo_url is required.", Flags: FlagEphemeral},
-		})
-		return
-	}
 	if prompt == "" {
 		respondJSON(w, ChannelMessageResponse{
 			Type: ResponseTypeChannelMessage,
@@ -191,10 +158,7 @@ func handleCreateSubmit(ctx context.Context, w http.ResponseWriter, data ModalSu
 	}
 
 	req := &models.CreateTaskRequest{
-		TaskMode:     models.TaskModeCode,
-		RepoURL:      repoURL,
 		Prompt:       prompt,
-		Branch:       branch,
 		Harness:      harness,
 		MaxBudgetUSD: budgetUSD,
 	}
@@ -244,7 +208,6 @@ func extractModalFields(rows []ActionRow) map[string]string {
 func formatCreatedTask(task *models.Task) string {
 	parts := []string{
 		fmt.Sprintf("Task created: **%s**", task.ID),
-		fmt.Sprintf("Repo: %s", task.RepoURL),
 		fmt.Sprintf("Status: %s", task.Status),
 	}
 	if task.Harness != "" {

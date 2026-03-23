@@ -102,8 +102,7 @@ curl -X POST http://localhost:8080/api/v1/tasks \
 curl -X POST http://localhost:8080/api/v1/tasks \
   -H "Content-Type: application/json" \
   -d '{
-    "task_mode": "review",
-    "review_pr_url": "https://github.com/org/repo/pull/42"
+    "prompt": "Review https://github.com/org/repo/pull/42"
   }'
 
 # Codex harness (requires OPENAI_API_KEY)
@@ -145,8 +144,6 @@ curl -X POST http://localhost:8080/api/v1/tasks \
 | `self_review` | bool | Agent self-reviews the PR after creation (omit to use server default) |
 | `pr_title` | string | Custom PR title |
 | `pr_body` | string | Custom PR body |
-| `review_pr_url` | string | Full PR URL (e.g. `https://github.com/org/repo/pull/42`); auto-populates `repo_url` and `review_pr_number` |
-| `review_pr_number` | int | PR number (legacy; prefer `review_pr_url`) |
 | `max_budget_usd` | float | Budget cap in USD |
 | `max_runtime_min` | int | Runtime cap in minutes |
 | `max_turns` | int | Max conversation turns |

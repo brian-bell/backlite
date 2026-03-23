@@ -2,15 +2,9 @@
 set -euo pipefail
 
 # --- Configuration from environment ---
-REPO_URL="${REPO_URL:?REPO_URL is required}"
-TASK_MODE="${TASK_MODE:-code}"
+PROMPT="${PROMPT:?PROMPT is required}"
 HARNESS="${HARNESS:-claude_code}"
 AUTH_MODE="${AUTH_MODE:-api_key}"
-BRANCH="${BRANCH:-backflow/${TASK_ID:-$(date +%s)}}"
-TARGET_BRANCH="${TARGET_BRANCH:-main}"
-REVIEW_PR_URL="${REVIEW_PR_URL:-}"
-REVIEW_PR_NUMBER="${REVIEW_PR_NUMBER:-0}"
-PROMPT="${PROMPT:-}"
 MODEL="${MODEL:-claude-sonnet-4-6}"
 EFFORT="${EFFORT:-medium}"
 MAX_BUDGET_USD="${MAX_BUDGET_USD:-10}"
@@ -43,6 +37,7 @@ fetch_s3_var "TASK_CONTEXT_S3_URL" "TASK_CONTEXT"
 fetch_s3_var "PR_BODY_S3_URL" "PR_BODY"
 
 WORKSPACE="/home/agent/workspace"
+mkdir -p "$WORKSPACE"
 STATUS_FILE="${WORKSPACE}/status.json"
 START_TIME=$(date +%s)
 
@@ -81,17 +76,131 @@ else
 fi
 
 # =============================================================================
-# REVIEW MODE — review an existing PR and post feedback
+# PREP STAGE — infer repo_url, target_branch, task_type from the prompt
 # =============================================================================
-if [ "$TASK_MODE" = "review" ]; then
-    echo "==> PR Review mode: reviewing ${REVIEW_PR_URL:-PR #${REVIEW_PR_NUMBER}}"
 
-    # Clone repo (needed for gh CLI context)
-    echo "==> Cloning ${REPO_URL} (depth 1)..."
+echo "==> Running prep stage..."
+
+PREP_PROMPT="Analyze this task prompt and extract structured information.
+
+Output ONLY a JSON object with these fields:
+- repo_url: the GitHub repository HTTPS URL (required — look for github.com URLs)
+- target_branch: the base branch to work from (default: \"main\")
+- task_type: either \"code\" (implement changes, fix bugs, add features) or \"review\" (review an existing PR)
+- pr_url: the full PR URL (only if task_type is \"review\")
+
+Rules for determining task_type:
+- If the prompt contains a PR URL (github.com/owner/repo/pull/NUMBER), it's a review task
+- If the prompt contains an issue URL, a repo URL, or describes code changes, it's a code task
+- If ambiguous (e.g. \"fix the issues in PR #42\"), prefer code — the user wants changes made
+- GitHub issue URLs (github.com/owner/repo/issues/NUMBER) are code tasks, not review tasks
+
+Rules for repo_url:
+- Extract from any GitHub URL in the prompt (repo URL, PR URL, issue URL)
+- Always use HTTPS format: https://github.com/owner/repo
+- Strip any path beyond owner/repo (no /pull/N, /issues/N, etc.)
+
+Output ONLY valid JSON. No markdown, no explanation, no code fences.
+
+User prompt:
+${PROMPT}"
+
+PREP_LOG="/tmp/prep_output.log"
+set +e
+if [ "$HARNESS" = "codex" ]; then
+    codex exec \
+        --model "$MODEL" \
+        --dangerously-bypass-approvals-and-sandbox \
+        "$PREP_PROMPT" 2>&1 | tee "$PREP_LOG"
+else
+    claude -p "$PREP_PROMPT" \
+        --model claude-haiku-4-5-20251001 \
+        --max-turns 1 \
+        --output-format stream-json \
+        --verbose 2>&1 | tee "$PREP_LOG"
+fi
+PREP_EXIT=${PIPESTATUS[0]}
+set -e
+
+if [ $PREP_EXIT -ne 0 ]; then
+    ELAPSED_SEC=$(( $(date +%s) - START_TIME ))
+    write_status "$PREP_EXIT" false false "" "Prep stage failed (exit code: ${PREP_EXIT})" "" "0" "$ELAPSED_SEC" "" "" ""
+    exit 1
+fi
+
+# Extract the result text — stream-json for claude, plain text for codex
+if [ "$HARNESS" = "codex" ]; then
+    PREP_RESULT=$(cat "$PREP_LOG")
+else
+    PREP_RESULT=$(grep '"type":"result"' "$PREP_LOG" | tail -1 | jq -r '.result // empty' 2>/dev/null || true)
+fi
+if [ -z "$PREP_RESULT" ]; then
+    ELAPSED_SEC=$(( $(date +%s) - START_TIME ))
+    write_status "1" false false "" "Prep stage produced no result" "" "0" "$ELAPSED_SEC" "" "" ""
+    exit 1
+fi
+
+# Strip markdown code fences if present (e.g. ```json ... ```)
+PREP_RESULT=$(echo "$PREP_RESULT" | sed '/^```/d')
+
+# The result text should be JSON — write it to prep.json
+echo "$PREP_RESULT" | jq . > /tmp/prep.json 2>/dev/null || {
+    ELAPSED_SEC=$(( $(date +%s) - START_TIME ))
+    write_status "1" false false "" "Prep stage output is not valid JSON: ${PREP_RESULT:0:200}" "" "0" "$ELAPSED_SEC" "" "" ""
+    exit 1
+}
+
+REPO_URL=$(jq -r '.repo_url // empty' /tmp/prep.json)
+TARGET_BRANCH=$(jq -r '.target_branch // "main"' /tmp/prep.json)
+TASK_TYPE=$(jq -r '.task_type // "code"' /tmp/prep.json)
+PR_URL=$(jq -r '.review_pr_url // .pr_url // empty' /tmp/prep.json)
+
+echo "==> Prep result: repo=${REPO_URL} branch=${TARGET_BRANCH} type=${TASK_TYPE}"
+
+if [ -z "$REPO_URL" ]; then
+    ELAPSED_SEC=$(( $(date +%s) - START_TIME ))
+    write_status "1" false false "" "Could not determine repository URL from the prompt. Include a GitHub URL in your message." "" "0" "$ELAPSED_SEC" "" "" "$TASK_TYPE"
+    exit 1
+fi
+
+if [ -n "$PR_URL" ] && [ "$TASK_TYPE" = "review" ]; then
+    echo "==> Review PR: ${PR_URL}"
+fi
+
+# =============================================================================
+# CLONE
+# =============================================================================
+if [ "$TASK_TYPE" = "review" ]; then
+    echo "==> Cloning ${REPO_URL} (depth 1 for review)..."
     git clone --depth 1 "$REPO_URL" "$WORKSPACE"
-    cd "$WORKSPACE"
+else
+    echo "==> Cloning ${REPO_URL} (depth 50 for code)..."
+    git clone --depth 50 "$REPO_URL" "$WORKSPACE"
+fi
+cd "$WORKSPACE"
 
-    # Build review prompt
+if [ "$TASK_TYPE" = "code" ]; then
+    git fetch origin "$TARGET_BRANCH" 2>/dev/null || true
+    git checkout "$TARGET_BRANCH" 2>/dev/null || true
+fi
+
+# --- Inject CLAUDE.md ---
+if [ -n "$CLAUDE_MD" ]; then
+    echo "==> Injecting CLAUDE.md content..."
+    if [ -f CLAUDE.md ]; then
+        echo "" >> CLAUDE.md
+        echo "$CLAUDE_MD" >> CLAUDE.md
+    else
+        echo "$CLAUDE_MD" > CLAUDE.md
+    fi
+fi
+
+# =============================================================================
+# REVIEW MODE
+# =============================================================================
+if [ "$TASK_TYPE" = "review" ]; then
+    echo "==> Review mode: reviewing ${PR_URL}"
+
     REVIEW_PROMPT="${PROMPT}"
     if [ -z "$REVIEW_PROMPT" ]; then
         REVIEW_PROMPT="Review this pull request thoroughly and provide constructive feedback."
@@ -103,10 +212,9 @@ if [ "$TASK_MODE" = "review" ]; then
 ${REVIEW_PROMPT}"
     fi
 
-    # Use the full PR URL in the prompt so the agent can reference it directly
-    PR_REF="${REVIEW_PR_URL:-${REVIEW_PR_NUMBER}}"
+    PR_REF="${PR_URL}"
 
-    FULL_REVIEW_PROMPT="You are reviewing pull request ${REVIEW_PR_URL:-#${REVIEW_PR_NUMBER}} in this repository.
+    FULL_REVIEW_PROMPT="You are reviewing pull request ${PR_URL} in this repository.
 
 ${REVIEW_PROMPT}
 
@@ -129,17 +237,6 @@ Do NOT comment on:
 - Things that are working correctly
 
 You MUST post your review as a comment on the PR using the gh CLI. Do not just print your review to stdout."
-
-    # Inject CLAUDE.md if provided
-    if [ -n "$CLAUDE_MD" ]; then
-        echo "==> Injecting CLAUDE.md content..."
-        if [ -f CLAUDE.md ]; then
-            echo "" >> CLAUDE.md
-            echo "$CLAUDE_MD" >> CLAUDE.md
-        else
-            echo "$CLAUDE_MD" > CLAUDE.md
-        fi
-    fi
 
     CLAUDE_LOG="${WORKSPACE}/claude_output.log"
     set +e
@@ -181,50 +278,16 @@ You MUST post your review as a comment on the PR using the gh CLI. Do not just p
         echo "==> PR review failed (exit code: ${CLAUDE_EXIT})"
     fi
 
-    # Use provided PR URL or look it up for status
-    PR_URL="${REVIEW_PR_URL:-}"
-    if [ -z "$PR_URL" ]; then
-        PR_URL=$(gh pr view "$REVIEW_PR_NUMBER" --json url --jq '.url' 2>/dev/null || true)
-    fi
-
     REVIEW_COST=$(grep '"type":"result"' "$CLAUDE_LOG" 2>/dev/null | tail -1 | jq -r '.total_cost_usd // 0' 2>/dev/null || echo "0")
-    REVIEW_ELAPSED=$(( $(date +%s) - START_TIME ))
-    write_status "$CLAUDE_EXIT" "$COMPLETE" false "" "$ERROR_MSG" "$PR_URL" "$REVIEW_COST" "$REVIEW_ELAPSED"
+    ELAPSED_SEC=$(( $(date +%s) - START_TIME ))
+    write_status "$CLAUDE_EXIT" "$COMPLETE" false "" "$ERROR_MSG" "$PR_URL" "$REVIEW_COST" "$ELAPSED_SEC" "$REPO_URL" "$TARGET_BRANCH" "$TASK_TYPE"
     echo "==> Done (exit code: ${CLAUDE_EXIT})"
     exit $CLAUDE_EXIT
 fi
 
 # =============================================================================
-# CODE MODE (default) — clone, code, commit, push, optionally create PR
+# CODE MODE — code, commit, push, optionally create PR
 # =============================================================================
-if [ -z "$PROMPT" ]; then
-    echo "ERROR: PROMPT is required in code mode" >&2
-    exit 1
-fi
-
-# --- Clone ---
-echo "==> Cloning ${REPO_URL} (depth 50)..."
-git clone --depth 50 "$REPO_URL" "$WORKSPACE"
-cd "$WORKSPACE"
-
-# Checkout target branch if it's not the default
-git fetch origin "$TARGET_BRANCH" 2>/dev/null || true
-git checkout "$TARGET_BRANCH" 2>/dev/null || true
-
-# Create working branch
-git checkout -b "$BRANCH"
-echo "==> Working on branch: ${BRANCH}"
-
-# --- Inject CLAUDE.md ---
-if [ -n "$CLAUDE_MD" ]; then
-    echo "==> Injecting CLAUDE.md content..."
-    if [ -f CLAUDE.md ]; then
-        echo "" >> CLAUDE.md
-        echo "$CLAUDE_MD" >> CLAUDE.md
-    else
-        echo "$CLAUDE_MD" > CLAUDE.md
-    fi
-fi
 
 # --- Build prompt ---
 FULL_PROMPT="$PROMPT"
@@ -234,20 +297,21 @@ if [ -n "$TASK_CONTEXT" ]; then
 ${FULL_PROMPT}"
 fi
 
-# Always instruct the agent to commit and push
+# Instruct the agent to commit, push, and create a PR.
+# The agent picks its own descriptive branch name.
 GIT_INSTRUCTIONS="
 
 After completing the coding task, you MUST do the following git operations:
 
-1. Stage and commit all your changes with a descriptive commit message.
-2. Push the branch '${BRANCH}' to origin."
+1. Create a new branch with a descriptive name prefixed with 'backflow/' (e.g. backflow/fix-auth-bug).
+2. Stage and commit all your changes with a descriptive commit message.
+3. Push your branch to origin."
 
-# Append PR creation instructions if requested
 if [ "$CREATE_PR" = "true" ]; then
     GIT_INSTRUCTIONS="${GIT_INSTRUCTIONS}
-3. Create a pull request using the gh CLI:
+4. Create a pull request using the gh CLI:
    - Base branch: ${TARGET_BRANCH}
-   - Head branch: ${BRANCH}"
+   - Head branch: your new backflow/ branch"
 
     if [ -n "$PR_TITLE" ]; then
         GIT_INSTRUCTIONS="${GIT_INSTRUCTIONS}
@@ -269,6 +333,12 @@ if [ "$CREATE_PR" = "true" ]; then
 
 Do NOT skip the PR creation step. The PR must exist on GitHub when you are done."
 fi
+
+GIT_INSTRUCTIONS="${GIT_INSTRUCTIONS}
+
+5. After all git operations are complete, write a JSON file to /tmp/code_result.json with:
+   {\"branch\": \"<your-branch-name>\", \"pr_url\": \"<pr-url-or-empty>\"}
+   This file MUST exist when you are done."
 
 FULL_PROMPT="${FULL_PROMPT}${GIT_INSTRUCTIONS}"
 
@@ -333,7 +403,6 @@ while [ $ATTEMPT -lt "$MAX_RETRIES" ]; do
     echo "$CLAUDE_OUTPUT" | tail -30
 
     if [ $ATTEMPT -lt "$MAX_RETRIES" ]; then
-        # Add error context to prompt for retry
         ERROR_TAIL=$(echo "$CLAUDE_OUTPUT" | tail -20)
         FULL_PROMPT="Previous attempt failed with error:
 ${ERROR_TAIL}
@@ -348,13 +417,11 @@ NEEDS_INPUT=false
 QUESTION=""
 
 if [ "$HARNESS" = "codex" ]; then
-    # Codex outputs plain text; scan for question indicators
     if echo "$CLAUDE_OUTPUT" | grep -qi 'question\|decision\|should I\|which approach\|do you want\|please clarify'; then
         NEEDS_INPUT=true
         QUESTION=$(echo "$CLAUDE_OUTPUT" | tail -5)
     fi
 else
-    # stream-json emits one JSON object per line; the final "result" message has the outcome.
     RESULT_LINE=$(echo "$CLAUDE_OUTPUT" | grep '"type":"result"' | tail -1 || true)
     if [ -n "$RESULT_LINE" ]; then
         RESULT_TEXT=$(echo "$RESULT_LINE" | jq -r '.result // empty' 2>/dev/null || true)
@@ -363,7 +430,6 @@ else
             QUESTION=$(echo "$RESULT_TEXT" | tail -5)
         fi
 
-        # If claude ran out of turns without completing
         IS_ERROR=$(echo "$RESULT_LINE" | jq -r '.is_error // false' 2>/dev/null || true)
         if [ "$IS_ERROR" = "true" ]; then
             ERROR_TYPE=$(echo "$RESULT_LINE" | jq -r '.error_type // empty' 2>/dev/null || true)
@@ -391,15 +457,37 @@ if [ "$HARNESS" != "codex" ]; then
     ACTUAL_COST=$(grep '"type":"result"' "$CLAUDE_LOG" 2>/dev/null | tail -1 | jq -r '.total_cost_usd // 0' 2>/dev/null || echo "0")
 fi
 
-# --- Extract PR URL ---
+# --- Extract PR URL from code_result.json or gh CLI ---
 PR_URL=""
-if [ "$CREATE_PR" = "true" ] && [ "$COMPLETE" = "true" ]; then
-    echo "==> Looking up PR URL..."
-    PR_URL=$(gh pr list --head "$BRANCH" --base "$TARGET_BRANCH" --json url --jq '.[0].url' 2>/dev/null || true)
+CODE_BRANCH=""
+if [ -f /tmp/code_result.json ]; then
+    PR_URL=$(jq -r '.pr_url // empty' /tmp/code_result.json 2>/dev/null || true)
+    CODE_BRANCH=$(jq -r '.branch // empty' /tmp/code_result.json 2>/dev/null || true)
+    echo "==> code_result.json: branch=${CODE_BRANCH} pr_url=${PR_URL}"
+elif [ "$COMPLETE" = "true" ]; then
+    echo "==> WARNING: code_result.json not found, falling back to git"
+fi
+
+# Fallback: detect branch from git if code_result.json was missing or incomplete
+if [ -z "$CODE_BRANCH" ] && [ "$COMPLETE" = "true" ]; then
+    CODE_BRANCH=$(git -C "$WORKSPACE" branch --show-current 2>/dev/null || true)
+    if [ -n "$CODE_BRANCH" ] && [ "$CODE_BRANCH" != "$TARGET_BRANCH" ]; then
+        echo "==> Detected branch from git: ${CODE_BRANCH}"
+    else
+        CODE_BRANCH=""
+    fi
+fi
+
+# Fallback: look up PR via gh CLI if agent created one
+if [ -z "$PR_URL" ] && [ "$CREATE_PR" = "true" ] && [ "$COMPLETE" = "true" ]; then
+    if [ -n "$CODE_BRANCH" ]; then
+        echo "==> Looking up PR URL for branch ${CODE_BRANCH}..."
+        PR_URL=$(gh pr list --head "$CODE_BRANCH" --base "$TARGET_BRANCH" --json url --jq '.[0].url' 2>/dev/null || true)
+    fi
     if [ -n "$PR_URL" ]; then
         echo "==> PR found: ${PR_URL}"
     else
-        echo "==> No PR found for branch ${BRANCH}"
+        echo "==> WARNING: task completed with create_pr=true but no PR found"
     fi
 fi
 
@@ -407,14 +495,12 @@ fi
 if [ -n "$PR_URL" ]; then
     echo "==> Commenting task info on PR..."
 
-    # Compute elapsed time
     END_TIME=$(date +%s)
     ELAPSED_SEC=$((END_TIME - START_TIME))
     ELAPSED_MIN=$((ELAPSED_SEC / 60))
     ELAPSED_REM_SEC=$((ELAPSED_SEC % 60))
     ELAPSED_DISPLAY="${ELAPSED_MIN}m ${ELAPSED_REM_SEC}s"
 
-    # Format prompt as markdown quote
     QUOTED_PROMPT=$(echo "$PROMPT" | sed 's/^/> /')
 
     COMMENT_BODY="## Backflow Task
@@ -449,7 +535,6 @@ fi
 if [ "$SELF_REVIEW" = "true" ] && [ -n "$PR_URL" ]; then
     echo "==> Starting self-review phase..."
 
-    # Cap review budget at 20% of coding budget (minimum $2)
     REVIEW_BUDGET=$(echo "$MAX_BUDGET_USD" | awk '{b = $1 * 0.2; print (b < 2) ? 2 : b}')
 
     REVIEW_PROMPT="You are reviewing a pull request that you (a different instance) just created.
@@ -510,7 +595,7 @@ fi
 
 # --- Write status ---
 ELAPSED_SEC=$(( $(date +%s) - START_TIME ))
-write_status "$CLAUDE_EXIT" "$COMPLETE" "$NEEDS_INPUT" "$QUESTION" "$ERROR_MSG" "$PR_URL" "$ACTUAL_COST" "$ELAPSED_SEC"
+write_status "$CLAUDE_EXIT" "$COMPLETE" "$NEEDS_INPUT" "$QUESTION" "$ERROR_MSG" "$PR_URL" "$ACTUAL_COST" "$ELAPSED_SEC" "$REPO_URL" "$TARGET_BRANCH" "$TASK_TYPE"
 
 echo "==> Done (exit code: ${CLAUDE_EXIT})"
 exit $CLAUDE_EXIT

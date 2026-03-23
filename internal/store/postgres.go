@@ -66,7 +66,6 @@ func (s *PostgresStore) Close() error {
 // --- Tasks ---
 
 const taskColumns = `id, status, task_mode, harness, repo_url, branch, target_branch,
-	review_pr_url, review_pr_number,
 	prompt, context,
 	model, effort, max_budget_usd, max_runtime_min, max_turns,
 	create_pr, self_review, save_agent_output, pr_title, pr_body, pr_url, output_url,
@@ -88,7 +87,6 @@ func (s *PostgresStore) CreateTask(ctx context.Context, task *models.Task) error
 	_, err := s.q.Exec(ctx, `
 		INSERT INTO tasks (
 			id, status, task_mode, harness, repo_url, branch, target_branch,
-			review_pr_url, review_pr_number,
 			prompt, context,
 			model, effort, max_budget_usd, max_runtime_min, max_turns,
 			create_pr, self_review, save_agent_output, pr_title, pr_body, pr_url, output_url,
@@ -99,16 +97,14 @@ func (s *PostgresStore) CreateTask(ctx context.Context, task *models.Task) error
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7,
 			$8, $9,
-			$10, $11,
-			$12, $13, $14, $15, $16,
-			$17, $18, $19, $20, $21, $22, $23,
-			$24, $25, $26,
-			$27, $28, $29, $30, $31, $32,
-			$33,
-			$34, $35, $36, $37
+			$10, $11, $12, $13, $14,
+			$15, $16, $17, $18, $19, $20, $21,
+			$22, $23, $24,
+			$25, $26, $27, $28, $29, $30,
+			$31,
+			$32, $33, $34, $35
 		)`,
 		task.ID, task.Status, task.TaskMode, task.Harness, task.RepoURL, task.Branch, task.TargetBranch,
-		task.ReviewPRURL, task.ReviewPRNumber,
 		task.Prompt, task.Context, task.Model, task.Effort,
 		task.MaxBudgetUSD, task.MaxRuntimeMin, task.MaxTurns,
 		task.CreatePR, task.SelfReview, task.SaveAgentOutput,
@@ -198,8 +194,13 @@ func (s *PostgresStore) StartTask(ctx context.Context, id string, containerID st
 func (s *PostgresStore) CompleteTask(ctx context.Context, id string, result TaskResult) error {
 	now := time.Now().UTC()
 	_, err := s.q.Exec(ctx,
-		`UPDATE tasks SET status=$1, error=$2, pr_url=$3, output_url=$4, cost_usd=$5, elapsed_time_sec=$6, completed_at=$7, updated_at=$8 WHERE id=$9`,
+		`UPDATE tasks SET status=$1, error=$2, pr_url=$3, output_url=$4, cost_usd=$5, elapsed_time_sec=$6,
+		 repo_url=COALESCE(NULLIF($7, ''), repo_url),
+		 target_branch=COALESCE(NULLIF($8, ''), target_branch),
+		 task_mode=COALESCE(NULLIF($9, ''), task_mode),
+		 completed_at=$10, updated_at=$11 WHERE id=$12`,
 		result.Status, result.Error, result.PRURL, result.OutputURL, result.CostUSD, result.ElapsedTimeSec,
+		result.RepoURL, result.TargetBranch, result.TaskMode,
 		now, now, id,
 	)
 	return err
@@ -327,20 +328,20 @@ func (s *PostgresStore) ResetRunningContainers(ctx context.Context, id string) e
 
 func (s *PostgresStore) CreateAllowedSender(ctx context.Context, sender *models.AllowedSender) error {
 	_, err := s.q.Exec(ctx,
-		"INSERT INTO allowed_senders (channel_type, address, default_repo, enabled, created_at) VALUES ($1, $2, $3, $4, $5)",
-		sender.ChannelType, sender.Address, sender.DefaultRepo, sender.Enabled, sender.CreatedAt,
+		"INSERT INTO allowed_senders (channel_type, address, enabled, created_at) VALUES ($1, $2, $3, $4)",
+		sender.ChannelType, sender.Address, sender.Enabled, sender.CreatedAt,
 	)
 	return err
 }
 
 func (s *PostgresStore) GetAllowedSender(ctx context.Context, channelType, address string) (*models.AllowedSender, error) {
 	row := s.q.QueryRow(ctx,
-		"SELECT channel_type, address, default_repo, enabled, created_at FROM allowed_senders WHERE channel_type = $1 AND address = $2",
+		"SELECT channel_type, address, enabled, created_at FROM allowed_senders WHERE channel_type = $1 AND address = $2",
 		channelType, address,
 	)
 
 	var sender models.AllowedSender
-	err := row.Scan(&sender.ChannelType, &sender.Address, &sender.DefaultRepo, &sender.Enabled, &sender.CreatedAt)
+	err := row.Scan(&sender.ChannelType, &sender.Address, &sender.Enabled, &sender.CreatedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, ErrNotFound
@@ -458,7 +459,6 @@ func scanPGTask(row pgScanner) (*models.Task, error) {
 
 	err := row.Scan(
 		&t.ID, &t.Status, &t.TaskMode, &t.Harness, &t.RepoURL, &t.Branch, &t.TargetBranch,
-		&t.ReviewPRURL, &t.ReviewPRNumber,
 		&t.Prompt, &t.Context, &t.Model, &t.Effort,
 		&t.MaxBudgetUSD, &t.MaxRuntimeMin, &t.MaxTurns,
 		&t.CreatePR, &t.SelfReview, &t.SaveAgentOutput,

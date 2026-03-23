@@ -19,22 +19,15 @@ func TestModalSubmitErrors_AreEphemeral(t *testing.T) {
 		wantInMsg string
 	}{
 		{
-			name:      "missing repo_url",
-			createFn:  fakeCreateTask(fakeTask(), nil),
-			fields:    map[string]string{fieldPrompt: "Add tests"},
-			wantInMsg: "repo_url is required",
-		},
-		{
 			name:      "missing prompt",
 			createFn:  fakeCreateTask(fakeTask(), nil),
-			fields:    map[string]string{fieldRepoURL: "https://github.com/owner/repo"},
+			fields:    map[string]string{},
 			wantInMsg: "prompt is required",
 		},
 		{
 			name:     "invalid budget",
 			createFn: fakeCreateTask(fakeTask(), nil),
 			fields: map[string]string{
-				fieldRepoURL:   "https://github.com/owner/repo",
 				fieldPrompt:    "Add tests",
 				fieldBudgetUSD: "abc",
 			},
@@ -44,8 +37,7 @@ func TestModalSubmitErrors_AreEphemeral(t *testing.T) {
 			name:     "nil creator",
 			createFn: nil,
 			fields: map[string]string{
-				fieldRepoURL: "https://github.com/owner/repo",
-				fieldPrompt:  "Add tests",
+				fieldPrompt: "Add tests",
 			},
 			wantInMsg: "unavailable",
 		},
@@ -53,8 +45,7 @@ func TestModalSubmitErrors_AreEphemeral(t *testing.T) {
 			name:     "creator error",
 			createFn: fakeCreateTask(nil, fmt.Errorf("db down")),
 			fields: map[string]string{
-				fieldRepoURL: "https://github.com/owner/repo",
-				fieldPrompt:  "Add tests",
+				fieldPrompt: "Add tests",
 			},
 			wantInMsg: "Failed to create task",
 		},
@@ -96,8 +87,7 @@ func TestModalSubmitSuccess_IsEphemeral(t *testing.T) {
 
 	customID := modalIDCreate
 	body := buildModalSubmitBody(customID, map[string]string{
-		fieldRepoURL: "https://github.com/owner/repo",
-		fieldPrompt:  "Add tests",
+		fieldPrompt: "Add tests",
 	})
 	rr := postInteraction(handler, priv, body)
 

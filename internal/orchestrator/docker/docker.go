@@ -108,8 +108,6 @@ func (m *Manager) buildEnvFlags(task *models.Task) []string {
 		envFlag("REPO_URL", shellEscape(task.RepoURL)),
 		envFlag("BRANCH", shellEscape(task.Branch)),
 		envFlag("TARGET_BRANCH", shellEscape(task.TargetBranch)),
-		envFlag("REVIEW_PR_URL", shellEscape(task.ReviewPRURL)),
-		fmt.Sprintf("-e REVIEW_PR_NUMBER=%d", task.ReviewPRNumber),
 		envFlag("PROMPT", shellEscape(task.Prompt)),
 		envFlag("MODEL", shellEscape(task.Model)),
 		envFlag("EFFORT", shellEscape(task.Effort)),
@@ -218,6 +216,9 @@ func (m *Manager) enrichFromStatusJSON(ctx context.Context, instanceID, containe
 	status.PRURL = agent.PRURL
 	status.CostUSD = agent.CostUSD
 	status.ElapsedTimeSec = agent.ElapsedTimeSec
+	status.RepoURL = agent.RepoURL
+	status.TargetBranch = agent.TargetBranch
+	status.TaskMode = agent.TaskMode
 	if agent.Error != "" {
 		status.Error = agent.Error
 	}

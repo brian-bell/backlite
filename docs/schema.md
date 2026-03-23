@@ -17,8 +17,6 @@ Stores agent tasks submitted via the REST API.
 | `repo_url` | `TEXT` | — | Git repository URL to clone (required). |
 | `branch` | `TEXT` | `''` | Branch to check out before running the agent. |
 | `target_branch` | `TEXT` | `''` | Base branch for PR creation (e.g. `main`). |
-| `review_pr_url` | `TEXT` | `''` | URL of the PR to review (used when `task_mode` is `review`). |
-| `review_pr_number` | `INTEGER` | `0` | PR number to review (used when `task_mode` is `review`). |
 | `prompt` | `TEXT` | — | The instruction given to the agent (required). |
 | `context` | `TEXT` | `''` | Additional context appended to the prompt. |
 | `model` | `TEXT` | `''` | Model override (e.g. `claude-sonnet-4-6`, `gpt-5.4`). |
@@ -79,7 +77,6 @@ Pre-registered senders authorized to create tasks via messaging (e.g. SMS).
 |--------|------|---------|-------------|
 | `channel_type` | `TEXT` | — | **Composite PK.** Messaging channel type (e.g. `sms`). |
 | `address` | `TEXT` | — | **Composite PK.** Sender address (e.g. `+15551234567`). |
-| `default_repo` | `TEXT` | `''` | Default repo URL when sender omits it from the message. |
 | `enabled` | `BOOLEAN` | `true` | Whether this sender is allowed to create tasks. |
 | `created_at` | `TIMESTAMPTZ` | `now()` | When the sender was registered. |
 

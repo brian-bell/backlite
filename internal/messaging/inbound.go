@@ -110,7 +110,7 @@ func InboundHandler(db store.Store, cfg *config.Config, messenger Messenger) htt
 		}
 
 		from := r.FormValue("From")
-		body := r.FormValue("Body")
+		body := strings.TrimSpace(r.FormValue("Body"))
 
 		if from == "" || body == "" {
 			log.Warn().Str("from", from).Msg("sms: missing From or Body")
@@ -138,46 +138,17 @@ func InboundHandler(db store.Store, cfg *config.Config, messenger Messenger) htt
 			return
 		}
 
-		// Auto-detect review mode from the raw SMS body before URL extraction.
-		taskMode := models.TaskModeCode
-		reviewPRURL := ""
-		reviewPRNumber := 0
-		var repoURL, prompt string
-
-		if inf := models.InferReviewMode(body); inf != nil {
-			taskMode = models.TaskModeReview
-			reviewPRURL = inf.PRURL
-			reviewPRNumber = inf.PRNumber
-			repoURL = inf.RepoURL
-			// Strip the PR URL from the body to get a prompt; default if empty.
-			prompt = strings.TrimSpace(strings.Replace(body, reviewPRURL, "", 1))
-			if prompt == "" {
-				prompt = fmt.Sprintf("Review pull request %s", reviewPRURL)
-			}
-		} else {
-			var err error
-			repoURL, prompt, err = ParseTaskFromSMS(body, sender.DefaultRepo)
-			if err != nil {
-				log.Warn().Err(err).Str("from", from).Msg("sms: failed to parse task")
-				writeTwiML(w, fmt.Sprintf("Error: %s", err.Error()))
-				return
-			}
-		}
-
 		now := time.Now().UTC()
 		task := &models.Task{
-			ID:             "bf_" + ulid.Make().String(),
-			Status:         models.TaskStatusPending,
-			TaskMode:       taskMode,
-			RepoURL:        repoURL,
-			ReviewPRURL:    reviewPRURL,
-			ReviewPRNumber: reviewPRNumber,
-			Prompt:         prompt,
-			ReplyChannel:   fmt.Sprintf("%s:%s", ChannelSMS, from),
-			CreatedAt:      now,
-			UpdatedAt:      now,
+			ID:           "bf_" + ulid.Make().String(),
+			Status:       models.TaskStatusPending,
+			TaskMode:     models.TaskModeAuto,
+			Prompt:       body,
+			ReplyChannel: fmt.Sprintf("%s:%s", ChannelSMS, from),
+			CreatedAt:    now,
+			UpdatedAt:    now,
 		}
-		cfg.TaskDefaults(taskMode).Apply(task, nil)
+		cfg.TaskDefaults(models.TaskModeAuto).Apply(task, nil)
 
 		if err := db.CreateTask(r.Context(), task); err != nil {
 			log.Error().Err(err).Msg("sms: failed to create task")
@@ -185,7 +156,7 @@ func InboundHandler(db store.Store, cfg *config.Config, messenger Messenger) htt
 			return
 		}
 
-		log.Info().Str("task_id", task.ID).Str("from", from).Str("repo", repoURL).Msg("sms: task created")
-		writeTwiML(w, fmt.Sprintf("Task created: %s\nRepo: %s", task.ID, repoURL))
+		log.Info().Str("task_id", task.ID).Str("from", from).Msg("sms: task created")
+		writeTwiML(w, fmt.Sprintf("Task created: %s", task.ID))
 	}
 }

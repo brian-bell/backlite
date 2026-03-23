@@ -6,7 +6,6 @@ import "time"
 type AllowedSender struct {
 	ChannelType string    `json:"channel_type"`
 	Address     string    `json:"address"`
-	DefaultRepo string    `json:"default_repo,omitempty"`
 	Enabled     bool      `json:"enabled"`
 	CreatedAt   time.Time `json:"created_at"`
 }

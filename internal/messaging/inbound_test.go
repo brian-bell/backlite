@@ -115,8 +115,8 @@ func TestInboundHandler_AllowedSender(t *testing.T) {
 			"sms:+15551234567": {
 				ChannelType: "sms",
 				Address:     "+15551234567",
-				DefaultRepo: "https://github.com/backflow-labs/backflow",
-				Enabled:     true,
+
+				Enabled: true,
 			},
 		},
 	}
@@ -136,11 +136,14 @@ func TestInboundHandler_AllowedSender(t *testing.T) {
 		t.Fatalf("expected 1 task, got %d", len(db.tasks))
 	}
 	task := db.tasks[0]
-	if task.RepoURL != "https://github.com/backflow-labs/backflow" {
-		t.Errorf("repo = %q, want default", task.RepoURL)
-	}
 	if task.Prompt != "Fix the flaky test" {
-		t.Errorf("prompt = %q", task.Prompt)
+		t.Errorf("prompt = %q, want %q", task.Prompt, "Fix the flaky test")
+	}
+	if task.TaskMode != models.TaskModeAuto {
+		t.Errorf("task_mode = %q, want %q", task.TaskMode, models.TaskModeAuto)
+	}
+	if task.RepoURL != "" {
+		t.Errorf("repo_url = %q, want empty", task.RepoURL)
 	}
 	if task.ReplyChannel != "sms:+15551234567" {
 		t.Errorf("reply_channel = %q", task.ReplyChannel)
@@ -159,6 +162,9 @@ func TestInboundHandler_AllowedSender(t *testing.T) {
 	}
 	if !strings.Contains(resp.Message.Body, "Task created") {
 		t.Errorf("unexpected response: %q", resp.Message.Body)
+	}
+	if strings.Contains(resp.Message.Body, "Repo:") {
+		t.Errorf("response should not contain Repo line: %q", resp.Message.Body)
 	}
 }
 
@@ -226,7 +232,7 @@ func TestInboundHandler_WithExplicitRepo(t *testing.T) {
 
 	w := postForm(handler, url.Values{
 		"From": {"+15551234567"},
-		"Body": {"github.com/org/repo Fix the bug"},
+		"Body": {"https://github.com/test/repo fix the auth bug"},
 	})
 
 	if w.Code != http.StatusOK {
@@ -235,8 +241,15 @@ func TestInboundHandler_WithExplicitRepo(t *testing.T) {
 	if len(db.tasks) != 1 {
 		t.Fatalf("expected 1 task, got %d", len(db.tasks))
 	}
-	if db.tasks[0].RepoURL != "https://github.com/org/repo" {
-		t.Errorf("repo = %q", db.tasks[0].RepoURL)
+	task := db.tasks[0]
+	if task.Prompt != "https://github.com/test/repo fix the auth bug" {
+		t.Errorf("prompt = %q, want raw body", task.Prompt)
+	}
+	if task.TaskMode != models.TaskModeAuto {
+		t.Errorf("task_mode = %q, want %q", task.TaskMode, models.TaskModeAuto)
+	}
+	if task.RepoURL != "" {
+		t.Errorf("repo_url = %q, want empty", task.RepoURL)
 	}
 }
 
@@ -256,14 +269,39 @@ func TestInboundHandler_MissingFields(t *testing.T) {
 	}
 }
 
+func TestInboundHandler_WhitespaceOnlyBody(t *testing.T) {
+	db := &mockStore{
+		senders: map[string]*models.AllowedSender{
+			"sms:+15551234567": {
+				ChannelType: "sms",
+				Address:     "+15551234567",
+				Enabled:     true,
+			},
+		},
+	}
+	handler := InboundHandler(db, newTestConfig(), NoopMessenger{})
+
+	w := postForm(handler, url.Values{
+		"From": {"+15551234567"},
+		"Body": {"   "},
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if len(db.tasks) != 0 {
+		t.Fatal("expected no tasks created for whitespace-only body")
+	}
+}
+
 func TestInboundHandler_AutoDetectsReviewMode(t *testing.T) {
 	db := &mockStore{
 		senders: map[string]*models.AllowedSender{
 			"sms:+15551234567": {
 				ChannelType: "sms",
 				Address:     "+15551234567",
-				DefaultRepo: "https://github.com/backflow-labs/backflow",
-				Enabled:     true,
+
+				Enabled: true,
 			},
 		},
 	}
@@ -281,20 +319,12 @@ func TestInboundHandler_AutoDetectsReviewMode(t *testing.T) {
 		t.Fatalf("expected 1 task, got %d", len(db.tasks))
 	}
 	task := db.tasks[0]
-	if task.TaskMode != models.TaskModeReview {
-		t.Errorf("task_mode = %q, want %q", task.TaskMode, models.TaskModeReview)
+	// Handler no longer auto-detects review mode; everything is "auto"
+	if task.TaskMode != models.TaskModeAuto {
+		t.Errorf("task_mode = %q, want %q", task.TaskMode, models.TaskModeAuto)
 	}
-	if task.ReviewPRURL != "https://github.com/backflow-labs/backflow/pull/115" {
-		t.Errorf("review_pr_url = %q", task.ReviewPRURL)
-	}
-	if task.RepoURL != "https://github.com/backflow-labs/backflow" {
-		t.Errorf("repo_url = %q", task.RepoURL)
-	}
-	if task.ReviewPRNumber != 115 {
-		t.Errorf("review_pr_number = %d, want 115", task.ReviewPRNumber)
-	}
-	if task.CreatePR {
-		t.Error("expected create_pr false for review mode")
+	if task.Prompt != "Review https://github.com/backflow-labs/backflow/pull/115" {
+		t.Errorf("prompt = %q, want raw body", task.Prompt)
 	}
 }
 
@@ -304,14 +334,14 @@ func TestInboundHandler_ReviewModePRURLOnly(t *testing.T) {
 			"sms:+15551234567": {
 				ChannelType: "sms",
 				Address:     "+15551234567",
-				DefaultRepo: "https://github.com/backflow-labs/backflow",
-				Enabled:     true,
+
+				Enabled: true,
 			},
 		},
 	}
 	handler := InboundHandler(db, newTestConfig(), NoopMessenger{})
 
-	// SMS body is just a PR URL with no additional prompt text.
+	// SMS body is just a PR URL — handler forwards it as-is, no review detection.
 	w := postForm(handler, url.Values{
 		"From": {"+15551234567"},
 		"Body": {"https://github.com/backflow-labs/backflow/pull/115"},
@@ -324,17 +354,11 @@ func TestInboundHandler_ReviewModePRURLOnly(t *testing.T) {
 		t.Fatalf("expected 1 task, got %d", len(db.tasks))
 	}
 	task := db.tasks[0]
-	if task.TaskMode != models.TaskModeReview {
-		t.Errorf("task_mode = %q, want %q", task.TaskMode, models.TaskModeReview)
+	if task.TaskMode != models.TaskModeAuto {
+		t.Errorf("task_mode = %q, want %q", task.TaskMode, models.TaskModeAuto)
 	}
-	if task.ReviewPRURL != "https://github.com/backflow-labs/backflow/pull/115" {
-		t.Errorf("review_pr_url = %q", task.ReviewPRURL)
-	}
-	if task.RepoURL != "https://github.com/backflow-labs/backflow" {
-		t.Errorf("repo_url = %q, want https://github.com/backflow-labs/backflow", task.RepoURL)
-	}
-	if task.Prompt == "" {
-		t.Error("expected a default prompt for review mode")
+	if task.Prompt != "https://github.com/backflow-labs/backflow/pull/115" {
+		t.Errorf("prompt = %q, want raw body", task.Prompt)
 	}
 }
 
@@ -344,8 +368,8 @@ func TestInboundHandler_TaskDefaults(t *testing.T) {
 			"sms:+15551234567": {
 				ChannelType: "sms",
 				Address:     "+15551234567",
-				DefaultRepo: "https://github.com/backflow-labs/backflow",
-				Enabled:     true,
+
+				Enabled: true,
 			},
 		},
 	}
@@ -430,8 +454,8 @@ func TestInboundHandler_RejectsInvalidSignature(t *testing.T) {
 			"sms:+15551234567": {
 				ChannelType: "sms",
 				Address:     "+15551234567",
-				DefaultRepo: "https://github.com/backflow-labs/backflow",
-				Enabled:     true,
+
+				Enabled: true,
 			},
 		},
 	}
@@ -459,8 +483,8 @@ func TestInboundHandler_AcceptsValidSignature(t *testing.T) {
 			"sms:+15551234567": {
 				ChannelType: "sms",
 				Address:     "+15551234567",
-				DefaultRepo: "https://github.com/backflow-labs/backflow",
-				Enabled:     true,
+
+				Enabled: true,
 			},
 		},
 	}

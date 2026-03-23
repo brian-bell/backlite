@@ -119,6 +119,9 @@ func (o *Orchestrator) handleCompletion(ctx context.Context, task *models.Task, 
 		OutputURL:      task.OutputURL,
 		CostUSD:        status.CostUSD,
 		ElapsedTimeSec: elapsed,
+		RepoURL:        status.RepoURL,
+		TargetBranch:   status.TargetBranch,
+		TaskMode:       status.TaskMode,
 	}
 
 	switch {

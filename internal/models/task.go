@@ -43,10 +43,10 @@ type Task struct {
 	Status          TaskStatus        `json:"status"`
 	TaskMode        string            `json:"task_mode"`
 	Harness         Harness           `json:"harness"`
-	RepoURL         string            `json:"repo_url"`
-	Branch          string            `json:"branch"`
-	TargetBranch    string            `json:"target_branch"`
-	Prompt          string            `json:"prompt"`
+	RepoURL         string            `json:"repo_url,omitempty"`
+	Branch          string            `json:"branch,omitempty"`
+	TargetBranch    string            `json:"target_branch,omitempty"`
+	Prompt          string            `json:"prompt,omitempty"`
 	Context         string            `json:"context,omitempty"`
 	Model           string            `json:"model,omitempty"`
 	Effort          string            `json:"effort,omitempty"`
@@ -128,9 +128,20 @@ type CreateTaskRequest struct {
 	EnvVars         map[string]string `json:"env_vars,omitempty"`
 }
 
+// containsNullByte returns true if s contains a null byte, which PostgreSQL
+// text columns reject.
+func containsNullByte(s string) bool {
+	return strings.ContainsRune(s, 0)
+}
+
 func (r *CreateTaskRequest) Validate() error {
 	if r.Prompt == "" {
 		return fmt.Errorf("prompt is required")
+	}
+	for _, s := range []string{r.Prompt, r.Context, r.ClaudeMD, r.PRTitle, r.PRBody} {
+		if containsNullByte(s) {
+			return fmt.Errorf("request contains invalid null bytes")
+		}
 	}
 	if r.MaxBudgetUSD < 0 {
 		return fmt.Errorf("max_budget_usd must be non-negative")

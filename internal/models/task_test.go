@@ -58,6 +58,21 @@ func TestCreateTaskRequestValidation(t *testing.T) {
 			req:     CreateTaskRequest{Prompt: "Fix", Effort: "ultra"},
 			wantErr: true,
 		},
+		{
+			name:    "null byte in prompt",
+			req:     CreateTaskRequest{Prompt: "Fix \x00 bug"},
+			wantErr: true,
+		},
+		{
+			name:    "null byte in context",
+			req:     CreateTaskRequest{Prompt: "Fix bug", Context: "has \x00 null"},
+			wantErr: true,
+		},
+		{
+			name:    "null byte in claude_md",
+			req:     CreateTaskRequest{Prompt: "Fix bug", ClaudeMD: "\x00"},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {

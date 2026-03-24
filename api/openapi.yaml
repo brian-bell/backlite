@@ -1,0 +1,535 @@
+openapi: "3.0.3"
+info:
+  title: Backflow API
+  version: "1.0.0"
+  description: >
+    Backflow runs coding agents (Claude Code or Codex) in ephemeral containers.
+    Tasks come in via REST API; the orchestrator provisions infrastructure, runs
+    agents, and cleans up.
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+
+paths:
+  /health:
+    get:
+      operationId: healthCheck
+      summary: Health check
+      description: Returns service health status. Always accessible regardless of API restriction settings.
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthEnvelope"
+
+  /api/v1/health:
+    get:
+      operationId: apiHealthCheck
+      summary: API health check
+      description: Returns service health status. Blocked when BACKFLOW_RESTRICT_API is enabled.
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthEnvelope"
+        "403":
+          description: API access restricted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/tasks:
+    post:
+      operationId: createTask
+      summary: Create a new task
+      description: >
+        Creates a coding or review task. For code mode, repo_url and prompt are
+        required. For review mode, review_pr_url is required (repo_url and
+        review_pr_number will be derived). If task_mode is omitted and the prompt
+        starts with a GitHub PR URL, review mode is auto-detected.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTaskRequest"
+      responses:
+        "201":
+          description: Task created successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskEnvelope"
+          links:
+            GetTask:
+              operationId: getTask
+              parameters:
+                id: $response.body#/data/id
+            CancelTask:
+              operationId: cancelTask
+              parameters:
+                id: $response.body#/data/id
+            GetTaskLogs:
+              operationId: getTaskLogs
+              parameters:
+                id: $response.body#/data/id
+        "400":
+          description: Invalid request body or validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: Internal server error (e.g. database failure)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+    get:
+      operationId: listTasks
+      summary: List tasks
+      description: Returns a paginated list of tasks, optionally filtered by status.
+      parameters:
+        - name: status
+          in: query
+          description: Filter tasks by status
+          required: false
+          schema:
+            $ref: "#/components/schemas/TaskStatus"
+        - name: limit
+          in: query
+          description: Maximum number of tasks to return
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+        - name: offset
+          in: query
+          description: Number of tasks to skip for pagination
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        "200":
+          description: List of tasks (empty array when none match)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskListEnvelope"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/tasks/{id}:
+    get:
+      operationId: getTask
+      summary: Get a task by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Task ID (bf_-prefixed ULID)
+          schema:
+            type: string
+            pattern: "^bf_[0-9A-Z]{26}$"
+      responses:
+        "200":
+          description: Task details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskEnvelope"
+        "404":
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+    delete:
+      operationId: cancelTask
+      summary: Cancel or delete a task
+      description: >
+        If the task is running, provisioning, or recovering, marks it as
+        cancelled (the orchestrator will stop the container). If the task is
+        pending, deletes it immediately. Terminal tasks are a no-op.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Task ID (bf_-prefixed ULID)
+          schema:
+            type: string
+            pattern: "^bf_[0-9A-Z]{26}$"
+      responses:
+        "204":
+          description: Task cancelled or deleted (no body)
+        "404":
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/tasks/{id}/logs:
+    get:
+      operationId: getTaskLogs
+      summary: Get task container logs
+      description: >
+        Streams container logs for a running task. If the task has not yet
+        started a container, returns a status/error text message instead.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Task ID (bf_-prefixed ULID)
+          schema:
+            type: string
+            pattern: "^bf_[0-9A-Z]{26}$"
+        - name: tail
+          in: query
+          description: Number of log lines to return from the end
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Container log output (or status message if not yet running)
+          content:
+            text/plain:
+              schema:
+                type: string
+        "404":
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "502":
+          description: Failed to fetch logs from the container runtime
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+components:
+  schemas:
+    # -------------------------------------------------------------------------
+    # Envelope wrappers
+    # -------------------------------------------------------------------------
+
+    HealthEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/HealthData"
+
+    HealthData:
+      type: object
+      required: [status, auth_mode]
+      properties:
+        status:
+          type: string
+          example: ok
+        auth_mode:
+          type: string
+          enum: [api_key, max_subscription]
+          example: api_key
+
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          example: "task not found"
+
+    TaskEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/Task"
+
+    TaskListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Task"
+
+    # -------------------------------------------------------------------------
+    # Core types
+    # -------------------------------------------------------------------------
+
+    TaskStatus:
+      type: string
+      enum:
+        - pending
+        - provisioning
+        - running
+        - completed
+        - failed
+        - interrupted
+        - cancelled
+        - recovering
+      example: pending
+
+    Task:
+      type: object
+      description: A coding or review task managed by the Backflow orchestrator.
+      required:
+        - id
+        - status
+        - task_mode
+        - harness
+        - create_pr
+        - self_review
+        - save_agent_output
+        - retry_count
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          description: ULID with bf_ prefix
+          example: "bf_01ARZ3NDEKTSV4RRFFQ69G5FAV"
+        status:
+          $ref: "#/components/schemas/TaskStatus"
+        task_mode:
+          type: string
+          enum: [auto, code, review]
+          example: auto
+        harness:
+          type: string
+          enum: [claude_code, codex]
+          example: claude_code
+        repo_url:
+          type: string
+          example: "https://github.com/owner/repo"
+        branch:
+          type: string
+          example: ""
+        target_branch:
+          type: string
+          example: ""
+        review_pr_url:
+          type: string
+          example: "https://github.com/owner/repo/pull/42"
+        review_pr_number:
+          type: integer
+          minimum: 1
+          example: 42
+        prompt:
+          type: string
+          example: "Fix the authentication bug in the login handler"
+        context:
+          type: string
+          example: "This is a Go service using chi router"
+        model:
+          type: string
+          example: "claude-sonnet-4-6"
+        effort:
+          type: string
+          enum: [low, medium, high, xhigh]
+          example: medium
+        max_budget_usd:
+          type: number
+          minimum: 0
+          example: 10.0
+        max_runtime_min:
+          type: integer
+          minimum: 0
+          example: 30
+        max_turns:
+          type: integer
+          minimum: 0
+          example: 200
+        create_pr:
+          type: boolean
+          example: true
+        self_review:
+          type: boolean
+          example: false
+        pr_title:
+          type: string
+          example: "Fix authentication bug"
+        pr_body:
+          type: string
+          example: "This PR fixes..."
+        pr_url:
+          type: string
+          example: "https://github.com/owner/repo/pull/43"
+        save_agent_output:
+          type: boolean
+          example: true
+        output_url:
+          type: string
+          example: "https://s3.amazonaws.com/bucket/output.log"
+        allowed_tools:
+          type: array
+          items:
+            type: string
+          example: ["Bash", "Edit"]
+        claude_md:
+          type: string
+          example: "# Project context\n..."
+        env_vars:
+          type: object
+          additionalProperties:
+            type: string
+          example:
+            CUSTOM_VAR: "value"
+        instance_id:
+          type: string
+          example: "i-0abc123def456789"
+        container_id:
+          type: string
+          example: "abc123def456"
+        retry_count:
+          type: integer
+          minimum: 0
+          example: 0
+        cost_usd:
+          type: number
+          minimum: 0
+          example: 0.42
+        elapsed_time_sec:
+          type: integer
+          minimum: 0
+          example: 120
+        reply_channel:
+          type: string
+          description: Redacted to channel type only (e.g. "sms") in API responses
+          example: "sms"
+        error:
+          type: string
+          example: "container exited with code 1"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+
+    CreateTaskRequest:
+      type: object
+      description: >
+        Request body for creating a task. Prompt is the only required field —
+        the agent container's Prep stage infers repo_url, target_branch, and
+        task_mode from the prompt.
+      required: [prompt]
+      properties:
+        prompt:
+          type: string
+          description: Task instructions for the agent.
+          example: "Fix the authentication bug in https://github.com/owner/repo"
+        harness:
+          type: string
+          enum: [claude_code, codex]
+          description: Agent harness to use. Defaults to server configuration.
+          example: claude_code
+        context:
+          type: string
+          description: Additional context provided to the agent.
+          example: "This service uses chi router and pgx for postgres"
+        model:
+          type: string
+          description: LLM model override. Defaults to server configuration.
+          example: "claude-sonnet-4-6"
+        effort:
+          type: string
+          enum: [low, medium, high, xhigh]
+          description: Agent effort level. Defaults to server configuration.
+          example: medium
+        max_budget_usd:
+          type: number
+          minimum: 0
+          description: Maximum spend in USD. Defaults to server configuration.
+          example: 5.0
+        max_runtime_min:
+          type: integer
+          minimum: 0
+          description: Maximum runtime in minutes. Defaults to server configuration.
+          example: 30
+        max_turns:
+          type: integer
+          minimum: 0
+          description: Maximum agent turns. Defaults to server configuration.
+          example: 100
+        create_pr:
+          type: boolean
+          description: Whether to open a pull request when done. Defaults to server configuration.
+          example: true
+        self_review:
+          type: boolean
+          description: Whether the agent should self-review its output. Defaults to server configuration.
+          example: false
+        save_agent_output:
+          type: boolean
+          description: Whether to upload agent output to S3. Defaults to server configuration.
+          example: true
+        pr_title:
+          type: string
+          description: Custom pull request title. Defaults to agent-generated title.
+          example: "Fix authentication bug"
+        pr_body:
+          type: string
+          description: Custom pull request body. Defaults to agent-generated body.
+          example: "This PR fixes the authentication bug by..."
+        allowed_tools:
+          type: array
+          items:
+            type: string
+          description: Restrict agent to a specific set of tools.
+          example: ["Bash", "Edit", "Read"]
+        claude_md:
+          type: string
+          description: Content to inject as CLAUDE.md into the agent container.
+          example: "# Project instructions\n..."
+        env_vars:
+          type: object
+          additionalProperties:
+            type: string
+          description: Additional environment variables to set in the agent container.
+          example:
+            CUSTOM_SETTING: "value"

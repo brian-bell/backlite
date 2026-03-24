@@ -255,6 +255,38 @@ claude --agent security-reviewer    # Injection, auth, secrets, input validation
 
 All agents are read-only — they suggest changes but never modify files. Test files are excluded from review.
 
+## Feature Acceptance Agents
+
+A separate agent team evaluates features from a product perspective — not code quality, but whether a feature is complete, safe, maintainable, and documented. All reviewers evaluate against `docs/ROADMAP.md` as the north star for product direction.
+
+### Review a PR
+
+```bash
+claude --agent acceptance-lead "Review PR #42"
+```
+
+### Review an existing feature
+
+```bash
+claude --agent acceptance-lead "Review the discord feature"
+claude --agent acceptance-lead "Review the fargate feature"
+claude --agent acceptance-lead "Review the notifications feature"
+```
+
+The lead spawns 5 specialist reviewers in parallel:
+
+| Reviewer | Focus |
+|----------|-------|
+| `product-reviewer` | Roadmap alignment, persona fit, competitive positioning, cross-mode completeness |
+| `acceptance-security-reviewer` | Attack surface, auth boundaries, credential handling, threat model |
+| `quality-reviewer` | Test coverage, edge cases, status transitions, graceful degradation |
+| `maintainability-reviewer` | Pattern consistency, config model, observability, complexity budget |
+| `documentation-reviewer` | CLAUDE.md accuracy, config docs, schema docs, discoverability |
+
+The consolidated report ends with a verdict: **ACCEPT**, **ACCEPT WITH CONDITIONS**, or **REQUEST CHANGES**.
+
+All agents are read-only — they analyze and report but never modify files or post PR comments.
+
 ## Configuration
 
 All config via environment variables or `.env` file. See `.env.example` for the full list.

@@ -80,7 +80,7 @@ func newTestSQLiteDB(t *testing.T) *sql.DB {
 			model            TEXT NOT NULL DEFAULT '',
 			effort           TEXT NOT NULL DEFAULT '',
 			max_budget_usd   REAL NOT NULL DEFAULT 0,
-			max_runtime_min  INTEGER NOT NULL DEFAULT 0,
+			max_runtime_sec  INTEGER NOT NULL DEFAULT 0,
 			max_turns        INTEGER NOT NULL DEFAULT 0,
 			create_pr        INTEGER NOT NULL DEFAULT 0,
 			self_review      INTEGER NOT NULL DEFAULT 0,

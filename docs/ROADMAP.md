@@ -26,7 +26,7 @@ The test harness (1.0) is the prerequisite for everything else. Once it exists, 
 
 ### 1.0 Black-Box Test Harness, Soak Testing, and OpenAPI Spec ([#99](https://github.com/backflow-labs/backflow/issues/99))
 - **Problem:** No system-level testing — unit tests exercise internal packages but can't catch regressions in the interaction between API server, orchestrator, Docker container lifecycle, and webhook delivery. No way to detect slow-burn problems (memory leaks, connection pool exhaustion, container accumulation)
-- **Proposal:** Black-box test harness that starts the full Backflow binary as a subprocess, submits tasks via HTTP using a fake agent image (parameterized by `FAKE_OUTCOME` env var), and asserts on the complete task lifecycle. Includes 3 small prod code changes (configurable agent image, `max_runtime_min` → `max_runtime_sec`, `/debug/stats` endpoint), a programmable webhook listener, OpenAPI spec with kin-openapi contract validation, schemathesis fuzz testing, and a soak test for long-running stability. 7 black-box tests: happy path, agent failure, needs input, timeout, crash, cancellation, webhook resilience
+- **Proposal:** Black-box test harness that starts the full Backflow binary as a subprocess, submits tasks via HTTP using a fake agent image (parameterized by `FAKE_OUTCOME` env var), and asserts on the complete task lifecycle. Includes 3 small prod code changes (configurable agent image via `BACKFLOW_AGENT_IMAGE`, `max_runtime_sec` field, `/debug/stats` endpoint), a programmable webhook listener, OpenAPI spec with kin-openapi contract validation, schemathesis fuzz testing, and a soak test for long-running stability. 7 black-box tests: happy path, agent failure, needs input, timeout, crash, cancellation, webhook resilience
 - **Files:** `test/blackbox/`, `test/soak/`, `api/openapi.yaml`, `internal/config/config.go`, `internal/models/task.go`, `internal/orchestrator/docker/docker.go`, `internal/orchestrator/monitor.go`, `internal/store/postgres.go`, `internal/api/server.go`, new migration, Makefile targets (`test-blackbox`, `test-soak`, `test-schema`)
 - **Metric:** `make test-blackbox` passes all 7 tests with every HTTP response validated against OpenAPI spec; `make test-soak --short` completes 10-minute run with all metrics within thresholds
 - **Harness validation:** This *is* the harness — all subsequent features are developed TDD-style against it
@@ -178,15 +178,15 @@ The key insight: items 1.1-1.4 are developed **against the black-box harness**. 
 - `internal/store/store.go` — Store interface; every new table and feature must extend this contract
 - `internal/orchestrator/monitor.go` — Completion handling; human-in-the-loop, quality gates, workflow triggers, and eval hooks integrate here
 - `internal/orchestrator/orchestrator.go:33,64-73,111-143,217-230` — Running counter (for /debug/stats) and `initLocalMode`/`syncSyntheticInstance` (for test harness setup)
-- `internal/orchestrator/docker/docker.go:93` — `buildRunCommand()` where agent image is hardcoded
-- `internal/orchestrator/ec2/scaler.go:78` — `isDockerReady()` where agent image is hardcoded
-- `internal/config/config.go` — All new env vars and defaults (AgentImage, MaxRuntimeSec, etc.)
-- `internal/config/defaults.go:12,35` — TaskDefaults struct (MaxRuntimeMin → MaxRuntimeSec)
+- `internal/orchestrator/docker/docker.go:93` — `buildRunCommand()` uses `config.AgentImage`
+- `internal/orchestrator/ec2/scaler.go:78` — `isDockerReady()` uses `config.AgentImage`
+- `internal/config/config.go` — All env vars and defaults (AgentImage, MaxRuntimeSec, etc.)
+- `internal/config/defaults.go:12,35` — TaskDefaults struct (MaxRuntimeSec)
 - `internal/models/task.go:54,119,138` — Task struct, CreateTaskRequest, validation
 - `internal/notify/webhook.go` — Notification pattern that Slack and future notifiers must follow
 - `docker/agent/entrypoint.sh` — Agent pipeline; quality gates, repo config parsing, and harness SDK dispatching live here
 - `cmd/backflow/main.go` — Service wiring; new goroutines (scheduler, evaluator) start here
-- `scripts/create-task.sh`, `scripts/review-pr.sh` — API clients that reference `max_runtime_min`
+- `scripts/create-task.sh`, `scripts/review-pr.sh` — API clients using `max_runtime_sec`
 
 ---
 

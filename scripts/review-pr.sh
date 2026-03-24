@@ -28,7 +28,7 @@ Options:
   --model <model>         Model to use (defaults to server setting for the selected harness)
   --effort <level>        Reasoning effort: low, medium, high (defaults to server setting)
   --budget <usd>          Max budget in USD
-  --runtime <min>         Max runtime in minutes
+  --runtime <sec>         Max runtime in seconds
   --turns <n>             Max conversation turns
   --claude-md <text>      Extra CLAUDE.md content to inject
   --context <text>        Additional context for the review
@@ -98,7 +98,7 @@ JSON=$(jq -n \
     + if $model != "" then {model: $model} else {} end
     + if $effort != "" then {effort: $effort} else {} end
     + if $budget != "" then {max_budget_usd: ($budget | tonumber)} else {} end
-    + if $runtime != "" then {max_runtime_min: ($runtime | tonumber)} else {} end
+    + if $runtime != "" then {max_runtime_sec: ($runtime | tonumber)} else {} end
     + if $turns != "" then {max_turns: ($turns | tonumber)} else {} end
     + if $claude_md != "" then {claude_md: $claude_md} else {} end
     + if $context != "" then {context: $context} else {} end

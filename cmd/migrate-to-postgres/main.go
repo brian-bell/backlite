@@ -88,7 +88,7 @@ func migrateTasks(ctx context.Context, sqliteDB *sql.DB, pgPool *pgxpool.Pool) e
 	rows, err := sqliteDB.QueryContext(ctx, `SELECT
 		id, status, task_mode, harness, repo_url, branch, target_branch,
 		prompt, context, model, effort,
-		max_budget_usd, max_runtime_min, max_turns,
+		max_budget_usd, max_runtime_sec, max_turns,
 		create_pr, self_review, save_agent_output,
 		pr_title, pr_body, pr_url, output_url,
 		allowed_tools, claude_md, env_vars,
@@ -152,7 +152,7 @@ func migrateTasks(ctx context.Context, sqliteDB *sql.DB, pgPool *pgxpool.Pool) e
 		_, err = pgPool.Exec(ctx, `INSERT INTO tasks (
 			id, status, task_mode, harness, repo_url, branch, target_branch,
 			prompt, context, model, effort,
-			max_budget_usd, max_runtime_min, max_turns,
+			max_budget_usd, max_runtime_sec, max_turns,
 			create_pr, self_review, save_agent_output,
 			pr_title, pr_body, pr_url, output_url,
 			allowed_tools, claude_md, env_vars,

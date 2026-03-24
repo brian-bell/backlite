@@ -232,6 +232,7 @@ func TestBuildRunCommand(t *testing.T) {
 		AnthropicAPIKey: "sk-test",
 		ContainerCPUs:   2,
 		ContainerMemGB:  8,
+		AgentImage:      "backflow-agent",
 	}
 	dm := NewManager(cfg)
 
@@ -251,6 +252,29 @@ func TestBuildRunCommand(t *testing.T) {
 	}
 	if !strings.Contains(cmd, "-e TASK_ID=bf_01ABC") {
 		t.Error("command missing TASK_ID")
+	}
+}
+
+func TestBuildRunCommand_CustomImage(t *testing.T) {
+	cfg := &config.Config{
+		AuthMode:        config.AuthModeAPIKey,
+		AnthropicAPIKey: "sk-test",
+		ContainerCPUs:   4,
+		ContainerMemGB:  16,
+		AgentImage:      "my-custom-agent:v2",
+	}
+	dm := NewManager(cfg)
+
+	task := &models.Task{
+		ID:      "bf_01XYZ",
+		RepoURL: "https://github.com/test/repo",
+		Prompt:  "Do something",
+	}
+
+	cmd := dm.buildRunCommand(task)
+
+	if !strings.HasSuffix(cmd, "my-custom-agent:v2") {
+		t.Errorf("command should end with custom image name, got: %s", cmd)
 	}
 }
 

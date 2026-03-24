@@ -145,7 +145,7 @@ curl -X POST http://localhost:8080/api/v1/tasks \
 | `pr_title` | string | Custom PR title |
 | `pr_body` | string | Custom PR body |
 | `max_budget_usd` | float | Budget cap in USD |
-| `max_runtime_min` | int | Runtime cap in minutes |
+| `max_runtime_sec` | int | Runtime cap in seconds |
 | `max_turns` | int | Max conversation turns |
 | `context` | string | Additional context appended to prompt |
 | `claude_md` | string | Extra CLAUDE.md content injected into the repo |
@@ -316,7 +316,7 @@ Defaults are set in `internal/config/config.go` and can be overridden via env va
 | `BACKFLOW_DEFAULT_CODEX_MODEL` | Default model for Codex |
 | `BACKFLOW_DEFAULT_EFFORT` | Reasoning effort (`low`, `medium`, `high`, `xhigh`) |
 | `BACKFLOW_DEFAULT_MAX_BUDGET` | Budget cap (USD) |
-| `BACKFLOW_DEFAULT_MAX_RUNTIME_MIN` | Runtime cap (minutes) |
+| `BACKFLOW_DEFAULT_MAX_RUNTIME_SEC` | Runtime cap (seconds) |
 | `BACKFLOW_DEFAULT_MAX_TURNS` | Max conversation turns |
 | `BACKFLOW_DEFAULT_CREATE_PR` | Create PR by default |
 | `BACKFLOW_DEFAULT_SELF_REVIEW` | Self-review by default |

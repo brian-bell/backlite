@@ -78,10 +78,10 @@ func (o *Orchestrator) monitorRunning(ctx context.Context) {
 
 // isTimedOut returns true if the task has exceeded its configured max runtime.
 func (o *Orchestrator) isTimedOut(task *models.Task) bool {
-	if task.StartedAt == nil || task.MaxRuntimeMin <= 0 {
+	if task.StartedAt == nil || task.MaxRuntimeSec <= 0 {
 		return false
 	}
-	deadline := task.StartedAt.Add(time.Duration(task.MaxRuntimeMin) * time.Minute)
+	deadline := task.StartedAt.Add(time.Duration(task.MaxRuntimeSec) * time.Second)
 	return time.Now().UTC().After(deadline)
 }
 
@@ -183,7 +183,7 @@ type taskMetadata struct {
 	Effort        string            `json:"effort,omitempty"`
 	MaxBudgetUSD  float64           `json:"max_budget_usd,omitempty"`
 	MaxTurns      int               `json:"max_turns,omitempty"`
-	MaxRuntimeMin int               `json:"max_runtime_min,omitempty"`
+	MaxRuntimeSec int               `json:"max_runtime_sec,omitempty"`
 	CreatePR      bool              `json:"create_pr"`
 	SelfReview    bool              `json:"self_review"`
 	PRURL         string            `json:"pr_url,omitempty"`
@@ -216,7 +216,7 @@ func (o *Orchestrator) saveTaskMetadata(ctx context.Context, task *models.Task) 
 		Effort:        task.Effort,
 		MaxBudgetUSD:  task.MaxBudgetUSD,
 		MaxTurns:      task.MaxTurns,
-		MaxRuntimeMin: task.MaxRuntimeMin,
+		MaxRuntimeSec: task.MaxRuntimeSec,
 		CreatePR:      task.CreatePR,
 		SelfReview:    task.SelfReview,
 		PRURL:         task.PRURL,

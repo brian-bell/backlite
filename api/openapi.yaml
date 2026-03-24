@@ -370,10 +370,10 @@ components:
           type: number
           minimum: 0
           example: 10.0
-        max_runtime_min:
+        max_runtime_sec:
           type: integer
           minimum: 0
-          example: 30
+          example: 1800
         max_turns:
           type: integer
           minimum: 0
@@ -487,11 +487,11 @@ components:
           minimum: 0
           description: Maximum spend in USD. Defaults to server configuration.
           example: 5.0
-        max_runtime_min:
+        max_runtime_sec:
           type: integer
           minimum: 0
-          description: Maximum runtime in minutes. Defaults to server configuration.
-          example: 30
+          description: Maximum runtime in seconds. Defaults to server configuration.
+          example: 1800
         max_turns:
           type: integer
           minimum: 0

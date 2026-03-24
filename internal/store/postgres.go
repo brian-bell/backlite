@@ -67,7 +67,7 @@ func (s *PostgresStore) Close() error {
 
 const taskColumns = `id, status, task_mode, harness, repo_url, branch, target_branch,
 	prompt, context,
-	model, effort, max_budget_usd, max_runtime_min, max_turns,
+	model, effort, max_budget_usd, max_runtime_sec, max_turns,
 	create_pr, self_review, save_agent_output, pr_title, pr_body, pr_url, output_url,
 	allowed_tools, claude_md, env_vars,
 	instance_id, container_id, retry_count, cost_usd, elapsed_time_sec, error,
@@ -88,7 +88,7 @@ func (s *PostgresStore) CreateTask(ctx context.Context, task *models.Task) error
 		INSERT INTO tasks (
 			id, status, task_mode, harness, repo_url, branch, target_branch,
 			prompt, context,
-			model, effort, max_budget_usd, max_runtime_min, max_turns,
+			model, effort, max_budget_usd, max_runtime_sec, max_turns,
 			create_pr, self_review, save_agent_output, pr_title, pr_body, pr_url, output_url,
 			allowed_tools, claude_md, env_vars,
 			instance_id, container_id, retry_count, cost_usd, elapsed_time_sec, error,
@@ -106,7 +106,7 @@ func (s *PostgresStore) CreateTask(ctx context.Context, task *models.Task) error
 		)`,
 		task.ID, task.Status, task.TaskMode, task.Harness, task.RepoURL, task.Branch, task.TargetBranch,
 		task.Prompt, task.Context, task.Model, task.Effort,
-		task.MaxBudgetUSD, task.MaxRuntimeMin, task.MaxTurns,
+		task.MaxBudgetUSD, task.MaxRuntimeSec, task.MaxTurns,
 		task.CreatePR, task.SelfReview, task.SaveAgentOutput,
 		task.PRTitle, task.PRBody, task.PRURL, task.OutputURL,
 		allowedTools, task.ClaudeMD, envVars,
@@ -460,7 +460,7 @@ func scanPGTask(row pgScanner) (*models.Task, error) {
 	err := row.Scan(
 		&t.ID, &t.Status, &t.TaskMode, &t.Harness, &t.RepoURL, &t.Branch, &t.TargetBranch,
 		&t.Prompt, &t.Context, &t.Model, &t.Effort,
-		&t.MaxBudgetUSD, &t.MaxRuntimeMin, &t.MaxTurns,
+		&t.MaxBudgetUSD, &t.MaxRuntimeSec, &t.MaxTurns,
 		&t.CreatePR, &t.SelfReview, &t.SaveAgentOutput,
 		&t.PRTitle, &t.PRBody, &t.PRURL, &t.OutputURL,
 		&allowedTools, &t.ClaudeMD, &envVars,

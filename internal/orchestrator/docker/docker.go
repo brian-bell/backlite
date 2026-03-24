@@ -90,11 +90,12 @@ func (m *Manager) buildRunCommand(task *models.Task) string {
 	volumeFlags := m.buildVolumeFlags()
 
 	return fmt.Sprintf(
-		"docker run -d --cpus=%d --memory=%dg %s %s backflow-agent",
+		"docker run -d --cpus=%d --memory=%dg %s %s %s",
 		m.config.ContainerCPUs,
 		m.config.ContainerMemGB,
 		volumeFlags,
 		strings.Join(envFlags, " "),
+		m.config.AgentImage,
 	)
 }
 

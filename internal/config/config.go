@@ -64,7 +64,8 @@ type Config struct {
 	// Task concurrency
 	MaxConcurrentTasks int
 
-	// Agent defaults
+	// Agent
+	AgentImage         string
 	DefaultHarness     string
 	DefaultClaudeModel string
 	DefaultCodexModel  string
@@ -164,12 +165,13 @@ func Load() (*Config, error) {
 		CloudWatchLogGroup:    os.Getenv("BACKFLOW_CLOUDWATCH_LOG_GROUP"),
 		ECSLogStreamPrefix:    envOr("BACKFLOW_ECS_LOG_STREAM_PREFIX", "ecs"),
 		MaxConcurrentTasks:    envInt("BACKFLOW_MAX_CONCURRENT_TASKS", 5),
+		AgentImage:            envOr("BACKFLOW_AGENT_IMAGE", "backflow-agent"),
 		DefaultHarness:        envOr("BACKFLOW_DEFAULT_HARNESS", "claude_code"),
 		DefaultClaudeModel:    envOr("BACKFLOW_DEFAULT_CLAUDE_MODEL", "claude-sonnet-4-6"),
 		DefaultCodexModel:     envOr("BACKFLOW_DEFAULT_CODEX_MODEL", "gpt-5.4"),
 		DefaultEffort:         envOr("BACKFLOW_DEFAULT_EFFORT", "medium"),
 		DefaultMaxBudget:      envFloat("BACKFLOW_DEFAULT_MAX_BUDGET", 10.0),
-		DefaultMaxRuntime:     time.Duration(envInt("BACKFLOW_DEFAULT_MAX_RUNTIME_MIN", 30)) * time.Minute,
+		DefaultMaxRuntime:     time.Duration(envInt("BACKFLOW_DEFAULT_MAX_RUNTIME_SEC", 1800)) * time.Second,
 		DefaultMaxTurns:       envInt("BACKFLOW_DEFAULT_MAX_TURNS", 200),
 		S3Bucket:              os.Getenv("BACKFLOW_S3_BUCKET"),
 		GitHubToken:           os.Getenv("GITHUB_TOKEN"),

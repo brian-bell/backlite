@@ -40,7 +40,7 @@ func TestCreateTaskRequestValidation(t *testing.T) {
 		},
 		{
 			name:    "negative runtime",
-			req:     CreateTaskRequest{Prompt: "Fix", MaxRuntimeMin: -1},
+			req:     CreateTaskRequest{Prompt: "Fix", MaxRuntimeSec: -1},
 			wantErr: true,
 		},
 		{

@@ -51,7 +51,7 @@ type Task struct {
 	Model           string            `json:"model,omitempty"`
 	Effort          string            `json:"effort,omitempty"`
 	MaxBudgetUSD    float64           `json:"max_budget_usd,omitempty"`
-	MaxRuntimeMin   int               `json:"max_runtime_min,omitempty"`
+	MaxRuntimeSec   int               `json:"max_runtime_sec,omitempty"`
 	MaxTurns        int               `json:"max_turns,omitempty"`
 	CreatePR        bool              `json:"create_pr"`
 	SelfReview      bool              `json:"self_review"`
@@ -116,7 +116,7 @@ type CreateTaskRequest struct {
 	Model           string            `json:"model,omitempty"`
 	Effort          string            `json:"effort,omitempty"`
 	MaxBudgetUSD    float64           `json:"max_budget_usd,omitempty"`
-	MaxRuntimeMin   int               `json:"max_runtime_min,omitempty"`
+	MaxRuntimeSec   int               `json:"max_runtime_sec,omitempty"`
 	MaxTurns        int               `json:"max_turns,omitempty"`
 	CreatePR        *bool             `json:"create_pr,omitempty"`
 	SelfReview      *bool             `json:"self_review,omitempty"`
@@ -156,8 +156,8 @@ func (r *CreateTaskRequest) Validate() error {
 	if r.MaxBudgetUSD < 0 {
 		return fmt.Errorf("max_budget_usd must be non-negative")
 	}
-	if r.MaxRuntimeMin < 0 {
-		return fmt.Errorf("max_runtime_min must be non-negative")
+	if r.MaxRuntimeSec < 0 {
+		return fmt.Errorf("max_runtime_sec must be non-negative")
 	}
 	if r.Harness != "" {
 		switch Harness(r.Harness) {

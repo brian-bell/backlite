@@ -9,7 +9,7 @@ type TaskDefaults struct {
 	CodexModel      string
 	Effort          string
 	MaxBudgetUSD    float64
-	MaxRuntimeMin   int
+	MaxRuntimeSec   int
 	MaxTurns        int
 	CreatePR        bool
 	SelfReview      bool
@@ -32,7 +32,7 @@ func (c *Config) TaskDefaults(taskMode string) TaskDefaults {
 		CodexModel:      c.DefaultCodexModel,
 		Effort:          c.DefaultEffort,
 		MaxBudgetUSD:    c.DefaultMaxBudget,
-		MaxRuntimeMin:   int(c.DefaultMaxRuntime.Minutes()),
+		MaxRuntimeSec:   int(c.DefaultMaxRuntime.Seconds()),
 		MaxTurns:        c.DefaultMaxTurns,
 		CreatePR:        c.DefaultCreatePR,
 		SelfReview:      c.DefaultSelfReview,
@@ -67,8 +67,8 @@ func (d TaskDefaults) Apply(task *models.Task, overrides *BoolOverrides) {
 	if task.MaxBudgetUSD == 0 {
 		task.MaxBudgetUSD = d.MaxBudgetUSD
 	}
-	if task.MaxRuntimeMin == 0 {
-		task.MaxRuntimeMin = d.MaxRuntimeMin
+	if task.MaxRuntimeSec == 0 {
+		task.MaxRuntimeSec = d.MaxRuntimeSec
 	}
 	if task.MaxTurns == 0 {
 		task.MaxTurns = d.MaxTurns

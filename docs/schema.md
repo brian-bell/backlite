@@ -22,7 +22,7 @@ Stores agent tasks submitted via the REST API.
 | `model` | `TEXT` | `''` | Model override (e.g. `claude-sonnet-4-6`, `gpt-5.4`). |
 | `effort` | `TEXT` | `''` | Agent effort level. One of: `low`, `medium`, `high`, `xhigh`, or empty for default. |
 | `max_budget_usd` | `DOUBLE PRECISION` | `0` | Maximum spend in USD. 0 = unlimited. |
-| `max_runtime_min` | `INTEGER` | `0` | Maximum wall-clock runtime in minutes. 0 = unlimited. |
+| `max_runtime_sec` | `INTEGER` | `0` | Maximum wall-clock runtime in seconds. 0 = unlimited. |
 | `max_turns` | `INTEGER` | `0` | Maximum agent conversation turns. 0 = unlimited. |
 | `create_pr` | `BOOLEAN` | `false` | Whether to create a pull request on completion. |
 | `self_review` | `BOOLEAN` | `false` | Whether the agent self-reviews before finishing. |

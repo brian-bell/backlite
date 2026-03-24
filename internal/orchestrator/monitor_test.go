@@ -544,7 +544,7 @@ func TestMonitorRunning_TimedOutTaskKilled(t *testing.T) {
 		InstanceID:    "local",
 		ContainerID:   "cont1",
 		StartedAt:     &past,
-		MaxRuntimeMin: 10,
+		MaxRuntimeSec: 600,
 	})
 
 	bus, _ := newTestBus()
@@ -959,7 +959,7 @@ func TestSaveTaskMetadata_JSONSerialization(t *testing.T) {
 		Effort:        "high",
 		MaxBudgetUSD:  5.0,
 		MaxTurns:      50,
-		MaxRuntimeMin: 30,
+		MaxRuntimeSec: 1800,
 		CreatePR:      true,
 		SelfReview:    true,
 		PRURL:         "https://github.com/test/repo/pull/5",
@@ -1001,8 +1001,8 @@ func TestSaveTaskMetadata_JSONSerialization(t *testing.T) {
 	if decoded.MaxTurns != 50 {
 		t.Errorf("MaxTurns = %d, want 50", decoded.MaxTurns)
 	}
-	if decoded.MaxRuntimeMin != 30 {
-		t.Errorf("MaxRuntimeMin = %d, want 30", decoded.MaxRuntimeMin)
+	if decoded.MaxRuntimeSec != 1800 {
+		t.Errorf("MaxRuntimeSec = %d, want 1800", decoded.MaxRuntimeSec)
 	}
 }
 
@@ -1024,7 +1024,7 @@ func TestSaveTaskMetadata_UploadIntegration(t *testing.T) {
 		Effort:        "high",
 		MaxBudgetUSD:  5.0,
 		MaxTurns:      50,
-		MaxRuntimeMin: 30,
+		MaxRuntimeSec: 1800,
 		CreatePR:      true,
 		SelfReview:    true,
 		PRURL:         "https://github.com/test/repo/pull/10",
@@ -1093,8 +1093,8 @@ func TestSaveTaskMetadata_UploadIntegration(t *testing.T) {
 	if meta.MaxTurns != 50 {
 		t.Errorf("MaxTurns = %d, want 50", meta.MaxTurns)
 	}
-	if meta.MaxRuntimeMin != 30 {
-		t.Errorf("MaxRuntimeMin = %d, want 30", meta.MaxRuntimeMin)
+	if meta.MaxRuntimeSec != 1800 {
+		t.Errorf("MaxRuntimeSec = %d, want 1800", meta.MaxRuntimeSec)
 	}
 	if !meta.CreatePR {
 		t.Error("CreatePR should be true")
@@ -1143,27 +1143,27 @@ func TestIsTimedOut(t *testing.T) {
 	o := newTestOrchestrator(newMockStore(), bus)
 
 	// No StartedAt — not timed out
-	task := &models.Task{MaxRuntimeMin: 10}
+	task := &models.Task{MaxRuntimeSec: 600}
 	if o.isTimedOut(task) {
 		t.Error("task without StartedAt should not be timed out")
 	}
 
-	// MaxRuntimeMin = 0 — no timeout
+	// MaxRuntimeSec = 0 — no timeout
 	now := time.Now().UTC()
-	task = &models.Task{StartedAt: &now, MaxRuntimeMin: 0}
+	task = &models.Task{StartedAt: &now, MaxRuntimeSec: 0}
 	if o.isTimedOut(task) {
-		t.Error("task with MaxRuntimeMin=0 should not be timed out")
+		t.Error("task with MaxRuntimeSec=0 should not be timed out")
 	}
 
 	// Recently started — not timed out
-	task = &models.Task{StartedAt: &now, MaxRuntimeMin: 10}
+	task = &models.Task{StartedAt: &now, MaxRuntimeSec: 600}
 	if o.isTimedOut(task) {
 		t.Error("recently started task should not be timed out")
 	}
 
 	// Started long ago — timed out
 	past := time.Now().UTC().Add(-20 * time.Minute)
-	task = &models.Task{StartedAt: &past, MaxRuntimeMin: 10}
+	task = &models.Task{StartedAt: &past, MaxRuntimeSec: 600}
 	if !o.isTimedOut(task) {
 		t.Error("task past deadline should be timed out")
 	}

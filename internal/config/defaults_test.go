@@ -14,7 +14,7 @@ func testConfig() *Config {
 		DefaultCodexModel:  "gpt-5.4",
 		DefaultEffort:      "medium",
 		DefaultMaxBudget:   10.0,
-		DefaultMaxRuntime:  30 * time.Minute,
+		DefaultMaxRuntime:  1800 * time.Second,
 		DefaultMaxTurns:    200,
 		DefaultCreatePR:    true,
 		DefaultSelfReview:  false,
@@ -41,8 +41,8 @@ func TestTaskDefaults_CodeMode(t *testing.T) {
 	if d.MaxBudgetUSD != 10.0 {
 		t.Errorf("MaxBudgetUSD = %v, want %v", d.MaxBudgetUSD, 10.0)
 	}
-	if d.MaxRuntimeMin != 30 {
-		t.Errorf("MaxRuntimeMin = %d, want %d", d.MaxRuntimeMin, 30)
+	if d.MaxRuntimeSec != 1800 {
+		t.Errorf("MaxRuntimeSec = %d, want %d", d.MaxRuntimeSec, 1800)
 	}
 	if d.MaxTurns != 200 {
 		t.Errorf("MaxTurns = %d, want %d", d.MaxTurns, 200)
@@ -93,8 +93,8 @@ func TestApply_FillsZeroValues(t *testing.T) {
 	if task.MaxBudgetUSD != 10.0 {
 		t.Errorf("MaxBudgetUSD = %v, want %v", task.MaxBudgetUSD, 10.0)
 	}
-	if task.MaxRuntimeMin != 30 {
-		t.Errorf("MaxRuntimeMin = %d, want %d", task.MaxRuntimeMin, 30)
+	if task.MaxRuntimeSec != 1800 {
+		t.Errorf("MaxRuntimeSec = %d, want %d", task.MaxRuntimeSec, 1800)
 	}
 	if task.MaxTurns != 200 {
 		t.Errorf("MaxTurns = %d, want %d", task.MaxTurns, 200)
@@ -118,7 +118,7 @@ func TestApply_PreservesExplicitValues(t *testing.T) {
 		Model:         "custom-model",
 		Effort:        "high",
 		MaxBudgetUSD:  25.0,
-		MaxRuntimeMin: 60,
+		MaxRuntimeSec: 3600,
 		MaxTurns:      500,
 	}
 
@@ -136,8 +136,8 @@ func TestApply_PreservesExplicitValues(t *testing.T) {
 	if task.MaxBudgetUSD != 25.0 {
 		t.Errorf("MaxBudgetUSD = %v, want %v", task.MaxBudgetUSD, 25.0)
 	}
-	if task.MaxRuntimeMin != 60 {
-		t.Errorf("MaxRuntimeMin = %d, want %d", task.MaxRuntimeMin, 60)
+	if task.MaxRuntimeSec != 3600 {
+		t.Errorf("MaxRuntimeSec = %d, want %d", task.MaxRuntimeSec, 3600)
 	}
 	if task.MaxTurns != 500 {
 		t.Errorf("MaxTurns = %d, want %d", task.MaxTurns, 500)

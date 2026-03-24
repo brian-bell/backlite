@@ -2,6 +2,7 @@ package ec2
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -75,7 +76,7 @@ func (s *Scaler) isDockerReady(ctx context.Context, instanceID string) bool {
 	result, err := s.ssmClient.SendCommand(ctx, &ssm.SendCommandInput{
 		InstanceIds:  []string{instanceID},
 		DocumentName: aws.String("AWS-RunShellScript"),
-		Parameters:   map[string][]string{"commands": {"docker image inspect backflow-agent:latest >/dev/null 2>&1 && echo ready"}},
+		Parameters:   map[string][]string{"commands": {fmt.Sprintf("docker image inspect %s >/dev/null 2>&1 && echo ready", s.config.AgentImage)}},
 	})
 	if err != nil {
 		return false

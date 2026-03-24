@@ -34,9 +34,10 @@ ECR_URI="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
 echo "==> Authenticating with ECR (${ECR_URI})..."
 aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$ECR_URI"
 
-# Pull agent image and tag with short name
-echo "==> Pulling agent image..."
+# Pull agent image and tag with local name (must match BACKFLOW_AGENT_IMAGE config)
+AGENT_IMAGE="${BACKFLOW_AGENT_IMAGE:-backflow-agent}"
+echo "==> Pulling agent image (local tag: ${AGENT_IMAGE})..."
 docker pull "${ECR_URI}/backflow-agent:latest"
-docker tag "${ECR_URI}/backflow-agent:latest" backflow-agent:latest
+docker tag "${ECR_URI}/backflow-agent:latest" "${AGENT_IMAGE}:latest"
 
 echo "==> Bootstrap complete at $(date)"

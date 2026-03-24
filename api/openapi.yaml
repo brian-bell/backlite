@@ -49,10 +49,10 @@ paths:
       operationId: createTask
       summary: Create a new task
       description: >
-        Creates a coding or review task. For code mode, repo_url and prompt are
-        required. For review mode, review_pr_url is required (repo_url and
-        review_pr_number will be derived). If task_mode is omitted and the prompt
-        starts with a GitHub PR URL, review mode is auto-detected.
+        Creates a coding or review task. Prompt is the only required field —
+        the agent container's Prep stage infers repo_url, target_branch, and
+        task_mode from the prompt. If the prompt starts with a GitHub PR URL,
+        review mode is auto-detected.
       requestBody:
         required: true
         content:
@@ -346,13 +346,6 @@ components:
         target_branch:
           type: string
           example: ""
-        review_pr_url:
-          type: string
-          example: "https://github.com/owner/repo/pull/42"
-        review_pr_number:
-          type: integer
-          minimum: 1
-          example: 42
         prompt:
           type: string
           example: "Fix the authentication bug in the login handler"

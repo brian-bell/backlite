@@ -151,6 +151,7 @@ func TestHealthCheck(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	srv.ServeHTTP(w, req)
+	checkResponse(t, req, w)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
@@ -166,6 +167,7 @@ func TestCreateAndGetTask(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	srv.ServeHTTP(w, req)
+	checkResponse(t, req, w)
 
 	if w.Code != http.StatusCreated {
 		t.Fatalf("create status = %d, want %d, body: %s", w.Code, http.StatusCreated, w.Body.String())
@@ -190,6 +192,7 @@ func TestCreateAndGetTask(t *testing.T) {
 	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/tasks/"+resp.Data.ID, nil)
 	w2 := httptest.NewRecorder()
 	srv.ServeHTTP(w2, req2)
+	checkResponse(t, req2, w2)
 
 	if w2.Code != http.StatusOK {
 		t.Errorf("get status = %d, want %d", w2.Code, http.StatusOK)
@@ -202,6 +205,7 @@ func TestListTasks(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks", nil)
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, req)
+	checkResponse(t, req, w)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
@@ -226,6 +230,7 @@ func TestCreateTaskCodexHarness(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	srv.ServeHTTP(w, req)
+	checkResponse(t, req, w)
 
 	if w.Code != http.StatusCreated {
 		t.Fatalf("create status = %d, want %d, body: %s", w.Code, http.StatusCreated, w.Body.String())
@@ -261,6 +266,7 @@ func TestCreateTaskInvalidHarness(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	srv.ServeHTTP(w, req)
+	checkResponse(t, req, w)
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
@@ -276,6 +282,7 @@ func TestCreateTaskValidation(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	srv.ServeHTTP(w, req)
+	checkResponse(t, req, w)
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
@@ -288,6 +295,7 @@ func TestGetTaskNotFound(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks/nonexistent", nil)
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, req)
+	checkResponse(t, req, w)
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusNotFound)
@@ -303,6 +311,7 @@ func TestCreateReviewTask(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	srv.ServeHTTP(w, req)
+	checkResponse(t, req, w)
 
 	if w.Code != http.StatusCreated {
 		t.Fatalf("create status = %d, want %d, body: %s", w.Code, http.StatusCreated, w.Body.String())
@@ -330,6 +339,7 @@ func TestDeleteTask(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, req)
+	checkResponse(t, req, w)
 
 	var resp struct {
 		Data struct {
@@ -342,6 +352,7 @@ func TestDeleteTask(t *testing.T) {
 	req2 := httptest.NewRequest(http.MethodDelete, "/api/v1/tasks/"+resp.Data.ID, nil)
 	w2 := httptest.NewRecorder()
 	srv.ServeHTTP(w2, req2)
+	checkResponse(t, req2, w2)
 
 	if w2.Code != http.StatusNoContent {
 		t.Errorf("delete status = %d, want %d", w2.Code, http.StatusNoContent)
@@ -431,6 +442,7 @@ func TestDeleteTask_EmitsCancelledEvent(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, req)
+	checkResponse(t, req, w)
 
 	var resp struct {
 		Data struct {
@@ -450,6 +462,7 @@ func TestDeleteTask_EmitsCancelledEvent(t *testing.T) {
 	req2 := httptest.NewRequest(http.MethodDelete, "/api/v1/tasks/"+taskID, nil)
 	w2 := httptest.NewRecorder()
 	srv.ServeHTTP(w2, req2)
+	checkResponse(t, req2, w2)
 
 	if w2.Code != http.StatusNoContent {
 		t.Fatalf("delete status = %d, want %d", w2.Code, http.StatusNoContent)

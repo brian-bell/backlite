@@ -6,6 +6,8 @@ bin/
 *.exe
 mise.toml
 .backflow/
+.cache/
+.hypothesis/
 .claude/worktrees/
 logs/
 backflow

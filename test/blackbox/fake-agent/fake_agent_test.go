@@ -134,6 +134,14 @@ func TestFakeAgent(t *testing.T) {
 			wantMarkerText: "FAKE_AGENT: running with outcome=success",
 		},
 		{
+			name:           "slow_success",
+			outcome:        "slow_success",
+			wantExitCode:   0,
+			wantStatusJSON: true,
+			wantComplete:   true,
+			wantMarkerText: "FAKE_AGENT: running with outcome=slow_success",
+		},
+		{
 			name:           "fail",
 			outcome:        "fail",
 			wantExitCode:   1,

@@ -115,11 +115,13 @@ func main() {
 		bus.Subscribe(notify.NewMessagingNotifier(messenger, cfg.SMSEvents))
 	}
 
-	s3Uploader, err := orchs3.NewUploader(context.Background(), cfg)
-	if err != nil {
+	// Declare as the interface type so a nil *Uploader stays a nil interface
+	// (avoids the nil-pointer-in-non-nil-interface trap in saveTaskMetadata).
+	var s3Uploader orchestrator.S3Client
+	if u, err := orchs3.NewUploader(context.Background(), cfg); err != nil {
 		log.Fatal().Err(err).Msg("failed to create S3 uploader")
-	}
-	if s3Uploader != nil {
+	} else if u != nil {
+		s3Uploader = u
 		log.Info().Str("bucket", cfg.S3Bucket).Msg("S3 storage enabled")
 	}
 

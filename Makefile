@@ -1,7 +1,7 @@
 .PHONY: build run test clean lint \
        docker-agent-build docker-agent-build-local docker-agent-push docker-agent-deploy \
        docker-server-build docker-server-build-local docker-server-deploy \
-       docker-fake-agent-build test-fake-agent test-schema \
+       docker-fake-agent-build test-fake-agent test-blackbox test-schema \
        deploy-dev \
        db-pending db-provisioning db-running db-completed db-failed db-interrupted db-cancelled db-recovering \
        setup-aws deps tunnel cloudflared-setup test-docker-status-writer copy-env overwrite-env
@@ -39,6 +39,9 @@ docker-fake-agent-build:
 
 test-fake-agent: docker-fake-agent-build
 	go test ./test/blackbox/fake-agent/ -v -count=1
+
+test-blackbox:
+	go test ./test/blackbox/ -v -count=1 -timeout 120s
 
 test-schema:
 	bash scripts/test-schema.sh

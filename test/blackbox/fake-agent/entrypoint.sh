@@ -30,6 +30,11 @@ case "$FAKE_OUTCOME" in
         write_status 0 true false "" ""
         exit 0
         ;;
+    slow_success)
+        sleep 2
+        write_status 0 true false "" ""
+        exit 0
+        ;;
     fail)
         write_status 1 false false "" "fake agent failure"
         exit 1

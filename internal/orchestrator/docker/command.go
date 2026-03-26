@@ -95,15 +95,15 @@ func (m *Manager) ssmDiagnosticError(ctx context.Context, input *ssm.GetCommandI
 	return fmt.Errorf("ssm command failed (status=%s): %w", status, waitErr)
 }
 
-// ensureClient lazily initializes the AWS SSM client.
+// ensureClient lazily initializes the AWS SSM client. Thread-safe via sync.Once.
 func (m *Manager) ensureClient(ctx context.Context) error {
-	if m.ssmClient != nil {
-		return nil
-	}
-	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(m.config.AWSRegion))
-	if err != nil {
-		return fmt.Errorf("load AWS config: %w", err)
-	}
-	m.ssmClient = ssm.NewFromConfig(cfg)
-	return nil
+	m.ssmOnce.Do(func() {
+		cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(m.config.AWSRegion))
+		if err != nil {
+			m.ssmInitErr = fmt.Errorf("load AWS config: %w", err)
+			return
+		}
+		m.ssmClient = ssm.NewFromConfig(cfg)
+	})
+	return m.ssmInitErr
 }

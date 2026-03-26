@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/rs/zerolog/log"
@@ -17,8 +18,10 @@ import (
 
 // Manager manages agent containers on remote (SSM) or local hosts.
 type Manager struct {
-	config    *config.Config
-	ssmClient *ssm.Client
+	config     *config.Config
+	ssmClient  *ssm.Client
+	ssmOnce    sync.Once
+	ssmInitErr error
 }
 
 // NewManager creates a new Manager.
@@ -155,7 +158,7 @@ func (m *Manager) buildEnvFlags(task *models.Task) []string {
 	}
 
 	for k, v := range task.EnvVars {
-		flags = append(flags, envFlag(k, shellEscape(v)))
+		flags = append(flags, envFlag(shellEscape(k), shellEscape(v)))
 	}
 
 	return flags

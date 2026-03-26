@@ -146,7 +146,7 @@ func TestBuildEnvFlags(t *testing.T) {
 		"-e AUTH_MODE=api_key",
 		"-e PR_TITLE=",
 		"-e CLAUDE_MD=",
-		"-e CUSTOM_VAR=",
+		"-e 'CUSTOM_VAR'=",
 	}
 	for _, s := range mustContain {
 		if !strings.Contains(joined, s) {
@@ -430,6 +430,28 @@ func TestWrapWithRemoteEnvFile(t *testing.T) {
 	}
 	if !strings.Contains(cmd, "'API_KEY=sk-test'") {
 		t.Error("should contain shell-escaped secret")
+	}
+}
+
+func TestBuildEnvFlags_ShellEscapesKeys(t *testing.T) {
+	cfg := &config.Config{AuthMode: config.AuthModeAPIKey}
+	dm := NewManager(cfg)
+
+	task := &models.Task{
+		ID:      "bf_01ESC",
+		RepoURL: "https://github.com/test/repo",
+		Prompt:  "test",
+		EnvVars: map[string]string{
+			"SAFE_KEY": "safe_value",
+		},
+	}
+
+	flags := dm.buildEnvFlags(task)
+	joined := strings.Join(flags, " ")
+
+	// Even valid keys should be shell-escaped (wrapped in single quotes).
+	if !strings.Contains(joined, "-e 'SAFE_KEY'='safe_value'") {
+		t.Errorf("expected shell-escaped key in flags, got: %s", joined)
 	}
 }
 

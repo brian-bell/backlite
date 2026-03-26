@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -31,10 +32,12 @@ type ec2Client interface {
 // Scaler manages EC2 instance scaling: launching new instances when capacity is
 // needed, promoting pending instances when ready, and terminating idle ones.
 type Scaler struct {
-	store     store.Store
-	ec2       ec2Client
-	config    *config.Config
-	ssmClient *ssm.Client
+	store      store.Store
+	ec2        ec2Client
+	config     *config.Config
+	ssmClient  *ssm.Client
+	ssmOnce    sync.Once
+	ssmInitErr error
 }
 
 func NewScaler(s store.Store, ec2 *Manager, cfg *config.Config) *Scaler {
@@ -42,15 +45,15 @@ func NewScaler(s store.Store, ec2 *Manager, cfg *config.Config) *Scaler {
 }
 
 func (s *Scaler) ensureSSMClient(ctx context.Context) error {
-	if s.ssmClient != nil {
-		return nil
-	}
-	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(s.config.AWSRegion))
-	if err != nil {
-		return err
-	}
-	s.ssmClient = ssm.NewFromConfig(cfg)
-	return nil
+	s.ssmOnce.Do(func() {
+		cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(s.config.AWSRegion))
+		if err != nil {
+			s.ssmInitErr = err
+			return
+		}
+		s.ssmClient = ssm.NewFromConfig(cfg)
+	})
+	return s.ssmInitErr
 }
 
 // isSSMReady checks if the SSM agent on the instance is online and ready.

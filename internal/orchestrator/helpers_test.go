@@ -22,6 +22,9 @@ type mockStore struct {
 	// Error injection: if set, GetInstance returns this error instead of
 	// looking up the instance map.
 	getInstanceErr error
+
+	// Error injection: if set, CompleteTask returns this error.
+	completeTaskErr error
 }
 
 func newMockStore() *mockStore {
@@ -145,6 +148,9 @@ func (s *mockStore) StartTask(_ context.Context, id string, containerID string) 
 func (s *mockStore) CompleteTask(_ context.Context, id string, result store.TaskResult) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.completeTaskErr != nil {
+		return s.completeTaskErr
+	}
 	if t, ok := s.tasks[id]; ok {
 		t.Status = result.Status
 		t.Error = result.Error

@@ -422,6 +422,51 @@ func TestKillTask(t *testing.T) {
 	}
 }
 
+func TestKillTask_CompleteTaskError(t *testing.T) {
+	s := newMockStore()
+	now := time.Now().UTC()
+
+	s.CreateInstance(context.Background(), &models.Instance{
+		InstanceID:        "local",
+		Status:            models.InstanceStatusRunning,
+		MaxContainers:     4,
+		RunningContainers: 1,
+	})
+
+	s.CreateTask(context.Background(), &models.Task{
+		ID:          "bf_kill_err",
+		Status:      models.TaskStatusRunning,
+		RepoURL:     "https://github.com/test/repo",
+		Prompt:      "task that fails to complete",
+		InstanceID:  "local",
+		ContainerID: "cont_kill_err",
+		StartedAt:   &now,
+	})
+
+	s.completeTaskErr = fmt.Errorf("db connection lost")
+
+	bus, n := newTestBus()
+	o := newTestOrchestrator(s, bus)
+	o.running = 1
+
+	task, _ := s.GetTask(context.Background(), "bf_kill_err")
+
+	// Should not panic even when CompleteTask fails.
+	o.killTask(context.Background(), task, "exceeded max runtime")
+	bus.Close()
+
+	// releaseSlot should still run.
+	if o.running != 0 {
+		t.Errorf("running = %d, want 0", o.running)
+	}
+
+	// Event should still be emitted.
+	evTypes := n.eventTypes()
+	if len(evTypes) != 1 || evTypes[0] != notify.EventTaskFailed {
+		t.Errorf("expected [task.failed], got %v", evTypes)
+	}
+}
+
 func TestRequeueTask_EC2Mode(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()

@@ -3,6 +3,7 @@ package ec2
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -15,8 +16,10 @@ import (
 
 // Manager handles EC2 instance lifecycle (launch, terminate, describe).
 type Manager struct {
-	config *config.Config
-	client *ec2.Client
+	config     *config.Config
+	client     *ec2.Client
+	clientOnce sync.Once
+	clientErr  error
 }
 
 func NewManager(cfg *config.Config) *Manager {
@@ -24,15 +27,15 @@ func NewManager(cfg *config.Config) *Manager {
 }
 
 func (m *Manager) ensureClient(ctx context.Context) error {
-	if m.client != nil {
-		return nil
-	}
-	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(m.config.AWSRegion))
-	if err != nil {
-		return fmt.Errorf("load AWS config: %w", err)
-	}
-	m.client = ec2.NewFromConfig(cfg)
-	return nil
+	m.clientOnce.Do(func() {
+		cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(m.config.AWSRegion))
+		if err != nil {
+			m.clientErr = fmt.Errorf("load AWS config: %w", err)
+			return
+		}
+		m.client = ec2.NewFromConfig(cfg)
+	})
+	return m.clientErr
 }
 
 func (m *Manager) LaunchSpotInstance(ctx context.Context) (string, error) {

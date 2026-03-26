@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib" // registers "pgx" driver for database/sql
 	"github.com/pressly/goose/v3"
+	"github.com/rs/zerolog/log"
 
 	"github.com/backflow-labs/backflow/internal/models"
 )
@@ -343,7 +345,7 @@ func (s *PostgresStore) GetAllowedSender(ctx context.Context, channelType, addre
 	var sender models.AllowedSender
 	err := row.Scan(&sender.ChannelType, &sender.Address, &sender.Enabled, &sender.CreatedAt)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -385,7 +387,7 @@ func (s *PostgresStore) GetDiscordInstall(ctx context.Context, guildID string) (
 	var allowedRoles []byte
 	err := row.Scan(&install.GuildID, &install.AppID, &install.ChannelID, &allowedRoles, &install.InstalledAt, &install.UpdatedAt)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -424,7 +426,7 @@ func (s *PostgresStore) GetDiscordTaskThread(ctx context.Context, taskID string)
 	var thread models.DiscordTaskThread
 	err := row.Scan(&thread.TaskID, &thread.RootMessageID, &thread.ThreadID, &thread.CreatedAt, &thread.UpdatedAt)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -441,7 +443,9 @@ func (s *PostgresStore) WithTx(ctx context.Context, fn func(Store) error) error 
 	}
 	txStore := &PostgresStore{pool: s.pool, q: tx}
 	if err := fn(txStore); err != nil {
-		tx.Rollback(ctx)
+		if rbErr := tx.Rollback(ctx); rbErr != nil {
+			log.Warn().Err(rbErr).Msg("tx rollback failed")
+		}
 		return err
 	}
 	return tx.Commit(ctx)
@@ -469,14 +473,22 @@ func scanPGTask(row pgScanner) (*models.Task, error) {
 		&t.CreatedAt, &t.UpdatedAt, &t.StartedAt, &t.CompletedAt,
 	)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
 
-	json.Unmarshal(allowedTools, &t.AllowedTools)
-	json.Unmarshal(envVars, &t.EnvVars)
+	if len(allowedTools) > 0 {
+		if err := json.Unmarshal(allowedTools, &t.AllowedTools); err != nil {
+			return nil, fmt.Errorf("unmarshal allowed_tools: %w", err)
+		}
+	}
+	if len(envVars) > 0 {
+		if err := json.Unmarshal(envVars, &t.EnvVars); err != nil {
+			return nil, fmt.Errorf("unmarshal env_vars: %w", err)
+		}
+	}
 
 	return &t, nil
 }
@@ -490,7 +502,7 @@ func scanPGInstance(row pgScanner) (*models.Instance, error) {
 		&inst.RunningContainers, &inst.CreatedAt, &inst.UpdatedAt,
 	)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err

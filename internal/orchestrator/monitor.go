@@ -255,11 +255,13 @@ func (o *Orchestrator) killTask(ctx context.Context, task *models.Task, reason s
 	if task.StartedAt != nil {
 		elapsed = int(time.Since(*task.StartedAt).Seconds())
 	}
-	o.store.CompleteTask(ctx, task.ID, store.TaskResult{
+	if err := o.store.CompleteTask(ctx, task.ID, store.TaskResult{
 		Status:         models.TaskStatusFailed,
 		Error:          reason,
 		ElapsedTimeSec: elapsed,
-	})
+	}); err != nil {
+		log.Error().Err(err).Str("task_id", task.ID).Msg("killTask: failed to complete task in store")
+	}
 
 	o.releaseSlot(ctx, task)
 

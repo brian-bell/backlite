@@ -36,7 +36,7 @@ jobs:
         run: go build -trimpath -o bin/backflow ./cmd/backflow
 
       - name: Test
-        run: go test $(go list ./... | grep -v '/test/blackbox') -v -count=1
+        run: go test $(go list ./... | grep -v '/test/blackbox') -race -v -count=1
 
   blackbox:
     runs-on: ubuntu-latest

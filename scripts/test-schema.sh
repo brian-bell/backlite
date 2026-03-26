@@ -3,6 +3,34 @@
 # Starts a temporary Postgres, builds and runs the server, then fuzzes.
 set -euo pipefail
 
+usage() {
+    cat <<EOF
+Usage: $(basename "$0") [options]
+
+Run schemathesis fuzz tests against the Backflow OpenAPI spec.
+
+Starts a temporary Postgres container, builds and runs the server, then fuzzes
+all endpoints using schemathesis.
+
+Prerequisites: Docker daemon must be running.
+
+Environment variables:
+  MAX_EXAMPLES   Number of test examples per phase (default: 20)
+  SEED           Random seed for reproducibility (default: 42)
+
+Options:
+  -h, --help    Show this help message
+
+Examples:
+  $(basename "$0")                    # Run with defaults
+  MAX_EXAMPLES=50 $(basename "$0")    # More thorough fuzzing
+EOF
+}
+
+case "${1:-}" in
+    -h|--help) usage; exit 0 ;;
+esac
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PG_CONTAINER="backflow-schema-test-pg"

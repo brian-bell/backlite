@@ -41,7 +41,7 @@ test-fake-agent: docker-fake-agent-build
 	go test ./test/blackbox/fake-agent/ -v -count=1
 
 test-blackbox:
-	go test ./test/blackbox/ -v -count=1 -timeout 120s
+	bash scripts/test-blackbox.sh
 
 test-soak:
 	bash scripts/test-soak.sh --short

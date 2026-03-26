@@ -1,6 +1,31 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+usage() {
+    cat <<EOF
+Usage: $(basename "$0") [options]
+
+Run the Backflow soak test (long-running resource leak detector).
+
+WARNING: This will TRUNCATE the tasks table in your database.
+
+Options:
+  --short              Run a short soak test (10 minutes)
+  --duration <dur>     Custom duration (e.g., 30m, 2h)
+  --task-interval <d>  Interval between task submissions (default: 30s)
+  --api-url <url>      Backflow API base URL (default: http://localhost:8080)
+  -h, --help           Show this help message
+
+Examples:
+  $(basename "$0") --short         # 10-minute soak test
+  $(basename "$0") --duration 30m  # 30-minute soak test
+EOF
+}
+
+case "${1:-}" in
+    -h|--help) usage; exit 0 ;;
+esac
+
 # Source .env if present.
 if [ -f .env ]; then
     set -a; . ./.env; set +a

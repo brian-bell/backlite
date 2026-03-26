@@ -16,6 +16,7 @@ import (
 
 	"github.com/backflow-labs/backflow/internal/api"
 	"github.com/backflow-labs/backflow/internal/config"
+	"github.com/backflow-labs/backflow/internal/debug"
 	"github.com/backflow-labs/backflow/internal/discord"
 	"github.com/backflow-labs/backflow/internal/messaging"
 	"github.com/backflow-labs/backflow/internal/models"
@@ -59,6 +60,8 @@ func setupLogger(logFile string) (zerolog.Logger, io.Closer, error) {
 }
 
 func main() {
+	startedAt := time.Now()
+
 	// Set up initial stderr-only logger; reconfigured after config load if LogFile is set.
 	logger, _, err := setupLogger("")
 	if err != nil {
@@ -147,6 +150,9 @@ func main() {
 	orch := orchestrator.New(db, cfg, bus, runner, scaler, spot, s3Uploader)
 
 	router := api.NewServer(db, cfg, orch.Docker(), bus)
+
+	// Debug stats endpoint (outside /api/v1/ so RestrictAPI does not block it)
+	router.Get("/debug/stats", debug.StatsHandler(orch.Running, db, startedAt).ServeHTTP)
 
 	// Mount SMS inbound webhook if provider is configured
 	if cfg.SMSProvider != "" {

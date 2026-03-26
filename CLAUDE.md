@@ -12,6 +12,10 @@ make run                # Build + run (sources .env, refreshes AWS creds if need
 make test               # go test ./... -v -count=1
 make lint               # go vet ./...
 make test-schema        # Schemathesis fuzz tests against OpenAPI spec (requires docker, goose, schemathesis)
+make test-blackbox      # Black-box integration test (builds fake agent, spins up server + DB)
+make test-soak          # Soak test (10 min short mode; warns before truncating tasks DB)
+make test-fake-agent    # Unit tests for the fake agent Docker image
+make docker-fake-agent-build  # Build fake agent image for testing
 make deps               # go mod tidy
 make clean              # Remove bin/ directory
 make cloudflared-setup  # Create cloudflared tunnel, DNS route, and config (one-time)
@@ -44,6 +48,7 @@ Two goroutines: chi REST API on `:8080` + polling orchestrator (5s default). Thr
 ### API endpoints
 
 - `GET /health` — Health check (root-level, always accessible; used by Fly.io)
+- `GET /debug/stats` — Operational stats: PID, uptime, running tasks, pool metrics (outside `/api/v1/`, not blocked by `RestrictAPI`)
 - `GET /api/v1/health` — Health check (under API prefix; blocked when `BACKFLOW_RESTRICT_API=true`)
 - `POST /tasks` — Create task
 - `GET /tasks` — List tasks (query params: `status`, `limit`, `offset`)
@@ -63,6 +68,15 @@ Two goroutines: chi REST API on `:8080` + polling orchestrator (5s default). Thr
 - **config/** — Env-var config (`BACKFLOW_*` prefix), three modes (`ec2`/`local`/`fargate`). `RestrictAPI` blocks all `/api/v1/*` endpoints when `BACKFLOW_RESTRICT_API=true` (used in Fly.io deployment). `TaskDefaults(taskMode)` returns resolved defaults; `Apply(task, overrides)` fills zero-value fields using `*bool` overrides (nil = use default, non-nil = use pointed value)
 - **notify/** — `Notifier` interface, `WebhookNotifier` (HTTP POST, 3 retries, event filtering), `DiscordNotifier` (lifecycle messages in channel + per-task threads), `NoopNotifier`, `EventBus` (async fan-out delivery via buffered channel), `NewEvent` constructor with `EventOption` functional options, `MessagingNotifier` (SMS via Twilio for reply channels)
 - **messaging/** — `Messenger` interface, `TwilioMessenger` (outbound SMS), inbound SMS webhook handler, message parsing
+- **debug/** — `/debug/stats` handler: PID, uptime, running task count, pgxpool metrics
+
+### Fake agent (`test/blackbox/fake-agent/`)
+
+Minimal Alpine image used by black-box and soak tests. Reads `FAKE_OUTCOME` env var to simulate outcomes: `success`, `slow_success`, `fail`, `needs_input`, `timeout`, `crash`. Writes `status.json` and emits `BACKFLOW_STATUS_JSON:` just like the real agent. Does not create `claude_output.log` (soak tasks set `save_agent_output: false`).
+
+### Soak test (`test/soak/`)
+
+Long-running resource leak detector. Submits tasks at intervals, collects RSS, pool stats, and container counts, then analyzes for memory growth and container accumulation. Run via `make test-soak` (10-min short mode). Truncates the tasks table and prunes stale containers at start and end. The wrapper script (`scripts/test-soak.sh`) warns before truncating and asks for confirmation.
 
 ### Agent container (`docker/agent/`)
 
@@ -189,6 +203,7 @@ Create new migrations in `migrations/` with the next numeric prefix, `-- +goose 
 ## Documentation
 
 Additional docs in `docs/`:
+- `ROADMAP.md` — Product roadmap with phased implementation plan
 - `schema.md` — Database schema (tables, columns, indexes, status lifecycles)
 - `discord-setup.md` — Discord bot creation, server install, and Backflow configuration
 - `sms-setup.md` — Twilio SMS setup and allowed sender configuration

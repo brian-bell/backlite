@@ -32,6 +32,13 @@ Single test: `go test ./internal/store/ -run TestCreateTask -v`
 
 Tests use [testcontainers](https://testcontainers.com/) to spin up ephemeral PostgreSQL instances — Docker must be running.
 
+```bash
+make test-blackbox      # End-to-end: builds fake agent, starts server + DB, runs happy-path
+make test-soak          # Resource leak detector (10 min; truncates tasks DB with confirmation)
+make test-fake-agent    # Unit tests for the fake agent image
+make test-schema        # Schemathesis fuzz tests against OpenAPI spec
+```
+
 ### Local Tunnel (for webhooks)
 
 To receive inbound webhooks (Discord interactions, Twilio SMS) during local development, expose your server with a [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps) named tunnel:
@@ -125,6 +132,7 @@ curl -X POST http://localhost:8080/api/v1/tasks \
 | `DELETE` | `/api/v1/tasks/{id}` | Cancel a task |
 | `GET` | `/api/v1/tasks/{id}/logs` | Container logs (`?tail=100`) |
 | `GET` | `/api/v1/health` | Health check |
+| `GET` | `/debug/stats` | Operational stats (PID, uptime, running tasks, pool metrics) |
 | `POST` | `/webhooks/discord` | Discord interaction endpoint (signature-verified) |
 | `POST` | `/webhooks/sms/inbound` | Twilio inbound SMS webhook |
 
@@ -171,6 +179,9 @@ curl -s 'http://localhost:8080/api/v1/tasks/{id}/logs?tail=100'
 # Health check
 curl -s http://localhost:8080/api/v1/health
 
+# Operational stats (PID, uptime, running tasks, pool metrics)
+curl -s http://localhost:8080/debug/stats | jq .
+
 # Shell into an agent EC2 instance
 aws ssm start-session --target i-0abc...
 ```
@@ -201,8 +212,8 @@ To add a migration: create a new file in `migrations/` (e.g. `002_add_column.sql
 ### Agent Image
 
 ```bash
-make docker-build-local    # Single-arch local build
-make docker-deploy         # Multi-arch build + push to ECR
+make docker-agent-build-local    # Single-arch local build
+make docker-agent-deploy         # Multi-arch build + push to ECR
 ```
 
 ### AWS Setup (EC2 Mode)
@@ -321,6 +332,7 @@ Defaults are set in `internal/config/config.go` and can be overridden via env va
 | `BACKFLOW_DEFAULT_CREATE_PR` | Create PR by default |
 | `BACKFLOW_DEFAULT_SELF_REVIEW` | Self-review by default |
 | `BACKFLOW_DEFAULT_SAVE_AGENT_OUTPUT` | Save agent output by default |
+| `BACKFLOW_AGENT_IMAGE` | Docker image for agent containers (see config for default) |
 | `BACKFLOW_CONTAINER_CPUS` | CPU cores per container |
 | `BACKFLOW_CONTAINER_MEMORY_GB` | Memory (GB) per container |
 

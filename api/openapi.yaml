@@ -25,6 +25,22 @@ paths:
               schema:
                 $ref: "#/components/schemas/HealthEnvelope"
 
+  /debug/stats:
+    get:
+      operationId: debugStats
+      summary: Debug statistics
+      description: >
+        Returns internal runtime statistics for operational monitoring.
+        Always accessible regardless of API restriction settings.
+        Not intended for end-user consumption.
+      responses:
+        "200":
+          description: Debug statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DebugStatsEnvelope"
+
   /api/v1/health:
     get:
       operationId: apiHealthCheck
@@ -266,6 +282,61 @@ components:
           type: string
           enum: [api_key, max_subscription]
           example: api_key
+
+    DebugStatsEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/DebugStatsData"
+
+    DebugStatsData:
+      type: object
+      required: [orchestrator, pool, uptime_seconds, runtime, pid]
+      properties:
+        orchestrator:
+          type: object
+          required: [running_tasks]
+          properties:
+            running_tasks:
+              type: integer
+              minimum: 0
+              example: 2
+        pool:
+          type: object
+          required: [acquired_conns, idle_conns, total_conns, max_conns]
+          properties:
+            acquired_conns:
+              type: integer
+              example: 3
+            idle_conns:
+              type: integer
+              example: 2
+            total_conns:
+              type: integer
+              example: 5
+            max_conns:
+              type: integer
+              example: 10
+        uptime_seconds:
+          type: number
+          minimum: 0
+          example: 3600.5
+        runtime:
+          type: object
+          required: [heap_alloc_bytes, sys_bytes]
+          properties:
+            heap_alloc_bytes:
+              type: integer
+              minimum: 0
+              example: 12345678
+            sys_bytes:
+              type: integer
+              minimum: 0
+              example: 23456789
+        pid:
+          type: integer
+          example: 12345
 
     ErrorEnvelope:
       type: object

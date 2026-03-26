@@ -161,6 +161,13 @@ func (o *Orchestrator) terminateStaleInstances(keepID string) {
 	}
 }
 
+// Running returns the current count of running tasks.
+func (o *Orchestrator) Running() int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.running
+}
+
 // Docker returns the Runner for use by the API logs endpoint.
 func (o *Orchestrator) Docker() Runner {
 	return o.docker

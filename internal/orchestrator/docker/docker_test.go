@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -143,8 +144,6 @@ func TestBuildEnvFlags(t *testing.T) {
 		"-e CREATE_PR=true",
 		"-e SELF_REVIEW=false",
 		"-e AUTH_MODE=api_key",
-		"-e ANTHROPIC_API_KEY=sk-test-key",
-		"-e GITHUB_TOKEN=ghp_testtoken",
 		"-e PR_TITLE=",
 		"-e CLAUDE_MD=",
 		"-e CUSTOM_VAR=",
@@ -160,6 +159,13 @@ func TestBuildEnvFlags(t *testing.T) {
 	}
 	if strings.Contains(joined, "TASK_CONTEXT") {
 		t.Error("TASK_CONTEXT should not be set when empty")
+	}
+
+	// Secrets must not appear in env flags — they go via --env-file.
+	for _, secret := range []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GITHUB_TOKEN"} {
+		if strings.Contains(joined, secret) {
+			t.Errorf("secret %q must not appear in env flags", secret)
+		}
 	}
 }
 
@@ -242,7 +248,7 @@ func TestBuildRunCommand(t *testing.T) {
 		Prompt:  "Fix bug",
 	}
 
-	cmd := dm.buildRunCommand(task)
+	cmd := dm.buildRunCommand(task, "")
 
 	if !strings.HasPrefix(cmd, "docker run -d --cpus=2 --memory=8g") {
 		t.Errorf("unexpected command prefix: %s", cmd)
@@ -252,6 +258,33 @@ func TestBuildRunCommand(t *testing.T) {
 	}
 	if !strings.Contains(cmd, "-e TASK_ID=bf_01ABC") {
 		t.Error("command missing TASK_ID")
+	}
+	if strings.Contains(cmd, "--env-file") {
+		t.Error("--env-file should not appear when envFilePath is empty")
+	}
+}
+
+func TestBuildRunCommand_WithEnvFile(t *testing.T) {
+	cfg := &config.Config{
+		ContainerCPUs:  2,
+		ContainerMemGB: 8,
+		AgentImage:     "backflow-agent",
+	}
+	dm := NewManager(cfg)
+
+	task := &models.Task{
+		ID:      "bf_01ABC",
+		RepoURL: "https://github.com/test/repo",
+		Prompt:  "Fix bug",
+	}
+
+	cmd := dm.buildRunCommand(task, "/tmp/backflow-env-12345")
+
+	if !strings.Contains(cmd, "--env-file /tmp/backflow-env-12345") {
+		t.Errorf("command should contain --env-file flag, got: %s", cmd)
+	}
+	if !strings.HasSuffix(cmd, "backflow-agent") {
+		t.Errorf("command should end with image name, got: %s", cmd)
 	}
 }
 
@@ -271,10 +304,132 @@ func TestBuildRunCommand_CustomImage(t *testing.T) {
 		Prompt:  "Do something",
 	}
 
-	cmd := dm.buildRunCommand(task)
+	cmd := dm.buildRunCommand(task, "")
 
 	if !strings.HasSuffix(cmd, "my-custom-agent:v2") {
 		t.Errorf("command should end with custom image name, got: %s", cmd)
+	}
+}
+
+func TestBuildSecretEnvPairs(t *testing.T) {
+	cfg := &config.Config{
+		AuthMode:        config.AuthModeAPIKey,
+		AnthropicAPIKey: "sk-test-key",
+		OpenAIAPIKey:    "sk-openai-test",
+		GitHubToken:     "ghp_testtoken",
+	}
+	dm := NewManager(cfg)
+	task := &models.Task{ID: "bf_01ABC"}
+
+	pairs := dm.buildSecretEnvPairs(task)
+
+	want := map[string]bool{
+		"ANTHROPIC_API_KEY=sk-test-key": true,
+		"OPENAI_API_KEY=sk-openai-test": true,
+		"GITHUB_TOKEN=ghp_testtoken":    true,
+	}
+	for _, p := range pairs {
+		delete(want, p)
+	}
+	for missing := range want {
+		t.Errorf("missing secret pair: %s", missing)
+	}
+}
+
+func TestBuildSecretEnvPairs_MaxSubscription(t *testing.T) {
+	cfg := &config.Config{
+		AuthMode:    config.AuthModeMaxSubscription,
+		GitHubToken: "ghp_testtoken",
+	}
+	dm := NewManager(cfg)
+	task := &models.Task{ID: "bf_01ABC"}
+
+	pairs := dm.buildSecretEnvPairs(task)
+
+	for _, p := range pairs {
+		if strings.HasPrefix(p, "ANTHROPIC_API_KEY=") {
+			t.Error("ANTHROPIC_API_KEY should not be set in max_subscription mode")
+		}
+	}
+	found := false
+	for _, p := range pairs {
+		if p == "GITHUB_TOKEN=ghp_testtoken" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("GITHUB_TOKEN should still be present in max_subscription mode")
+	}
+}
+
+func TestBuildSecretEnvPairs_NoSecrets(t *testing.T) {
+	cfg := &config.Config{
+		AuthMode: config.AuthModeMaxSubscription,
+	}
+	dm := NewManager(cfg)
+	task := &models.Task{ID: "bf_01ABC"}
+
+	pairs := dm.buildSecretEnvPairs(task)
+	if len(pairs) != 0 {
+		t.Errorf("expected no secret pairs, got %v", pairs)
+	}
+}
+
+func TestWriteEnvFile(t *testing.T) {
+	pairs := []string{"FOO=bar", "BAZ=qux with spaces"}
+	path, err := writeEnvFile(pairs)
+	if err != nil {
+		t.Fatalf("writeEnvFile() error: %v", err)
+	}
+	defer os.Remove(path)
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read env file: %v", err)
+	}
+
+	want := "FOO=bar\nBAZ=qux with spaces\n"
+	if string(content) != want {
+		t.Errorf("env file content = %q, want %q", string(content), want)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat env file: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm&0077 != 0 {
+		t.Errorf("env file permissions = %o, want owner-only (0600)", perm)
+	}
+}
+
+func TestWriteEnvFile_Empty(t *testing.T) {
+	path, err := writeEnvFile(nil)
+	if err != nil {
+		t.Fatalf("writeEnvFile(nil) error: %v", err)
+	}
+	if path != "" {
+		os.Remove(path)
+		t.Error("expected empty path for no secrets")
+	}
+}
+
+func TestWrapWithRemoteEnvFile(t *testing.T) {
+	dockerCmd := "docker run -d --env-file \"$_ef\" -e TASK_ID=bf_01 image"
+	secrets := []string{"API_KEY=sk-test", "TOKEN=ghp_abc"}
+
+	cmd := wrapWithRemoteEnvFile(dockerCmd, secrets)
+
+	if !strings.HasPrefix(cmd, "_ef=$(mktemp) && printf") {
+		t.Errorf("should start with temp file creation, got: %s", cmd)
+	}
+	if !strings.Contains(cmd, dockerCmd) {
+		t.Error("should contain the original docker command")
+	}
+	if !strings.Contains(cmd, "rm -f \"$_ef\"") {
+		t.Error("should clean up the temp file")
+	}
+	if !strings.Contains(cmd, "'API_KEY=sk-test'") {
+		t.Error("should contain shell-escaped secret")
 	}
 }
 

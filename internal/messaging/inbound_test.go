@@ -90,8 +90,11 @@ func (m *mockStore) GetDiscordTaskThread(context.Context, string) (*models.Disco
 func (m *mockStore) WithTx(_ context.Context, fn func(store.Store) error) error { return fn(m) }
 func (m *mockStore) Close() error                                               { return nil }
 
+const testAuthToken = "test-auth-token"
+
 func newTestConfig() *config.Config {
 	return &config.Config{
+		TwilioAuthToken:    testAuthToken,
 		DefaultHarness:     "claude_code",
 		DefaultClaudeModel: "claude-sonnet-4-6",
 		DefaultEffort:      "medium",
@@ -100,7 +103,21 @@ func newTestConfig() *config.Config {
 	}
 }
 
+// postForm sends a signed POST to the handler, simulating a legitimate Twilio request.
 func postForm(handler http.HandlerFunc, values url.Values) *httptest.ResponseRecorder {
+	body := values.Encode()
+	reqURL := "http://example.com/webhooks/sms/inbound"
+	req := httptest.NewRequest(http.MethodPost, reqURL, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	sig := signRequest(testAuthToken, reqURL, values)
+	req.Header.Set("X-Twilio-Signature", sig)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	return w
+}
+
+// postUnsignedForm sends an unsigned POST, simulating a forged request.
+func postUnsignedForm(handler http.HandlerFunc, values url.Values) *httptest.ResponseRecorder {
 	body := values.Encode()
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/sms/inbound", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -459,12 +476,10 @@ func TestInboundHandler_RejectsInvalidSignature(t *testing.T) {
 			},
 		},
 	}
-	cfg := newTestConfig()
-	cfg.TwilioAuthToken = "test-auth-token"
-	handler := InboundHandler(db, cfg, NoopMessenger{})
+	handler := InboundHandler(db, newTestConfig(), NoopMessenger{})
 
-	// Request with no signature header
-	w := postForm(handler, url.Values{
+	// Request with no signature header — must be rejected
+	w := postUnsignedForm(handler, url.Values{
 		"From": {"+15551234567"},
 		"Body": {"Fix the test"},
 	})
@@ -488,25 +503,13 @@ func TestInboundHandler_AcceptsValidSignature(t *testing.T) {
 			},
 		},
 	}
-	cfg := newTestConfig()
-	cfg.TwilioAuthToken = "test-auth-token"
-	handler := InboundHandler(db, cfg, NoopMessenger{})
+	handler := InboundHandler(db, newTestConfig(), NoopMessenger{})
 
-	params := url.Values{
+	// postForm signs automatically — should succeed
+	w := postForm(handler, url.Values{
 		"From": {"+15551234567"},
 		"Body": {"Fix the test"},
-	}
-
-	// Compute valid signature for the URL the test request will hit
-	reqURL := "http://example.com/webhooks/sms/inbound"
-	sig := signRequest(cfg.TwilioAuthToken, reqURL, params)
-
-	body := params.Encode()
-	req := httptest.NewRequest(http.MethodPost, reqURL, strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("X-Twilio-Signature", sig)
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
+	})
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)

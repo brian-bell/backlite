@@ -9,7 +9,7 @@ Backflow is a Go service that runs coding agents (Claude Code or Codex) in ephem
 ```bash
 make build              # Build to bin/backflow
 make run                # Build + run (sources .env, refreshes AWS creds if needed)
-make test               # go test ./... -v -count=1
+make test               # Unit/integration tests (excludes blackbox; see make test-blackbox)
 make lint               # go vet ./...
 make test-schema        # Schemathesis fuzz tests against OpenAPI spec (requires docker, goose, schemathesis)
 make test-blackbox      # Black-box integration test (builds fake agent, spins up server + DB)

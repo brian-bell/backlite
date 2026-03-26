@@ -74,6 +74,21 @@ func TestCreateTaskRequestValidation(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "null byte in model",
+			req:     CreateTaskRequest{Prompt: "Fix bug", Model: "claude\x00evil"},
+			wantErr: true,
+		},
+		{
+			name:    "null byte in harness",
+			req:     CreateTaskRequest{Prompt: "Fix bug", Harness: "claude\x00code"},
+			wantErr: true,
+		},
+		{
+			name:    "null byte in effort",
+			req:     CreateTaskRequest{Prompt: "Fix bug", Effort: "high\x00"},
+			wantErr: true,
+		},
+		{
 			name:    "null byte in allowed_tools element",
 			req:     CreateTaskRequest{Prompt: "Fix bug", AllowedTools: []string{"Bash", "Read\x00Write"}},
 			wantErr: true,
@@ -96,6 +111,86 @@ func TestCreateTaskRequestValidation(t *testing.T) {
 		{
 			name:    "valid env_vars",
 			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"FOO": "bar"}},
+			wantErr: false,
+		},
+		{
+			name:    "env var key with underscore prefix",
+			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"_FOO": "val"}},
+			wantErr: false,
+		},
+		{
+			name:    "env var key with digits",
+			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"FOO_123": "val"}},
+			wantErr: false,
+		},
+		{
+			name:    "env var key with spaces",
+			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"FOO BAR": "val"}},
+			wantErr: true,
+		},
+		{
+			name:    "env var key with dash",
+			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"FOO-BAR": "val"}},
+			wantErr: true,
+		},
+		{
+			name:    "env var key with equals",
+			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"FOO=BAR": "val"}},
+			wantErr: true,
+		},
+		{
+			name:    "env var key starting with digit",
+			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"1FOO": "val"}},
+			wantErr: true,
+		},
+		{
+			name:    "env var key with docker flag injection",
+			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"FOO --privileged -v /:/mnt -e BAR": "val"}},
+			wantErr: true,
+		},
+		{
+			name:    "env var key with command substitution",
+			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"$(whoami)": "val"}},
+			wantErr: true,
+		},
+		{
+			name:    "env var key empty",
+			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"": "val"}},
+			wantErr: true,
+		},
+		{
+			name:    "reserved env var key ANTHROPIC_API_KEY",
+			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"ANTHROPIC_API_KEY": "sk-attacker"}},
+			wantErr: true,
+		},
+		{
+			name:    "reserved env var key GITHUB_TOKEN",
+			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"GITHUB_TOKEN": "ghp-attacker"}},
+			wantErr: true,
+		},
+		{
+			name:    "reserved env var key OPENAI_API_KEY",
+			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"OPENAI_API_KEY": "sk-attacker"}},
+			wantErr: true,
+		},
+		{
+			name:    "reserved env var key TASK_ID",
+			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"TASK_ID": "bf_fake"}},
+			wantErr: true,
+		},
+		{
+			name:    "reserved env var key AUTH_MODE",
+			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"AUTH_MODE": "none"}},
+			wantErr: true,
+		},
+		{
+			name:    "reserved env var key REPO_URL",
+			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"REPO_URL": "https://evil.com/repo"}},
+			wantErr: true,
+		},
+		{
+			name:    "non-reserved env var key allowed",
+			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"MY_CUSTOM_VAR": "val"}},
 			wantErr: false,
 		},
 	}

@@ -48,6 +48,40 @@ func (c *BackflowClient) CreateTask(t *testing.T, req map[string]any) map[string
 	return c.unwrapData(t, resp)
 }
 
+// CreateTaskRaw POSTs a new task and returns the raw status code and response
+// body. Unlike CreateTask, it does not fatal on non-201 responses, making it
+// suitable for testing validation errors.
+func (c *BackflowClient) CreateTaskRaw(t *testing.T, req map[string]any) (int, map[string]any) {
+	t.Helper()
+	body, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal create request: %v", err)
+	}
+
+	resp, err := c.http.Post(c.baseURL+"/api/v1/tasks", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /api/v1/tasks: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var envelope struct {
+		Data  json.RawMessage `json:"data"`
+		Error string          `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	result := map[string]any{"error": envelope.Error}
+	if len(envelope.Data) > 0 {
+		var data map[string]any
+		if err := json.Unmarshal(envelope.Data, &data); err == nil {
+			result["data"] = data
+		}
+	}
+	return resp.StatusCode, result
+}
+
 // GetTask retrieves a task by ID.
 func (c *BackflowClient) GetTask(t *testing.T, id string) map[string]any {
 	t.Helper()

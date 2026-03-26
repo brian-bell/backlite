@@ -154,10 +154,14 @@ func main() {
 	// Debug stats endpoint (outside /api/v1/ so RestrictAPI does not block it)
 	router.Get("/debug/stats", debug.StatsHandler(orch.Running, db, startedAt).ServeHTTP)
 
-	// Mount SMS inbound webhook if provider is configured
-	if cfg.SMSProvider != "" {
+	// Mount SMS inbound webhook only when both provider and auth token are configured.
+	// The auth token is required for Twilio signature validation — without it the
+	// endpoint would accept unauthenticated requests.
+	if cfg.SMSProvider != "" && cfg.TwilioAuthToken != "" {
 		router.Post("/webhooks/sms/inbound", messaging.InboundHandler(db, cfg, messenger))
 		log.Info().Msg("SMS inbound webhook mounted at /webhooks/sms/inbound")
+	} else if cfg.SMSProvider != "" {
+		log.Warn().Msg("SMS inbound webhook NOT mounted: TWILIO_AUTH_TOKEN is required")
 	}
 
 	// Discord integration

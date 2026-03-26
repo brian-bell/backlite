@@ -29,7 +29,7 @@ run: build
 	./bin/$(BINARY)
 
 test:
-	go test ./... -v -count=1
+	go test -tags nocontainers ./... -v -count=1
 
 test-docker-status-writer:
 	bash scripts/test-docker-status-writer.sh

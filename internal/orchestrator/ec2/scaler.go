@@ -20,11 +20,19 @@ import (
 
 const idleTimeout = 5 * time.Minute
 
+// ec2Client is the subset of Manager methods used by Scaler, extracted as an
+// interface to allow testing without real AWS calls.
+type ec2Client interface {
+	LaunchSpotInstance(ctx context.Context) (string, error)
+	TerminateInstance(ctx context.Context, instanceID string) error
+	DescribeInstance(ctx context.Context, instanceID string) (*types.Instance, error)
+}
+
 // Scaler manages EC2 instance scaling: launching new instances when capacity is
 // needed, promoting pending instances when ready, and terminating idle ones.
 type Scaler struct {
 	store     store.Store
-	ec2       *Manager
+	ec2       ec2Client
 	config    *config.Config
 	ssmClient *ssm.Client
 }
@@ -147,7 +155,10 @@ func (s *Scaler) RequestScaleUp(ctx context.Context) {
 	}
 
 	if err := s.store.CreateInstance(ctx, inst); err != nil {
-		log.Error().Err(err).Str("instance_id", instanceID).Msg("scaler: failed to save instance")
+		log.Error().Err(err).Str("instance_id", instanceID).Msg("scaler: failed to save instance, terminating orphan")
+		if termErr := s.ec2.TerminateInstance(ctx, instanceID); termErr != nil {
+			log.Error().Err(termErr).Str("instance_id", instanceID).Msg("scaler: failed to terminate orphaned instance")
+		}
 		return
 	}
 

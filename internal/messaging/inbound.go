@@ -98,15 +98,14 @@ func InboundHandler(db store.Store, cfg *config.Config, messenger Messenger) htt
 			return
 		}
 
-		// Validate Twilio request signature when auth token is configured
-		if cfg.TwilioAuthToken != "" {
-			sig := r.Header.Get("X-Twilio-Signature")
-			reqURL := requestURL(r)
-			if !validateTwilioSignature(cfg.TwilioAuthToken, reqURL, sig, r.PostForm) {
-				log.Warn().Str("url", reqURL).Msg("sms: invalid Twilio signature")
-				http.Error(w, "Forbidden", http.StatusForbidden)
-				return
-			}
+		// Always validate Twilio request signature — the endpoint must not
+		// be mounted unless TwilioAuthToken is configured.
+		sig := r.Header.Get("X-Twilio-Signature")
+		reqURL := requestURL(r)
+		if !validateTwilioSignature(cfg.TwilioAuthToken, reqURL, sig, r.PostForm) {
+			log.Warn().Str("url", reqURL).Msg("sms: invalid Twilio signature")
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
 		}
 
 		from := r.FormValue("From")

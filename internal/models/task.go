@@ -3,6 +3,7 @@ package models
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -128,6 +129,36 @@ type CreateTaskRequest struct {
 	EnvVars         map[string]string `json:"env_vars,omitempty"`
 }
 
+// validEnvVarKey matches POSIX environment variable names: must start with a
+// letter or underscore, followed by letters, digits, or underscores.
+var validEnvVarKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// reservedEnvVarKeys are system env var names set by the Docker and Fargate
+// runners. User-supplied env vars must not override these.
+var reservedEnvVarKeys = map[string]bool{
+	"TASK_ID":           true,
+	"TASK_MODE":         true,
+	"HARNESS":           true,
+	"REPO_URL":          true,
+	"BRANCH":            true,
+	"TARGET_BRANCH":     true,
+	"PROMPT":            true,
+	"MODEL":             true,
+	"EFFORT":            true,
+	"MAX_BUDGET_USD":    true,
+	"MAX_TURNS":         true,
+	"CREATE_PR":         true,
+	"SELF_REVIEW":       true,
+	"AUTH_MODE":         true,
+	"PR_TITLE":          true,
+	"PR_BODY":           true,
+	"CLAUDE_MD":         true,
+	"TASK_CONTEXT":      true,
+	"ANTHROPIC_API_KEY": true,
+	"OPENAI_API_KEY":    true,
+	"GITHUB_TOKEN":      true,
+}
+
 // containsNullByte returns true if s contains a null byte, which PostgreSQL
 // text columns reject.
 func containsNullByte(s string) bool {
@@ -138,7 +169,7 @@ func (r *CreateTaskRequest) Validate() error {
 	if r.Prompt == "" {
 		return fmt.Errorf("prompt is required")
 	}
-	for _, s := range []string{r.Prompt, r.Context, r.ClaudeMD, r.PRTitle, r.PRBody} {
+	for _, s := range []string{r.Prompt, r.Context, r.ClaudeMD, r.PRTitle, r.PRBody, r.Model, r.Harness, r.Effort} {
 		if containsNullByte(s) {
 			return fmt.Errorf("request contains invalid null bytes")
 		}
@@ -149,7 +180,13 @@ func (r *CreateTaskRequest) Validate() error {
 		}
 	}
 	for k, v := range r.EnvVars {
-		if containsNullByte(k) || containsNullByte(v) {
+		if !validEnvVarKey.MatchString(k) {
+			return fmt.Errorf("invalid env var key %q: must match [A-Za-z_][A-Za-z0-9_]*", k)
+		}
+		if reservedEnvVarKeys[k] {
+			return fmt.Errorf("env var key %q is reserved and cannot be overridden", k)
+		}
+		if containsNullByte(v) {
 			return fmt.Errorf("request contains invalid null bytes")
 		}
 	}

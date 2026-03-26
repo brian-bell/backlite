@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
@@ -28,7 +29,22 @@ func NewManager(cfg *config.Config) *Manager {
 // RunAgent starts a new agent container on the given instance for the task.
 // Returns the container ID on success.
 func (m *Manager) RunAgent(ctx context.Context, instance *models.Instance, task *models.Task) (string, error) {
-	cmd := m.buildRunCommand(task)
+	secrets := m.buildSecretEnvPairs(task)
+
+	var cmd string
+	if m.config.Mode == config.ModeLocal && len(secrets) > 0 {
+		envFile, err := writeEnvFile(secrets)
+		if err != nil {
+			return "", fmt.Errorf("write secret env file: %w", err)
+		}
+		defer os.Remove(envFile)
+		cmd = m.buildRunCommand(task, envFile)
+	} else if len(secrets) > 0 {
+		dockerCmd := m.buildRunCommand(task, "\"$_ef\"")
+		cmd = wrapWithRemoteEnvFile(dockerCmd, secrets)
+	} else {
+		cmd = m.buildRunCommand(task, "")
+	}
 
 	output, err := m.runCommand(ctx, instance.InstanceID, cmd)
 	if err != nil {
@@ -85,22 +101,28 @@ func (m *Manager) GetLogs(ctx context.Context, instanceID, containerID string, t
 }
 
 // buildRunCommand constructs the full `docker run` command for an agent task.
-func (m *Manager) buildRunCommand(task *models.Task) string {
+// envFilePath, if non-empty, adds an --env-file flag for secret env vars.
+func (m *Manager) buildRunCommand(task *models.Task, envFilePath string) string {
 	envFlags := m.buildEnvFlags(task)
 	volumeFlags := m.buildVolumeFlags()
+	envFileFlag := ""
+	if envFilePath != "" {
+		envFileFlag = "--env-file " + envFilePath
+	}
 
 	return fmt.Sprintf(
-		"docker run -d --cpus=%d --memory=%dg %s %s %s",
+		"docker run -d --cpus=%d --memory=%dg %s %s %s %s",
 		m.config.ContainerCPUs,
 		m.config.ContainerMemGB,
+		envFileFlag,
 		volumeFlags,
 		strings.Join(envFlags, " "),
 		m.config.AgentImage,
 	)
 }
 
-// buildEnvFlags assembles the -e flags for the docker run command from the
-// task configuration and global config.
+// buildEnvFlags assembles the -e flags for non-secret env vars. Secret
+// credentials (API keys, tokens) are handled separately via --env-file.
 func (m *Manager) buildEnvFlags(task *models.Task) []string {
 	flags := []string{
 		envFlag("TASK_ID", task.ID),
@@ -132,21 +154,67 @@ func (m *Manager) buildEnvFlags(task *models.Task) []string {
 		flags = append(flags, envFlag("TASK_CONTEXT", shellEscape(task.Context)))
 	}
 
-	if m.config.AuthMode == config.AuthModeAPIKey {
-		flags = append(flags, envFlag("ANTHROPIC_API_KEY", m.config.AnthropicAPIKey))
-	}
-	if m.config.OpenAIAPIKey != "" {
-		flags = append(flags, envFlag("OPENAI_API_KEY", m.config.OpenAIAPIKey))
-	}
-	if m.config.GitHubToken != "" {
-		flags = append(flags, envFlag("GITHUB_TOKEN", m.config.GitHubToken))
-	}
-
 	for k, v := range task.EnvVars {
 		flags = append(flags, envFlag(k, shellEscape(v)))
 	}
 
 	return flags
+}
+
+// buildSecretEnvPairs returns KEY=VALUE pairs for secret credentials, suitable
+// for writing to a Docker env file. These are kept out of the docker run
+// command line to avoid exposure in process lists and logs.
+func (m *Manager) buildSecretEnvPairs(task *models.Task) []string {
+	_ = task // reserved for future per-task secrets
+	var pairs []string
+	if m.config.AuthMode == config.AuthModeAPIKey && m.config.AnthropicAPIKey != "" {
+		pairs = append(pairs, "ANTHROPIC_API_KEY="+m.config.AnthropicAPIKey)
+	}
+	if m.config.OpenAIAPIKey != "" {
+		pairs = append(pairs, "OPENAI_API_KEY="+m.config.OpenAIAPIKey)
+	}
+	if m.config.GitHubToken != "" {
+		pairs = append(pairs, "GITHUB_TOKEN="+m.config.GitHubToken)
+	}
+	return pairs
+}
+
+// writeEnvFile writes KEY=VALUE pairs to a temp file for use with --env-file.
+// Returns the file path. Caller must os.Remove the file when done.
+// Returns ("", nil) if pairs is empty.
+func writeEnvFile(pairs []string) (string, error) {
+	if len(pairs) == 0 {
+		return "", nil
+	}
+	f, err := os.CreateTemp("", "backflow-env-*")
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	for _, p := range pairs {
+		if _, err := fmt.Fprintln(f, p); err != nil {
+			os.Remove(f.Name())
+			return "", err
+		}
+	}
+	return f.Name(), nil
+}
+
+// wrapWithRemoteEnvFile wraps a docker run command with temp env file
+// creation and cleanup on a remote host (for SSM execution). The secrets
+// still appear in the SSM command parameters but are kept off the EC2
+// process list and out of docker inspect.
+func wrapWithRemoteEnvFile(dockerCmd string, secrets []string) string {
+	escaped := make([]string, len(secrets))
+	for i, s := range secrets {
+		escaped[i] = shellEscape(s)
+	}
+	return fmt.Sprintf(
+		"_ef=$(mktemp) && printf '%%s\\n' %s > \"$_ef\" && %s; _rc=$?; rm -f \"$_ef\"; exit $_rc",
+		strings.Join(escaped, " "),
+		dockerCmd,
+	)
 }
 
 // buildVolumeFlags returns the -v flag for mounting Claude credentials when

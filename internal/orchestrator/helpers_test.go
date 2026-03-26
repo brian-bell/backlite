@@ -208,6 +208,29 @@ func (s *mockStore) ClearTaskAssignment(_ context.Context, id string) error {
 	return nil
 }
 
+func (s *mockStore) MarkReadyForRetry(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if t, ok := s.tasks[id]; ok {
+		t.ReadyForRetry = true
+	}
+	return nil
+}
+
+func (s *mockStore) RetryTask(_ context.Context, id string, _ int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if t, ok := s.tasks[id]; ok {
+		t.Status = models.TaskStatusPending
+		t.InstanceID = ""
+		t.ContainerID = ""
+		t.ReadyForRetry = false
+		t.RetryCount++
+		t.UserRetryCount++
+	}
+	return nil
+}
+
 func (s *mockStore) UpdateInstanceStatus(_ context.Context, id string, status models.InstanceStatus) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -415,6 +438,7 @@ func newTestOrchestrator(s store.Store, bus *notify.EventBus, opts ...func(*Orch
 		Mode:              config.ModeLocal,
 		AuthMode:          config.AuthModeAPIKey,
 		ContainersPerInst: 4,
+		MaxUserRetries:    2,
 		PollInterval:      5 * time.Second,
 	}
 	o := &Orchestrator{

@@ -171,6 +171,53 @@ func TestCancellation(t *testing.T) {
 	waitForOrchestratorIdle(t, 60*time.Second)
 }
 
+func TestCancelAndRetry(t *testing.T) {
+	resetBetweenTests(t)
+	t.Cleanup(dumpLogsOnFailure(t))
+
+	// Create a long-running task (timeout outcome sleeps forever)
+	task := client.CreateTask(t, map[string]any{
+		"prompt":   "test cancel and retry",
+		"env_vars": map[string]string{"FAKE_OUTCOME": "timeout"},
+	})
+	taskID := taskIDFromCreate(t, task)
+
+	// Wait for it to start running
+	client.WaitForStatus(t, taskID, "running", 30*time.Second)
+
+	// Cancel it
+	client.DeleteTask(t, taskID)
+
+	// Wait for cancelled status and cleanup (ready_for_retry becomes true).
+	// Docker stop uses a 30s timeout before SIGKILL, so allow 60s for cleanup.
+	client.WaitForStatus(t, taskID, "cancelled", 30*time.Second)
+	client.WaitForReadyForRetry(t, taskID, 60*time.Second)
+
+	// Retry via REST API
+	retried := client.RetryTask(t, taskID)
+	if retried["status"] != "pending" {
+		t.Fatalf("after retry: status = %q, want pending", retried["status"])
+	}
+
+	// Wait for it to start running again (still timeout outcome)
+	client.WaitForStatus(t, taskID, "running", 60*time.Second)
+
+	// Verify retry_count incremented
+	running := client.GetTask(t, taskID)
+	retryCount, _ := running["retry_count"].(float64)
+	if retryCount != 1 {
+		t.Fatalf("retry_count = %v, want 1", retryCount)
+	}
+	userRetryCount, _ := running["user_retry_count"].(float64)
+	if userRetryCount != 1 {
+		t.Fatalf("user_retry_count = %v, want 1", userRetryCount)
+	}
+
+	// Cancel again and wait for idle to clean up
+	client.DeleteTask(t, taskID)
+	waitForOrchestratorIdle(t, 60*time.Second)
+}
+
 func TestWebhookResilience(t *testing.T) {
 	resetBetweenTests(t)
 	t.Cleanup(dumpLogsOnFailure(t))

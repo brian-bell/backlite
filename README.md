@@ -130,6 +130,7 @@ curl -X POST http://localhost:8080/api/v1/tasks \
 | `GET` | `/api/v1/tasks` | List tasks (`?status=`, `?limit=`, `?offset=`) |
 | `GET` | `/api/v1/tasks/{id}` | Get task details |
 | `DELETE` | `/api/v1/tasks/{id}` | Cancel a task |
+| `POST` | `/api/v1/tasks/{id}/retry` | Retry a failed/cancelled/interrupted task |
 | `GET` | `/api/v1/tasks/{id}/logs` | Container logs (`?tail=100`) |
 | `GET` | `/api/v1/health` | Health check |
 | `GET` | `/debug/stats` | Operational stats (PID, uptime, running tasks, pool metrics) |
@@ -333,6 +334,7 @@ Defaults are set in `internal/config/config.go` and can be overridden via env va
 | `BACKFLOW_DEFAULT_SELF_REVIEW` | Self-review by default |
 | `BACKFLOW_DEFAULT_SAVE_AGENT_OUTPUT` | Save agent output by default |
 | `BACKFLOW_AGENT_IMAGE` | Docker image for agent containers (see config for default) |
+| `BACKFLOW_MAX_USER_RETRIES` | Max user-initiated retries per task (see config for default) |
 | `BACKFLOW_CONTAINER_CPUS` | CPU cores per container |
 | `BACKFLOW_CONTAINER_MEMORY_GB` | Memory (GB) per container |
 
@@ -368,7 +370,7 @@ Defaults are set in `internal/config/config.go` and can be overridden via env va
 | `BACKFLOW_WEBHOOK_URL` | | Webhook endpoint URL |
 | `BACKFLOW_WEBHOOK_EVENTS` | all | Comma-separated event filter |
 
-Events: `task.created`, `task.running`, `task.completed`, `task.failed`, `task.needs_input`, `task.interrupted`, `task.recovering`, `task.cancelled`
+Events: `task.created`, `task.running`, `task.completed`, `task.failed`, `task.needs_input`, `task.interrupted`, `task.recovering`, `task.cancelled`, `task.retry`
 
 ### Discord
 
@@ -383,8 +385,6 @@ Events: `task.created`, `task.running`, `task.completed`, `task.failed`, `task.n
 | `BACKFLOW_DISCORD_EVENTS` | all | Comma-separated event filter |
 
 See [docs/discord-setup.md](docs/discord-setup.md) for full setup instructions.
-
-> **Known issue:** Task retry via Discord (button and `/backflow retry`) is broken — clicking Retry immediately after Cancel requeues the task before the old container is stopped, so the old container runs to completion instead of a new one starting.
 
 ### SMS (Twilio)
 

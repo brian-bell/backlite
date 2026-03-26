@@ -149,15 +149,8 @@ func buttonsForEvent(event Event) []discord.Button {
 			Label:    "Cancel",
 			CustomID: discord.CustomIDCancelPrefix + event.TaskID,
 		}}
-	case EventTaskFailed, EventTaskInterrupted:
-		return []discord.Button{{
-			Type:     discord.ComponentTypeButton,
-			Style:    discord.ButtonStylePrimary,
-			Label:    "Retry",
-			CustomID: discord.CustomIDRetryPrefix + event.TaskID,
-		}}
-	case EventTaskCancelled:
-		if event.ReadyForRetry {
+	case EventTaskFailed, EventTaskInterrupted, EventTaskCancelled:
+		if event.ReadyForRetry && !event.RetryLimitReached {
 			return []discord.Button{{
 				Type:     discord.ComponentTypeButton,
 				Style:    discord.ButtonStylePrimary,
@@ -207,10 +200,12 @@ func discordTitleForEvent(event Event) string {
 	case EventTaskNeedsInput:
 		return "Task needs input"
 	case EventTaskCancelled:
-		if event.ReadyForRetry {
+		if event.ReadyForRetry || event.RetryLimitReached {
 			return "Task cancelled"
 		}
 		return "Cancellation requested"
+	case EventTaskRetry:
+		return "Task retried"
 	default:
 		return "Task update"
 	}
@@ -245,6 +240,10 @@ func discordEmbedContent(event Event) (string, []discord.EmbedField, int) {
 		}
 		return fmt.Sprintf("Task %s completed.", event.TaskID), fields, 0x57F287
 	case EventTaskFailed:
+		desc := fmt.Sprintf("Task %s failed.", event.TaskID)
+		if event.RetryLimitReached {
+			desc = fmt.Sprintf("Task %s failed. Retry limit reached.", event.TaskID)
+		}
 		fields := []discord.EmbedField{
 			{Name: "Task", Value: event.TaskID, Inline: true},
 		}
@@ -254,7 +253,7 @@ func discordEmbedContent(event Event) (string, []discord.EmbedField, int) {
 		if event.AgentLogTail != "" {
 			fields = append(fields, discord.EmbedField{Name: "Log Tail", Value: truncate(event.AgentLogTail, maxEmbedTextLength), Inline: false})
 		}
-		return fmt.Sprintf("Task %s failed.", event.TaskID), fields, 0xED4245
+		return desc, fields, 0xED4245
 	case EventTaskInterrupted:
 		return fmt.Sprintf("Task %s was interrupted and will be retried.", event.TaskID), []discord.EmbedField{
 			{Name: "Task", Value: event.TaskID, Inline: true},
@@ -265,7 +264,9 @@ func discordEmbedContent(event Event) (string, []discord.EmbedField, int) {
 		}, 0x5865F2
 	case EventTaskCancelled:
 		desc := fmt.Sprintf("Task %s cancellation requested. Stopping container...", event.TaskID)
-		if event.ReadyForRetry {
+		if event.RetryLimitReached {
+			desc = fmt.Sprintf("Task %s has been cancelled. Retry limit reached.", event.TaskID)
+		} else if event.ReadyForRetry {
 			desc = fmt.Sprintf("Task %s has been cancelled and is ready to retry.", event.TaskID)
 		}
 		return desc, []discord.EmbedField{
@@ -282,6 +283,10 @@ func discordEmbedContent(event Event) (string, []discord.EmbedField, int) {
 			fields = append(fields, discord.EmbedField{Name: "Log Tail", Value: truncate(event.AgentLogTail, maxEmbedTextLength), Inline: false})
 		}
 		return fmt.Sprintf("Task %s needs input.", event.TaskID), fields, 0xFAA61A
+	case EventTaskRetry:
+		return fmt.Sprintf("Task %s has been queued for retry.", event.TaskID), []discord.EmbedField{
+			{Name: "Task", Value: event.TaskID, Inline: true},
+		}, 0x5865F2
 	default:
 		return fmt.Sprintf("Task %s: %s", event.TaskID, event.Type), []discord.EmbedField{
 			{Name: "Task", Value: event.TaskID, Inline: true},

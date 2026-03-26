@@ -44,7 +44,11 @@ case "$FAKE_OUTCOME" in
         exit 1
         ;;
     timeout)
-        exec sleep infinity
+        # Use a signal-aware sleep so Docker stop terminates quickly.
+        # PID 1 ignores SIGTERM by default; installing a trap exits cleanly.
+        trap 'exit 0' TERM INT
+        sleep infinity &
+        wait
         ;;
     crash)
         # exit 137 simulates SIGKILL (128+9). Direct kill -9 $$ doesn't work

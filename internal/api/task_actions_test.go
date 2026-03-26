@@ -13,12 +13,12 @@ import (
 // taskActionStore implements the subset of store.Store needed by CancelTask and RetryTask.
 type taskActionStore struct {
 	store.Store
-	task       *models.Task
-	getErr     error
-	cancelErr  error
-	requeueErr error
-	cancelled  []string
-	requeued   []string
+	task      *models.Task
+	getErr    error
+	cancelErr error
+	retryErr  error
+	cancelled []string
+	retried   []string
 }
 
 func (s *taskActionStore) GetTask(_ context.Context, id string) (*models.Task, error) {
@@ -36,9 +36,9 @@ func (s *taskActionStore) CancelTask(_ context.Context, id string) error {
 	return s.cancelErr
 }
 
-func (s *taskActionStore) RequeueTask(_ context.Context, id, _ string) error {
-	s.requeued = append(s.requeued, id)
-	return s.requeueErr
+func (s *taskActionStore) RetryTask(_ context.Context, id string, _ int) error {
+	s.retried = append(s.retried, id)
+	return s.retryErr
 }
 
 // --- CancelTask tests ---
@@ -152,59 +152,74 @@ func TestCancelTask_StoreError(t *testing.T) {
 
 // --- RetryTask tests ---
 
-func TestRetryTask_FailedTask(t *testing.T) {
+func TestRetryTask_FailedTask_Ready(t *testing.T) {
 	s := &taskActionStore{
-		task: &models.Task{ID: "bf_1", Status: models.TaskStatusFailed},
+		task: &models.Task{ID: "bf_1", Status: models.TaskStatusFailed, ReadyForRetry: true},
 	}
 
-	err := RetryTask(context.Background(), "bf_1", s)
+	err := RetryTask(context.Background(), "bf_1", s, 2)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(s.requeued) != 1 || s.requeued[0] != "bf_1" {
-		t.Errorf("requeued = %v, want [bf_1]", s.requeued)
+	if len(s.retried) != 1 || s.retried[0] != "bf_1" {
+		t.Errorf("retried = %v, want [bf_1]", s.retried)
 	}
 }
 
-func TestRetryTask_InterruptedTask(t *testing.T) {
+func TestRetryTask_InterruptedTask_Ready(t *testing.T) {
 	s := &taskActionStore{
-		task: &models.Task{ID: "bf_1", Status: models.TaskStatusInterrupted},
+		task: &models.Task{ID: "bf_1", Status: models.TaskStatusInterrupted, ReadyForRetry: true},
 	}
 
-	err := RetryTask(context.Background(), "bf_1", s)
+	err := RetryTask(context.Background(), "bf_1", s, 2)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(s.requeued) != 1 {
-		t.Errorf("requeued = %v, want [bf_1]", s.requeued)
+	if len(s.retried) != 1 {
+		t.Errorf("retried = %v, want [bf_1]", s.retried)
 	}
 }
 
-func TestRetryTask_CancelledTask(t *testing.T) {
+func TestRetryTask_CancelledTask_Ready(t *testing.T) {
 	s := &taskActionStore{
-		task: &models.Task{ID: "bf_1", Status: models.TaskStatusCancelled},
+		task: &models.Task{ID: "bf_1", Status: models.TaskStatusCancelled, ReadyForRetry: true},
 	}
 
-	err := RetryTask(context.Background(), "bf_1", s)
+	err := RetryTask(context.Background(), "bf_1", s, 2)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(s.requeued) != 1 {
-		t.Errorf("requeued = %v, want [bf_1]", s.requeued)
+	if len(s.retried) != 1 {
+		t.Errorf("retried = %v, want [bf_1]", s.retried)
 	}
 }
 
-func TestRetryTask_CancelledButContainerStillRunning_ReturnsError(t *testing.T) {
+func TestRetryTask_NotReady_ReturnsError(t *testing.T) {
 	s := &taskActionStore{
-		task: &models.Task{ID: "bf_1", Status: models.TaskStatusCancelled, ContainerID: "arn:aws:ecs:task/123"},
+		task:     &models.Task{ID: "bf_1", Status: models.TaskStatusCancelled, ReadyForRetry: false},
+		retryErr: fmt.Errorf("task bf_1 is not ready for retry"),
 	}
 
-	err := RetryTask(context.Background(), "bf_1", s)
+	err := RetryTask(context.Background(), "bf_1", s, 2)
 	if err == nil {
-		t.Fatal("expected error when container is still assigned")
+		t.Fatal("expected error when task is not ready for retry")
 	}
-	if len(s.requeued) != 0 {
-		t.Errorf("should not have requeued, got %v", s.requeued)
+	if len(s.retried) != 1 {
+		t.Errorf("should have attempted atomic retry (pre-flight passes), got %v", s.retried)
+	}
+}
+
+func TestRetryTask_CapReached_ReturnsError(t *testing.T) {
+	s := &taskActionStore{
+		task: &models.Task{ID: "bf_1", Status: models.TaskStatusFailed, ReadyForRetry: true, UserRetryCount: 2},
+	}
+
+	err := RetryTask(context.Background(), "bf_1", s, 2)
+	if err == nil {
+		t.Fatal("expected error when retry cap is reached")
+	}
+	if len(s.retried) != 0 {
+		t.Errorf("should not have attempted retry, got %v", s.retried)
 	}
 }
 
@@ -213,19 +228,19 @@ func TestRetryTask_RunningTask_ReturnsError(t *testing.T) {
 		task: &models.Task{ID: "bf_1", Status: models.TaskStatusRunning},
 	}
 
-	err := RetryTask(context.Background(), "bf_1", s)
+	err := RetryTask(context.Background(), "bf_1", s, 2)
 	if err == nil {
 		t.Fatal("expected error for running task")
 	}
-	if len(s.requeued) != 0 {
-		t.Errorf("should not have requeued")
+	if len(s.retried) != 0 {
+		t.Errorf("should not have retried")
 	}
 }
 
 func TestRetryTask_NotFound(t *testing.T) {
 	s := &taskActionStore{getErr: store.ErrNotFound}
 
-	err := RetryTask(context.Background(), "bf_missing", s)
+	err := RetryTask(context.Background(), "bf_missing", s, 2)
 	if err == nil {
 		t.Fatal("expected error for missing task")
 	}
@@ -233,11 +248,11 @@ func TestRetryTask_NotFound(t *testing.T) {
 
 func TestRetryTask_StoreError(t *testing.T) {
 	s := &taskActionStore{
-		task:       &models.Task{ID: "bf_1", Status: models.TaskStatusFailed},
-		requeueErr: fmt.Errorf("db error"),
+		task:     &models.Task{ID: "bf_1", Status: models.TaskStatusFailed, ReadyForRetry: true},
+		retryErr: fmt.Errorf("db error"),
 	}
 
-	err := RetryTask(context.Background(), "bf_1", s)
+	err := RetryTask(context.Background(), "bf_1", s, 2)
 	if err == nil {
 		t.Fatal("expected error when store fails")
 	}

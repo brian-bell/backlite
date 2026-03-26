@@ -71,6 +71,8 @@ func (s *interruptionStore) CompleteTask(context.Context, string, store.TaskResu
 }
 func (s *interruptionStore) CancelTask(context.Context, string) error               { return nil }
 func (s *interruptionStore) ClearTaskAssignment(context.Context, string) error      { return nil }
+func (s *interruptionStore) MarkReadyForRetry(context.Context, string) error        { return nil }
+func (s *interruptionStore) RetryTask(context.Context, string, int) error           { return nil }
 func (s *interruptionStore) CreateInstance(context.Context, *models.Instance) error { return nil }
 func (s *interruptionStore) GetInstance(context.Context, string) (*models.Instance, error) {
 	return nil, store.ErrNotFound

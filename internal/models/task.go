@@ -3,6 +3,7 @@ package models
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"strings"
 	"time"
@@ -67,6 +68,8 @@ type Task struct {
 	InstanceID      string            `json:"instance_id,omitempty"`
 	ContainerID     string            `json:"container_id,omitempty"`
 	RetryCount      int               `json:"retry_count"`
+	UserRetryCount  int               `json:"user_retry_count"`
+	ReadyForRetry   bool              `json:"ready_for_retry"`
 	CostUSD         float64           `json:"cost_usd,omitempty"`
 	ElapsedTimeSec  int               `json:"elapsed_time_sec,omitempty"`
 	ReplyChannel    string            `json:"reply_channel,omitempty"`
@@ -195,6 +198,15 @@ func (r *CreateTaskRequest) Validate() error {
 	}
 	if r.MaxRuntimeSec < 0 {
 		return fmt.Errorf("max_runtime_sec must be non-negative")
+	}
+	if r.MaxRuntimeSec > math.MaxInt32 {
+		return fmt.Errorf("max_runtime_sec exceeds maximum allowed value")
+	}
+	if r.MaxTurns < 0 {
+		return fmt.Errorf("max_turns must be non-negative")
+	}
+	if r.MaxTurns > math.MaxInt32 {
+		return fmt.Errorf("max_turns exceeds maximum allowed value")
 	}
 	if r.Harness != "" {
 		switch Harness(r.Harness) {

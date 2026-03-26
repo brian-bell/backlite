@@ -72,8 +72,8 @@ const taskColumns = `id, status, task_mode, harness, repo_url, branch, target_br
 	model, effort, max_budget_usd, max_runtime_sec, max_turns,
 	create_pr, self_review, save_agent_output, pr_title, pr_body, pr_url, output_url,
 	allowed_tools, claude_md, env_vars,
-	instance_id, container_id, retry_count, cost_usd, elapsed_time_sec, error,
-	reply_channel,
+	instance_id, container_id, retry_count, user_retry_count, cost_usd, elapsed_time_sec, error,
+	ready_for_retry, reply_channel,
 	created_at, updated_at, started_at, completed_at`
 
 func (s *PostgresStore) CreateTask(ctx context.Context, task *models.Task) error {
@@ -93,8 +93,8 @@ func (s *PostgresStore) CreateTask(ctx context.Context, task *models.Task) error
 			model, effort, max_budget_usd, max_runtime_sec, max_turns,
 			create_pr, self_review, save_agent_output, pr_title, pr_body, pr_url, output_url,
 			allowed_tools, claude_md, env_vars,
-			instance_id, container_id, retry_count, cost_usd, elapsed_time_sec, error,
-			reply_channel,
+			instance_id, container_id, retry_count, user_retry_count, cost_usd, elapsed_time_sec, error,
+			ready_for_retry, reply_channel,
 			created_at, updated_at, started_at, completed_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7,
@@ -102,9 +102,9 @@ func (s *PostgresStore) CreateTask(ctx context.Context, task *models.Task) error
 			$10, $11, $12, $13, $14,
 			$15, $16, $17, $18, $19, $20, $21,
 			$22, $23, $24,
-			$25, $26, $27, $28, $29, $30,
-			$31,
-			$32, $33, $34, $35
+			$25, $26, $27, $28, $29, $30, $31,
+			$32, $33,
+			$34, $35, $36, $37
 		)`,
 		task.ID, task.Status, task.TaskMode, task.Harness, task.RepoURL, task.Branch, task.TargetBranch,
 		task.Prompt, task.Context, task.Model, task.Effort,
@@ -112,8 +112,8 @@ func (s *PostgresStore) CreateTask(ctx context.Context, task *models.Task) error
 		task.CreatePR, task.SelfReview, task.SaveAgentOutput,
 		task.PRTitle, task.PRBody, task.PRURL, task.OutputURL,
 		allowedTools, task.ClaudeMD, envVars,
-		task.InstanceID, task.ContainerID, task.RetryCount, task.CostUSD, task.ElapsedTimeSec, task.Error,
-		task.ReplyChannel,
+		task.InstanceID, task.ContainerID, task.RetryCount, task.UserRetryCount, task.CostUSD, task.ElapsedTimeSec, task.Error,
+		task.ReadyForRetry, task.ReplyChannel,
 		task.CreatedAt, task.UpdatedAt, task.StartedAt, task.CompletedAt,
 	)
 	return err
@@ -212,7 +212,7 @@ func (s *PostgresStore) RequeueTask(ctx context.Context, id string, reason strin
 	now := time.Now().UTC()
 	_, err := s.q.Exec(ctx,
 		`UPDATE tasks SET status=$1, instance_id='', container_id='', started_at=NULL,
-		 retry_count=retry_count+1, error=$2, updated_at=$3 WHERE id=$4`,
+		 retry_count=retry_count+1, ready_for_retry=false, error=$2, updated_at=$3 WHERE id=$4`,
 		models.TaskStatusPending, "re-queued: "+reason+" at "+now.Format(time.RFC3339),
 		now, id,
 	)
@@ -234,6 +234,38 @@ func (s *PostgresStore) ClearTaskAssignment(ctx context.Context, id string) erro
 		time.Now().UTC(), id,
 	)
 	return err
+}
+
+func (s *PostgresStore) MarkReadyForRetry(ctx context.Context, id string) error {
+	_, err := s.q.Exec(ctx,
+		"UPDATE tasks SET ready_for_retry=true, updated_at=$1 WHERE id=$2",
+		time.Now().UTC(), id,
+	)
+	return err
+}
+
+// RetryTask atomically requeues a task for user-initiated retry. It checks
+// ready_for_retry=true and user_retry_count < maxRetries in the WHERE clause
+// to prevent retries before cleanup and double-retries. Returns ErrNotFound
+// if no row matched (task not ready or cap reached).
+func (s *PostgresStore) RetryTask(ctx context.Context, id string, maxRetries int) error {
+	now := time.Now().UTC()
+	tag, err := s.q.Exec(ctx,
+		`UPDATE tasks SET status=$1, instance_id='', container_id='', started_at=NULL,
+		 completed_at=NULL, retry_count=retry_count+1, user_retry_count=user_retry_count+1,
+		 ready_for_retry=false, error=$2, updated_at=$3
+		 WHERE id=$4 AND ready_for_retry=true AND user_retry_count < $5`,
+		models.TaskStatusPending,
+		"re-queued: user_retry at "+now.Format(time.RFC3339),
+		now, id, maxRetries,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("task %s is not ready for retry", id)
+	}
+	return nil
 }
 
 // --- Instances ---
@@ -468,8 +500,8 @@ func scanPGTask(row pgScanner) (*models.Task, error) {
 		&t.CreatePR, &t.SelfReview, &t.SaveAgentOutput,
 		&t.PRTitle, &t.PRBody, &t.PRURL, &t.OutputURL,
 		&allowedTools, &t.ClaudeMD, &envVars,
-		&t.InstanceID, &t.ContainerID, &t.RetryCount, &t.CostUSD, &t.ElapsedTimeSec, &t.Error,
-		&t.ReplyChannel,
+		&t.InstanceID, &t.ContainerID, &t.RetryCount, &t.UserRetryCount, &t.CostUSD, &t.ElapsedTimeSec, &t.Error,
+		&t.ReadyForRetry, &t.ReplyChannel,
 		&t.CreatedAt, &t.UpdatedAt, &t.StartedAt, &t.CompletedAt,
 	)
 	if err != nil {

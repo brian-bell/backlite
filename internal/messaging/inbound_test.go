@@ -64,6 +64,8 @@ func (m *mockStore) CompleteTask(context.Context, string, store.TaskResult) erro
 func (m *mockStore) RequeueTask(context.Context, string, string) error { return nil }
 func (m *mockStore) CancelTask(context.Context, string) error          { return nil }
 func (m *mockStore) ClearTaskAssignment(context.Context, string) error { return nil }
+func (m *mockStore) MarkReadyForRetry(context.Context, string) error   { return nil }
+func (m *mockStore) RetryTask(context.Context, string, int) error      { return nil }
 func (m *mockStore) UpdateInstanceStatus(context.Context, string, models.InstanceStatus) error {
 	return nil
 }

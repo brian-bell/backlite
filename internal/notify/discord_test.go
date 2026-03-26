@@ -236,7 +236,7 @@ func TestDiscordNotifier_FiltersEvents(t *testing.T) {
 
 func TestDiscordNotifier_AllEvents(t *testing.T) {
 	notifier := NewDiscordNotifier(nil, nil, "", nil)
-	for _, et := range []EventType{EventTaskCreated, EventTaskRunning, EventTaskCompleted, EventTaskFailed, EventTaskInterrupted, EventTaskRecovering, EventTaskCancelled} {
+	for _, et := range []EventType{EventTaskCreated, EventTaskRunning, EventTaskCompleted, EventTaskFailed, EventTaskInterrupted, EventTaskRecovering, EventTaskCancelled, EventTaskRetry} {
 		if err := notifier.Notify(Event{Type: et, TaskID: "bf_TEST001", Timestamp: time.Now()}); err != nil {
 			t.Fatalf("Notify(%s) = %v, want nil", et, err)
 		}
@@ -372,10 +372,14 @@ func TestButtonsForEvent(t *testing.T) {
 		{"running gets cancel", Event{Type: EventTaskRunning, TaskID: "bf_1"}, "Cancel"},
 		{"created gets cancel", Event{Type: EventTaskCreated, TaskID: "bf_1"}, "Cancel"},
 		{"recovering gets cancel", Event{Type: EventTaskRecovering, TaskID: "bf_1"}, "Cancel"},
-		{"failed gets retry", Event{Type: EventTaskFailed, TaskID: "bf_1"}, "Retry"},
-		{"interrupted gets retry", Event{Type: EventTaskInterrupted, TaskID: "bf_1"}, "Retry"},
+		{"failed ready gets retry", Event{Type: EventTaskFailed, TaskID: "bf_1", ReadyForRetry: true}, "Retry"},
+		{"failed not ready no buttons", Event{Type: EventTaskFailed, TaskID: "bf_1"}, ""},
+		{"failed retry limit no buttons", Event{Type: EventTaskFailed, TaskID: "bf_1", ReadyForRetry: true, RetryLimitReached: true}, ""},
+		{"interrupted ready gets retry", Event{Type: EventTaskInterrupted, TaskID: "bf_1", ReadyForRetry: true}, "Retry"},
+		{"interrupted not ready no buttons", Event{Type: EventTaskInterrupted, TaskID: "bf_1"}, ""},
 		{"cancelled no buttons", Event{Type: EventTaskCancelled, TaskID: "bf_1"}, ""},
 		{"cancelled ready gets retry", Event{Type: EventTaskCancelled, TaskID: "bf_1", ReadyForRetry: true}, "Retry"},
+		{"cancelled retry limit no buttons", Event{Type: EventTaskCancelled, TaskID: "bf_1", ReadyForRetry: true, RetryLimitReached: true}, ""},
 		{"completed no buttons", Event{Type: EventTaskCompleted, TaskID: "bf_1"}, ""},
 	}
 

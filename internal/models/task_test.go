@@ -44,6 +44,21 @@ func TestCreateTaskRequestValidation(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "max_runtime_sec overflow int32",
+			req:     CreateTaskRequest{Prompt: "Fix", MaxRuntimeSec: 4872788700515609550},
+			wantErr: true,
+		},
+		{
+			name:    "negative max_turns",
+			req:     CreateTaskRequest{Prompt: "Fix", MaxTurns: -1},
+			wantErr: true,
+		},
+		{
+			name:    "max_turns overflow int32",
+			req:     CreateTaskRequest{Prompt: "Fix", MaxTurns: 4872788700515609550},
+			wantErr: true,
+		},
+		{
 			name:    "valid effort low",
 			req:     CreateTaskRequest{Prompt: "Fix", Effort: "low"},
 			wantErr: false,

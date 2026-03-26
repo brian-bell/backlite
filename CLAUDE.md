@@ -54,6 +54,7 @@ Two goroutines: chi REST API on `:8080` + polling orchestrator (5s default). Thr
 - `GET /tasks` — List tasks (query params: `status`, `limit`, `offset`)
 - `GET /tasks/{id}` — Get task
 - `DELETE /tasks/{id}` — Cancel task (sets status to `cancelled`)
+- `POST /tasks/{id}/retry` — Retry a failed/interrupted/cancelled task (atomic, gated by `ready_for_retry` and user retry cap)
 - `GET /tasks/{id}/logs` — Stream container logs
 - `POST /webhooks/discord` — Discord interaction endpoint (signature-verified)
 - `POST /webhooks/sms/inbound` — Twilio inbound SMS webhook
@@ -89,11 +90,9 @@ Node.js 20 image with Claude Code CLI + Codex CLI + git + gh. `entrypoint.sh`: c
 
 ### Webhook events
 
-`task.created`, `task.running`, `task.completed`, `task.failed`, `task.needs_input`, `task.interrupted`, `task.recovering`, `task.cancelled`
+`task.created`, `task.running`, `task.completed`, `task.failed`, `task.needs_input`, `task.interrupted`, `task.recovering`, `task.cancelled`, `task.retry`
 
 ### Discord integration
-
-> **Known issue:** Task retry via Discord (button and `/backflow retry`) is broken — clicking Retry immediately after Cancel requeues the task before the old container is stopped, so the old container runs to completion instead of a new one starting.
 
 When `BACKFLOW_DISCORD_APP_ID` is set, Backflow enables the Discord integration:
 

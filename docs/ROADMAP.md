@@ -24,21 +24,15 @@ Backflow is a self-hosted Go service that runs AI coding agents (Claude Code, Co
 
 The test harness (1.0) is the prerequisite for everything else. Once it exists, all subsequent features are developed TDD-style against the full running system — not just unit-tested against mocks. This is how we use Backflow to develop Backflow.
 
-### 1.0 Black-Box Test Harness, Soak Testing, and OpenAPI Spec ([#99](https://github.com/backflow-labs/backflow/issues/99))
-- **Problem:** No system-level testing — unit tests exercise internal packages but can't catch regressions in the interaction between API server, orchestrator, Docker container lifecycle, and webhook delivery. No way to detect slow-burn problems (memory leaks, connection pool exhaustion, container accumulation)
-- **Proposal:** Black-box test harness that starts the full Backflow binary as a subprocess, submits tasks via HTTP using a fake agent image (parameterized by `FAKE_OUTCOME` env var), and asserts on the complete task lifecycle. Includes 3 small prod code changes (configurable agent image via `BACKFLOW_AGENT_IMAGE`, `max_runtime_sec` field, `/debug/stats` endpoint), a programmable webhook listener, OpenAPI spec with kin-openapi contract validation, schemathesis fuzz testing, and a soak test for long-running stability. 7 black-box tests: happy path, agent failure, needs input, timeout, crash, cancellation, webhook resilience
-- **Files:** `test/blackbox/`, `test/soak/`, `api/openapi.yaml`, `internal/config/config.go`, `internal/models/task.go`, `internal/orchestrator/docker/docker.go`, `internal/orchestrator/monitor.go`, `internal/store/postgres.go`, `internal/api/server.go`, new migration, Makefile targets (`test-blackbox`, `test-soak`, `test-schema`)
-- **Metric:** `make test-blackbox` passes all 7 tests with every HTTP response validated against OpenAPI spec; `make test-soak --short` completes 10-minute run with all metrics within thresholds
-- **Harness validation:** This *is* the harness — all subsequent features are developed TDD-style against it
+### 1.0 Black-Box Test Harness, Soak Testing, and OpenAPI Spec ✅
+- **Status:** Implemented (see #99, #153, #154, #156, #157)
+- **What shipped:** Black-box test harness (`test/blackbox/`) with fake agent image (`FAKE_OUTCOME`-parameterized), 7 outcome tests (happy path, agent failure, needs input, timeout, crash, cancellation, webhook resilience), programmable webhook listener, soak test (`test/soak/`) for memory/pool/container leak detection, `/debug/stats` endpoint, `max_runtime_sec` task field, `BACKFLOW_AGENT_IMAGE` config, OpenAPI spec (`api/openapi.yaml`), Schemathesis fuzz testing, CI scripts with dedicated blackbox job
 
 ---
 
-### 1.1 Fix Discord Retry Race Condition
-- **Problem:** Known bug — clicking Retry after Cancel requeues the task before the old container stops
-- **Proposal:** Add `ready_for_retry` boolean column to `tasks` table. `RetryTask` checks this flag instead of relying on `ContainerID` being cleared. `monitorCancelled` sets the flag after container cleanup succeeds, then re-emits the cancelled event with `WithReadyForRetry()`
-- **Files:** `internal/api/task_actions.go`, `internal/orchestrator/monitor.go`, `internal/store/postgres.go`, new migration
-- **Metric:** Zero stale containers after retry; retry button appears only after cleanup
-- **Harness validation:** Add black-box test: cancel task → wait for cleanup → retry → verify new container starts cleanly
+### 1.1 Fix Discord Retry Race Condition ✅
+- **Status:** Implemented (see #161)
+- **What shipped:** `ready_for_retry` + `user_retry_count` columns, atomic `store.RetryTask`, `POST /tasks/{id}/retry` endpoint, `task.retry` event, configurable retry cap (`BACKFLOW_MAX_USER_RETRIES`, default 2), `TestCancelAndRetry` black-box test
 
 ### 1.2 API Authentication
 - **Problem:** REST API has zero auth — anyone can create tasks and spend real money

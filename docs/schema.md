@@ -36,10 +36,12 @@ Stores agent tasks submitted via the REST API.
 | `env_vars` | `JSONB` | `'{}'` | JSON object of environment variables passed to the container. |
 | `instance_id` | `TEXT` | `''` | EC2 instance ID where the container runs. |
 | `container_id` | `TEXT` | `''` | Docker container ID on the assigned instance. |
-| `retry_count` | `INTEGER` | `0` | Number of times this task has been re-queued (e.g. after spot interruption). |
+| `retry_count` | `INTEGER` | `0` | Number of times this task has been re-queued (includes both auto-requeues and user retries). |
+| `user_retry_count` | `INTEGER` | `0` | Number of user-initiated retries (separate from auto-requeues like spot interruption). Capped by `BACKFLOW_MAX_USER_RETRIES`. |
 | `cost_usd` | `DOUBLE PRECISION` | `0` | Tracked cost in USD. |
 | `elapsed_time_sec` | `INTEGER` | `0` | Wall-clock seconds the agent ran. |
 | `error` | `TEXT` | `''` | Error message if the task failed. |
+| `ready_for_retry` | `BOOLEAN` | `false` | Whether the task is ready for user retry. Set `true` after container cleanup completes (for failed/cancelled/interrupted tasks under the retry cap). Reset to `false` on requeue. |
 | `reply_channel` | `TEXT` | `''` | Messaging reply channel (e.g. `sms:+15551234567`). Set when task is created via SMS. |
 | `created_at` | `TIMESTAMPTZ` | `now()` | When the task was created. |
 | `updated_at` | `TIMESTAMPTZ` | `now()` | Last modification time. |

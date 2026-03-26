@@ -178,7 +178,7 @@ func main() {
 				return api.CancelTask(context.Background(), taskID, db, bus)
 			}),
 			RetryTask: discord.RetryTaskFunc(func(taskID string) error {
-				return api.RetryTask(context.Background(), taskID, db)
+				return api.RetryTask(context.Background(), taskID, db, cfg.MaxUserRetries)
 			}),
 			AllowedRoles: cfg.DiscordAllowedRoles,
 			CommandName:  cfg.DiscordCommandName,

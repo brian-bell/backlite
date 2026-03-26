@@ -210,6 +210,49 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelope"
 
+  /api/v1/tasks/{id}/retry:
+    post:
+      operationId: retryTask
+      summary: Retry a failed, interrupted, or cancelled task
+      description: >
+        Atomically requeues a task for retry. The task must be in a terminal
+        retryable state (failed, interrupted, or cancelled), be marked ready
+        for retry (container cleanup complete), and be under the configured
+        user retry cap. Returns 409 Conflict if the task is not retryable.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Task ID (bf_-prefixed ULID)
+          schema:
+            type: string
+            pattern: "^bf_[0-9A-Z]{26}$"
+      responses:
+        "200":
+          description: Task successfully requeued for retry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskEnvelope"
+        "404":
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: Task cannot be retried (wrong status, not ready, or cap reached)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
   /api/v1/tasks/{id}/logs:
     get:
       operationId: getTaskLogs
@@ -391,6 +434,8 @@ components:
         - self_review
         - save_agent_output
         - retry_count
+        - user_retry_count
+        - ready_for_retry
         - created_at
         - updated_at
       properties:
@@ -487,6 +532,15 @@ components:
           type: integer
           minimum: 0
           example: 0
+        user_retry_count:
+          type: integer
+          minimum: 0
+          description: Number of user-initiated retries (separate from auto-requeues)
+          example: 0
+        ready_for_retry:
+          type: boolean
+          description: Whether the task is ready for user retry (cleanup complete and under cap)
+          example: false
         cost_usd:
           type: number
           minimum: 0

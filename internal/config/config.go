@@ -120,6 +120,9 @@ type Config struct {
 	// Database
 	DatabaseURL string
 
+	// Retry
+	MaxUserRetries int
+
 	// Orchestrator
 	PollInterval time.Duration
 }
@@ -188,6 +191,7 @@ func Load() (*Config, error) {
 		DiscordEvents:         envCSV("BACKFLOW_DISCORD_EVENTS"),
 		LogFile:               os.Getenv("BACKFLOW_LOG_FILE"),
 		DatabaseURL:           os.Getenv("BACKFLOW_DATABASE_URL"),
+		MaxUserRetries:        envInt("BACKFLOW_MAX_USER_RETRIES", 2),
 		PollInterval:          time.Duration(envInt("BACKFLOW_POLL_INTERVAL_SEC", 5)) * time.Second,
 	}
 

@@ -22,19 +22,21 @@ const (
 	EventTaskInterrupted EventType = "task.interrupted"
 	EventTaskRecovering  EventType = "task.recovering"
 	EventTaskCancelled   EventType = "task.cancelled"
+	EventTaskRetry       EventType = "task.retry"
 )
 
 type Event struct {
-	Type          EventType `json:"event"`
-	TaskID        string    `json:"task_id"`
-	RepoURL       string    `json:"repo_url,omitempty"`
-	Prompt        string    `json:"prompt,omitempty"`
-	Message       string    `json:"message,omitempty"`
-	PRURL         string    `json:"pr_url,omitempty"`
-	AgentLogTail  string    `json:"agent_log_tail,omitempty"`
-	ReplyChannel  string    `json:"reply_channel,omitempty"`
-	ReadyForRetry bool      `json:"ready_for_retry,omitempty"`
-	Timestamp     time.Time `json:"timestamp"`
+	Type              EventType `json:"event"`
+	TaskID            string    `json:"task_id"`
+	RepoURL           string    `json:"repo_url,omitempty"`
+	Prompt            string    `json:"prompt,omitempty"`
+	Message           string    `json:"message,omitempty"`
+	PRURL             string    `json:"pr_url,omitempty"`
+	AgentLogTail      string    `json:"agent_log_tail,omitempty"`
+	ReplyChannel      string    `json:"reply_channel,omitempty"`
+	ReadyForRetry     bool      `json:"ready_for_retry,omitempty"`
+	RetryLimitReached bool      `json:"retry_limit_reached,omitempty"`
+	Timestamp         time.Time `json:"timestamp"`
 }
 
 // Emitter emits task lifecycle events.

@@ -27,6 +27,10 @@ func (o *Orchestrator) monitorCancelled(ctx context.Context) {
 
 	for _, task := range tasks {
 		if task.ContainerID == "" {
+			// No container to clean up (cancelled while pending/provisioning).
+			if !task.ReadyForRetry {
+				o.markRetryReady(ctx, task, notify.EventTaskCancelled)
+			}
 			continue
 		}
 
@@ -36,8 +40,7 @@ func (o *Orchestrator) monitorCancelled(ctx context.Context) {
 		// Clear assignment so we don't process this task again
 		o.store.ClearTaskAssignment(ctx, task.ID)
 
-		// Re-emit cancelled event with ReadyForRetry so Discord shows the Retry button
-		o.bus.Emit(notify.NewEvent(notify.EventTaskCancelled, task, notify.WithReadyForRetry()))
+		o.markRetryReady(ctx, task, notify.EventTaskCancelled)
 
 		log.Info().Str("task_id", task.ID).Msg("cleaned up cancelled task")
 	}
@@ -127,19 +130,26 @@ func (o *Orchestrator) handleCompletion(ctx context.Context, task *models.Task, 
 	switch {
 	case status.Complete || (status.ExitCode == 0 && !status.NeedsInput):
 		result.Status = models.TaskStatusCompleted
-		o.bus.Emit(notify.NewEvent(notify.EventTaskCompleted, task, notify.WithContainerStatus(status.PRURL, "", status.LogTail)))
 	case status.NeedsInput:
 		result.Status = models.TaskStatusFailed
 		result.Error = "agent needs input"
-		o.bus.Emit(notify.NewEvent(notify.EventTaskNeedsInput, task, notify.WithContainerStatus("", status.Question, status.LogTail)))
 	default:
 		result.Status = models.TaskStatusFailed
 		result.Error = status.Error
-		o.bus.Emit(notify.NewEvent(notify.EventTaskFailed, task, notify.WithContainerStatus("", status.Error, status.LogTail)))
 	}
 
 	o.store.CompleteTask(ctx, task.ID, result)
 	o.releaseSlot(ctx, task)
+
+	// Emit exactly one event per completion.
+	switch {
+	case result.Status == models.TaskStatusCompleted:
+		o.bus.Emit(notify.NewEvent(notify.EventTaskCompleted, task, notify.WithContainerStatus(status.PRURL, "", status.LogTail)))
+	case status.NeedsInput:
+		o.markRetryReady(ctx, task, notify.EventTaskNeedsInput, notify.WithContainerStatus("", status.Question, status.LogTail))
+	default:
+		o.markRetryReady(ctx, task, notify.EventTaskFailed, notify.WithContainerStatus("", result.Error, status.LogTail))
+	}
 
 	log.Info().Str("task_id", task.ID).Str("status", string(result.Status)).Msg("task completed")
 }
@@ -245,6 +255,22 @@ func (o *Orchestrator) saveTaskMetadata(ctx context.Context, task *models.Task) 
 	log.Debug().Str("task_id", task.ID).Msg("saved task metadata to S3")
 }
 
+// markRetryReady marks the task as cleanup-complete and emits the appropriate
+// event. Always sets ready_for_retry=true so the monitor won't re-process
+// this task on subsequent ticks. The retry cap is enforced by the atomic
+// store.RetryTask WHERE clause, not by this flag.
+func (o *Orchestrator) markRetryReady(ctx context.Context, task *models.Task, eventType notify.EventType, extraOpts ...notify.EventOption) {
+	o.store.MarkReadyForRetry(ctx, task.ID)
+
+	if task.UserRetryCount < o.config.MaxUserRetries {
+		opts := append([]notify.EventOption{notify.WithReadyForRetry()}, extraOpts...)
+		o.bus.Emit(notify.NewEvent(eventType, task, opts...))
+	} else {
+		opts := append([]notify.EventOption{notify.WithRetryLimitReached()}, extraOpts...)
+		o.bus.Emit(notify.NewEvent(eventType, task, opts...))
+	}
+}
+
 // killTask stops the container, marks the task as failed, and releases the slot.
 func (o *Orchestrator) killTask(ctx context.Context, task *models.Task, reason string) {
 	if task.ContainerID != "" {
@@ -265,7 +291,7 @@ func (o *Orchestrator) killTask(ctx context.Context, task *models.Task, reason s
 
 	o.releaseSlot(ctx, task)
 
-	o.bus.Emit(notify.NewEvent(notify.EventTaskFailed, task, notify.WithContainerStatus("", reason, "")))
+	o.markRetryReady(ctx, task, notify.EventTaskFailed, notify.WithContainerStatus("", reason, ""))
 }
 
 // requeueTask resets a running task back to pending so it will be dispatched

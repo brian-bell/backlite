@@ -65,7 +65,7 @@ func TestMonitorCancelled_DecrementsRunning(t *testing.T) {
 	notifier.mu.Unlock()
 }
 
-func TestMonitorCancelled_IgnoresWithoutContainer(t *testing.T) {
+func TestMonitorCancelled_NoContainer_SetsReadyForRetry(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
 
@@ -75,16 +75,69 @@ func TestMonitorCancelled_IgnoresWithoutContainer(t *testing.T) {
 		CompletedAt: &now,
 	})
 
-	bus, _ := newTestBus()
-	defer bus.Close()
+	bus, notifier := newTestBus()
 	o := newTestOrchestrator(s, bus)
 	o.running = 0
 
 	o.monitorCancelled(context.Background())
+	bus.Close()
 
 	if o.running != 0 {
 		t.Errorf("running = %d, want 0", o.running)
 	}
+
+	task, _ := s.GetTask(context.Background(), "bf_cancel_prov")
+	if !task.ReadyForRetry {
+		t.Error("expected ReadyForRetry=true for cancelled task without container")
+	}
+
+	events := notifier.eventTypes()
+	if len(events) != 1 || events[0] != notify.EventTaskCancelled {
+		t.Errorf("events = %v, want [task.cancelled]", events)
+	}
+	notifier.mu.Lock()
+	if !notifier.events[0].ReadyForRetry {
+		t.Error("expected ReadyForRetry=true on event")
+	}
+	notifier.mu.Unlock()
+}
+
+func TestMonitorCancelled_AtCapStillSetsReadyForRetry(t *testing.T) {
+	s := newMockStore()
+	now := time.Now().UTC()
+
+	s.CreateTask(context.Background(), &models.Task{
+		ID:             "bf_cancel_cap",
+		Status:         models.TaskStatusCancelled,
+		UserRetryCount: 2, // at cap (MaxUserRetries=2)
+		CompletedAt:    &now,
+	})
+
+	bus, notifier := newTestBus()
+	o := newTestOrchestrator(s, bus)
+
+	// Run monitor twice — should NOT emit twice
+	o.monitorCancelled(context.Background())
+	o.monitorCancelled(context.Background())
+	bus.Close()
+
+	task, _ := s.GetTask(context.Background(), "bf_cancel_cap")
+	if !task.ReadyForRetry {
+		t.Error("expected ReadyForRetry=true even at cap (signals cleanup done)")
+	}
+
+	events := notifier.eventTypes()
+	if len(events) != 1 {
+		t.Errorf("expected exactly 1 event (not re-emitted on second tick), got %d", len(events))
+	}
+	notifier.mu.Lock()
+	if !notifier.events[0].RetryLimitReached {
+		t.Error("expected RetryLimitReached=true on event")
+	}
+	if notifier.events[0].ReadyForRetry {
+		t.Error("expected ReadyForRetry=false on event when at cap")
+	}
+	notifier.mu.Unlock()
 }
 
 func TestMonitorCancelled_RecoveringTaskCancelled(t *testing.T) {
@@ -320,6 +373,16 @@ func TestHandleCompletion_Failure(t *testing.T) {
 	if len(types) != 1 || types[0] != notify.EventTaskFailed {
 		t.Errorf("expected [task.failed], got %v", types)
 	}
+
+	// After failure, task should be marked ready for retry (under cap)
+	if !task.ReadyForRetry {
+		t.Error("expected ReadyForRetry=true after failure (under retry cap)")
+	}
+	n.mu.Lock()
+	if !n.events[0].ReadyForRetry {
+		t.Error("expected ReadyForRetry=true on failed event")
+	}
+	n.mu.Unlock()
 }
 
 func TestHandleCompletion_PropagatesInferredFields(t *testing.T) {
@@ -419,6 +482,11 @@ func TestKillTask(t *testing.T) {
 	types := n.eventTypes()
 	if len(types) != 1 || types[0] != notify.EventTaskFailed {
 		t.Errorf("expected [task.failed], got %v", types)
+	}
+
+	// After kill, task should be marked ready for retry (under cap)
+	if !task.ReadyForRetry {
+		t.Error("expected ReadyForRetry=true after kill (under retry cap)")
 	}
 }
 

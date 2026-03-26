@@ -46,6 +46,8 @@ type Store interface {
 	RequeueTask(ctx context.Context, id string, reason string) error
 	CancelTask(ctx context.Context, id string) error
 	ClearTaskAssignment(ctx context.Context, id string) error
+	MarkReadyForRetry(ctx context.Context, id string) error
+	RetryTask(ctx context.Context, id string, maxRetries int) error
 
 	// Instances
 	CreateInstance(ctx context.Context, inst *models.Instance) error

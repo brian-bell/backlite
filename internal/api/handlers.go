@@ -169,6 +169,26 @@ func (h *Handlers) GetTaskLogs(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(logs))
 }
 
+func (h *Handlers) RetryTask(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if err := RetryTask(r.Context(), id, h.store, h.config.MaxUserRetries); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "task not found")
+			return
+		}
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	h.bus.Emit(notify.NewEvent(notify.EventTaskRetry, &models.Task{ID: id}))
+	task, err := h.store.GetTask(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get task after retry")
+		return
+	}
+	task.RedactReplyChannel()
+	writeJSON(w, http.StatusOK, task)
+}
+
 func (h *Handlers) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":    "ok",

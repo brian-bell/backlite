@@ -141,6 +141,37 @@ func (c *BackflowClient) DeleteTask(t *testing.T, id string) {
 	}
 }
 
+// RetryTask retries a task by ID via POST /api/v1/tasks/{id}/retry.
+func (c *BackflowClient) RetryTask(t *testing.T, id string) map[string]any {
+	t.Helper()
+	resp, err := c.http.Post(c.baseURL+"/api/v1/tasks/"+id+"/retry", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST /api/v1/tasks/%s/retry: %v", id, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("POST /api/v1/tasks/%s/retry: status %d, body: %s", id, resp.StatusCode, respBody)
+	}
+
+	return c.unwrapData(t, resp)
+}
+
+// WaitForReadyForRetry polls GetTask until ready_for_retry is true.
+func (c *BackflowClient) WaitForReadyForRetry(t *testing.T, id string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		task := c.GetTask(t, id)
+		if ready, ok := task["ready_for_retry"].(bool); ok && ready {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for task %s to become ready_for_retry", id)
+}
+
 // GetLogs retrieves the logs for a task as plain text.
 func (c *BackflowClient) GetLogs(t *testing.T, id string) string {
 	t.Helper()

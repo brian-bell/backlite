@@ -16,6 +16,13 @@ func WithReadyForRetry() EventOption {
 	}
 }
 
+// WithRetryLimitReached marks the event to indicate the user retry cap has been reached.
+func WithRetryLimitReached() EventOption {
+	return func(e *Event) {
+		e.RetryLimitReached = true
+	}
+}
+
 // WithContainerStatus sets fields that come from container inspection.
 func WithContainerStatus(prURL, message, agentLogTail string) EventOption {
 	return func(e *Event) {

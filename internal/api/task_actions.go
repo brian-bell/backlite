@@ -32,23 +32,28 @@ func CancelTask(ctx context.Context, taskID string, s store.Store, bus notify.Em
 	}
 }
 
-// RetryTask validates the task is in a retryable state and requeues it.
-// This is the shared implementation used by both the REST API handler
-// and the Discord interaction handler.
-func RetryTask(ctx context.Context, taskID string, s store.Store) error {
+// RetryTask validates the task is in a retryable state and atomically requeues
+// it. Pre-flight checks provide specific error messages; the actual requeue is
+// protected by an atomic UPDATE ... WHERE ready_for_retry=true to prevent
+// retries before cleanup and double-retries.
+func RetryTask(ctx context.Context, taskID string, s store.Store, maxRetries int) error {
 	task, err := s.GetTask(ctx, taskID)
 	if err != nil {
 		return err
 	}
 
-	if task.ContainerID != "" {
-		return fmt.Errorf("task %s is still being cleaned up, try again shortly", taskID)
-	}
-
 	switch task.Status {
 	case models.TaskStatusFailed, models.TaskStatusInterrupted, models.TaskStatusCancelled:
-		return s.RequeueTask(ctx, taskID, "user_retry")
 	default:
 		return fmt.Errorf("task %s cannot be retried (status: %s)", taskID, task.Status)
 	}
+
+	if task.UserRetryCount >= maxRetries {
+		return fmt.Errorf("task %s has reached the retry limit (%d/%d)", taskID, task.UserRetryCount, maxRetries)
+	}
+
+	if err := s.RetryTask(ctx, taskID, maxRetries); err != nil {
+		return fmt.Errorf("task %s is still being cleaned up, try again shortly", taskID)
+	}
+	return nil
 }

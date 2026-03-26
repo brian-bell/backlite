@@ -6,6 +6,10 @@ usage() {
 Usage: $(basename "$0") [options]
 
 Run the Backflow soak test (long-running resource leak detector).
+Exercises cancel, retry, retry limits, and mixed failure modes.
+
+Requires: BACKFLOW_CONTAINERS_PER_INSTANCE >= 4 (multi-step scenarios
+need concurrent container slots). Set BACKFLOW_AGENT_IMAGE=backflow-fake-agent.
 
 WARNING: This will TRUNCATE the tasks table in your database.
 

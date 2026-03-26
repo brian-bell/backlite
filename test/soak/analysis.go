@@ -10,6 +10,14 @@ type MetricSample struct {
 	ExitedContainers int
 	TasksCompleted   int
 	TasksFailed      int
+	TasksCancelled   int
+}
+
+// ScenarioOutcome tracks attempt/pass/fail counts for a multi-step scenario type.
+type ScenarioOutcome struct {
+	Attempted int
+	Passed    int
+	Failed    int
 }
 
 // Failure describes a single threshold violation.
@@ -26,7 +34,8 @@ type Report struct {
 
 // Analyze checks collected metric samples against thresholds and returns a report.
 // tasksSubmitted is the total number of tasks submitted during the test.
-func Analyze(samples []MetricSample, tasksSubmitted int) Report {
+// scenarios maps multi-step scenario names to their outcomes (may be nil).
+func Analyze(samples []MetricSample, tasksSubmitted int, scenarios map[string]ScenarioOutcome) Report {
 	var failures []Failure
 
 	if len(samples) < 2 {
@@ -63,14 +72,27 @@ func Analyze(samples []MetricSample, tasksSubmitted int) Report {
 		})
 	}
 
-	// Error rate: fail if > 10% of completed+failed tasks are failures
+	// Error rate: fail if > 50% of completed+failed tasks are failures.
+	// Threshold is 50% (not 10%) because the scenario mix intentionally
+	// includes fail, needs_input, and retry outcomes.
 	totalFinished := final.TasksCompleted + final.TasksFailed
 	if totalFinished > 0 {
 		errorRate := float64(final.TasksFailed) / float64(totalFinished)
-		if errorRate > 0.10 {
+		if errorRate > 0.50 {
 			failures = append(failures, Failure{
 				Name:    "error_rate",
-				Message: fmt.Sprintf("error rate %.1f%% (%d/%d) exceeds 10%% threshold", errorRate*100, final.TasksFailed, totalFinished),
+				Message: fmt.Sprintf("error rate %.1f%% (%d/%d) exceeds 50%% threshold", errorRate*100, final.TasksFailed, totalFinished),
+			})
+		}
+	}
+
+	// Scenario health: for multi-step scenarios with enough attempts,
+	// fail if more than half of the attempts failed.
+	for name, sc := range scenarios {
+		if sc.Attempted >= 3 && sc.Failed > sc.Attempted/2 {
+			failures = append(failures, Failure{
+				Name:    "scenario_health",
+				Message: fmt.Sprintf("scenario %q: %d/%d attempts failed", name, sc.Failed, sc.Attempted),
 			})
 		}
 	}

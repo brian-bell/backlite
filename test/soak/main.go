@@ -1,12 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -22,10 +20,11 @@ func main() {
 	var (
 		duration     = flag.Duration("duration", 1*time.Hour, "total test duration")
 		short        = flag.Bool("short", false, "run a short soak test (10 minutes)")
-		taskInterval = flag.Duration("task-interval", 30*time.Second, "interval between task submissions")
+		taskInterval = flag.Duration("task-interval", 3*time.Second, "interval between task submissions")
 		apiURL       = flag.String("api-url", "http://localhost:8080", "Backflow API base URL")
 		agentImage   = flag.String("agent-image", "backflow-fake-agent:test", "agent image name for container counting")
 		databaseURL  = flag.String("database-url", os.Getenv("BACKFLOW_DATABASE_URL"), "PostgreSQL connection string (default: $BACKFLOW_DATABASE_URL)")
+		maxRetries   = flag.Int("max-retries", 2, "max user retries (must match server BACKFLOW_MAX_USER_RETRIES)")
 	)
 	flag.Parse()
 
@@ -47,6 +46,8 @@ func main() {
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	deadline := time.Now().Add(*duration)
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
 
 	var (
 		mu             sync.Mutex
@@ -55,10 +56,15 @@ func main() {
 		submitErrors   int
 	)
 
+	stats := newScenarioStats()
+
 	// Discover PID from /debug/stats on first collection.
 	var serverPID int
 
 	// --- Task submission loop ---
+	var wg sync.WaitGroup
+	multiStepSem := make(chan struct{}, 3) // limit concurrent multi-step scenarios (server needs BACKFLOW_CONTAINERS_PER_INSTANCE >= 4)
+
 	go func() {
 		submitTicker := time.NewTicker(*taskInterval)
 		defer submitTicker.Stop()
@@ -69,16 +75,46 @@ func main() {
 				return
 			}
 
-			err := submitTask(client, *apiURL)
+			sc := pickScenario()
+
+			if sc.MultiStep {
+				// Try to acquire the semaphore; downgrade to success if full.
+				select {
+				case multiStepSem <- struct{}{}:
+					wg.Add(1)
+					go func(s scenario) {
+						defer func() { <-multiStepSem; wg.Done() }()
+						switch s.Name {
+						case "cancel":
+							runCancelScenario(ctx, client, *apiURL, stats)
+						case "retry_cycle":
+							runRetryCycleScenario(ctx, client, *apiURL, stats)
+						case "retry_limit":
+							runRetryLimitScenario(ctx, client, *apiURL, *maxRetries, stats)
+						}
+					}(sc)
+					mu.Lock()
+					tasksSubmitted++
+					submitted := tasksSubmitted
+					mu.Unlock()
+					fmt.Printf("  [submit] task #%d: %s (multi-step)\n", submitted, sc.Name)
+					continue
+				default:
+					sc = scenarioTable[0] // semaphore full, downgrade
+				}
+			}
+
+			// Fire-and-forget: create the task and move on.
+			_, err := createTask(client, *apiURL, sc.FakeOutcome)
 			mu.Lock()
 			tasksSubmitted++
 			if err != nil {
 				submitErrors++
-				fmt.Printf("  [warn] task submit error: %v\n", err)
+				fmt.Printf("  [warn] task submit error (%s): %v\n", sc.Name, err)
 			}
 			submitted := tasksSubmitted
 			mu.Unlock()
-			fmt.Printf("  [submit] task #%d submitted\n", submitted)
+			fmt.Printf("  [submit] task #%d: %s\n", submitted, sc.Name)
 		}
 	}()
 
@@ -118,8 +154,18 @@ func main() {
 		sampleCount := len(samples)
 		mu.Unlock()
 
-		fmt.Printf("  [metric] sample #%d: rss=%dKB pool=%d/%d completed=%d failed=%d containers=%d\n",
-			sampleCount, s.RSSKB, s.PoolAcquired, s.PoolMax, s.TasksCompleted, s.TasksFailed, s.ExitedContainers)
+		fmt.Printf("  [metric] sample #%d: rss=%dKB pool=%d/%d completed=%d failed=%d cancelled=%d containers=%d\n",
+			sampleCount, s.RSSKB, s.PoolAcquired, s.PoolMax, s.TasksCompleted, s.TasksFailed, s.TasksCancelled, s.ExitedContainers)
+	}
+
+	// Wait for in-flight multi-step scenarios to finish (with a grace period).
+	fmt.Println("\n==> Waiting for in-flight scenarios...")
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Minute):
+		fmt.Println("  [warn] timed out waiting for in-flight scenarios")
 	}
 
 	// --- Final analysis ---
@@ -131,7 +177,8 @@ func main() {
 	finalSubmitted := tasksSubmitted
 	mu.Unlock()
 
-	report := Analyze(finalSamples, finalSubmitted)
+	scenarioSnap := stats.snapshot()
+	report := Analyze(finalSamples, finalSubmitted, scenarioSnap)
 
 	fmt.Printf("\n--- Soak Test Report ---\n")
 	fmt.Printf("Duration:        %s\n", *duration)
@@ -146,7 +193,15 @@ func main() {
 		fmt.Printf("RSS final:       %dKB\n", last.RSSKB)
 		fmt.Printf("Completed:       %d\n", last.TasksCompleted)
 		fmt.Printf("Failed:          %d\n", last.TasksFailed)
+		fmt.Printf("Cancelled:       %d\n", last.TasksCancelled)
 		fmt.Printf("Exited containers: %d\n", last.ExitedContainers)
+	}
+
+	if len(scenarioSnap) > 0 {
+		fmt.Printf("\n--- Scenario Stats ---\n")
+		for name, sc := range scenarioSnap {
+			fmt.Printf("  %-14s attempted=%d passed=%d failed=%d\n", name, sc.Attempted, sc.Passed, sc.Failed)
+		}
 	}
 
 	// --- Post-test cleanup ---
@@ -165,22 +220,6 @@ func main() {
 		}
 		os.Exit(1)
 	}
-}
-
-// submitTask POSTs a new task with FAKE_OUTCOME=success.
-func submitTask(client *http.Client, apiURL string) error {
-	body := `{"prompt":"soak test task","save_agent_output":false,"env_vars":{"FAKE_OUTCOME":"success"}}`
-	resp, err := client.Post(apiURL+"/api/v1/tasks", "application/json", bytes.NewBufferString(body))
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body)
-
-	if resp.StatusCode != http.StatusCreated {
-		return fmt.Errorf("unexpected status %d", resp.StatusCode)
-	}
-	return nil
 }
 
 // debugStatsResponse mirrors the /debug/stats JSON shape.
@@ -228,9 +267,10 @@ func collectMetrics(client *http.Client, apiURL, agentImage string, knownPID int
 	// 3. Count exited containers
 	sample.ExitedContainers = countContainers(agentImage)
 
-	// 4. Count completed and failed tasks
+	// 4. Count tasks by terminal status
 	sample.TasksCompleted = countTasksByStatus(client, apiURL, "completed")
 	sample.TasksFailed = countTasksByStatus(client, apiURL, "failed")
+	sample.TasksCancelled = countTasksByStatus(client, apiURL, "cancelled")
 
 	return sample, pid, nil
 }

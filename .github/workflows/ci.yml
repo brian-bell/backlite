@@ -128,11 +128,17 @@ jobs:
             --suppress-health-check filter_too_much \
             --max-examples 20 \
             --seed 42 \
+            --output-truncate false \
             --report-vcr-path /tmp/schemathesis-cassette.yaml
 
       - name: Print failure cassette
         if: failure()
-        run: cat /tmp/schemathesis-cassette.yaml 2>/dev/null || echo "No cassette file"
+        run: |
+          if [ -f /tmp/schemathesis-cassette.yaml ]; then
+            grep -B 10 "FAILURE" /tmp/schemathesis-cassette.yaml || cat /tmp/schemathesis-cassette.yaml | tail -200
+          else
+            echo "No cassette file"
+          fi
 
   deploy:
     runs-on: ubuntu-latest
@@ -150,6 +156,6 @@ jobs:
         uses: superfly/flyctl-actions/setup-flyctl@63da3ecc5e2793b98a3f2519b3d75d4f4c11cec2 # master
 
       - name: Deploy to Fly.io
-        run: flyctl deploy --remote-only
+        run: flyctl deploy --config fly.toml --remote-only
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

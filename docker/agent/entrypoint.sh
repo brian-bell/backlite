@@ -130,7 +130,20 @@ fi
 
 # Extract the result text — stream-json for claude, plain text for codex
 if [ "$HARNESS" = "codex" ]; then
-    PREP_RESULT=$(cat "$PREP_LOG")
+    # Codex CLI prints a banner before the model response and token stats
+    # after it.  Strip markdown fences, then extract the first balanced
+    # JSON object (track brace depth, stop when braces balance).
+    PREP_RESULT=$(sed '/^```/d' "$PREP_LOG" | awk '
+        /^\s*\{/ && !started { started=1 }
+        started {
+            print
+            for (i=1; i<=length($0); i++) {
+                c = substr($0, i, 1)
+                if (c == "{") depth++
+                else if (c == "}") depth--
+            }
+            if (depth == 0) exit
+        }')
 else
     PREP_RESULT=$(grep '"type":"result"' "$PREP_LOG" | tail -1 | jq -r '.result // empty' 2>/dev/null || true)
 fi

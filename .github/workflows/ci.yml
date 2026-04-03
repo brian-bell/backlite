@@ -127,7 +127,12 @@ jobs:
             --phases examples,coverage,fuzzing,stateful \
             --suppress-health-check filter_too_much \
             --max-examples 20 \
-            --seed 42
+            --seed 42 \
+            --report-vcr-path /tmp/schemathesis-cassette.yaml
+
+      - name: Print failure cassette
+        if: failure()
+        run: cat /tmp/schemathesis-cassette.yaml 2>/dev/null || echo "No cassette file"
 
   deploy:
     runs-on: ubuntu-latest

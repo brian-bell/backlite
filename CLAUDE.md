@@ -81,7 +81,7 @@ Long-running resource leak detector. Submits tasks at intervals, collects RSS, p
 
 ### Agent container (`docker/agent/`)
 
-Node.js 20 image with Claude Code CLI + Codex CLI + git + gh. `entrypoint.sh`: clone → checkout → inject CLAUDE.md → run agent (with retry up to 3 attempts) → commit → push → create PR → optional self-review. Supports two harnesses: `claude_code` (`--output-format stream-json`, `--max-turns`) and `codex` (`exec --dangerously-bypass-approvals-and-sandbox`). Both harnesses work in code and review modes. Writes `status.json` for Docker-based modes and emits a `BACKFLOW_STATUS_JSON:` line for Fargate log parsing.
+Node.js 24 image with Claude Code CLI + Codex CLI + git + gh. `entrypoint.sh`: clone → checkout → inject CLAUDE.md → run agent (with retry up to 3 attempts) → commit → push → create PR → optional self-review. Supports two harnesses: `claude_code` (`--output-format stream-json`, `--max-turns`) and `codex` (`exec --dangerously-bypass-approvals-and-sandbox`). Both harnesses work in code and review modes. Writes `status.json` for Docker-based modes and emits a `BACKFLOW_STATUS_JSON:` line for Fargate log parsing.
 
 ### Statuses
 
@@ -175,7 +175,7 @@ Two Fly apps: production (`backflow`, `fly.toml`) and dev (`backflow-dev`, `fly.
 
 **Production** auto-deploys on push to main via `.github/workflows/ci.yml`. `BACKFLOW_RESTRICT_API=true` blocks all `/api/v1/*` endpoints; webhook paths and `/health` are unaffected.
 
-**Dev** is deployed on demand via `make deploy-dev` (local) or the `Deploy Dev` workflow dispatch (GitHub Actions, takes a `ref` input). The dev machine auto-stops when idle (`auto_stop_machines = "stop"`, `min_machines_running = 0`).
+**Dev** is deployed on demand via `make deploy-dev` (local) or the `Deploy Dev` workflow dispatch (GitHub Actions, takes a `ref` input). The dev machine auto-stops when idle (`auto_stop_machines = "stop"`, `min_machines_running = 1`).
 
 AWS credentials for ECS/S3/CloudWatch are provided via the `backflow-fly` IAM user (created by `make setup-aws`). See `docs/fly-setup.md` for deployment steps.
 

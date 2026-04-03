@@ -178,6 +178,7 @@ func (o *Orchestrator) Start(ctx context.Context) {
 	log.Info().
 		Str("mode", string(o.config.Mode)).
 		Str("auth_mode", string(o.config.AuthMode)).
+		Str("agent_image", o.config.AgentImage).
 		Int("max_concurrent", o.config.MaxConcurrent()).
 		Dur("poll_interval", o.config.PollInterval).
 		Msg("orchestrator started")

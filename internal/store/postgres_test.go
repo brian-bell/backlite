@@ -15,6 +15,7 @@ import (
 
 	"github.com/backflow-labs/backflow/internal/models"
 	"github.com/jackc/pgx/v5/pgxpool"
+	pgvector "github.com/pgvector/pgvector-go"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -71,7 +72,7 @@ var sharedConnStr string
 func TestMain(m *testing.M) {
 	ctx := context.Background()
 
-	pgContainer, err := postgres.Run(ctx, "postgres:16-alpine",
+	pgContainer, err := postgres.Run(ctx, "pgvector/pgvector:pg16",
 		postgres.WithDatabase("backflow_test"),
 		postgres.WithUsername("test"),
 		postgres.WithPassword("test"),
@@ -1025,5 +1026,331 @@ func TestPG_GetDiscordTaskThread_NotFound(t *testing.T) {
 	_, err := s.GetDiscordTaskThread(ctx, "missing")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("GetDiscordTaskThread = %v, want ErrNotFound", err)
+	}
+}
+
+func TestPG_CreateReading(t *testing.T) {
+	s := testPostgresStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	// Need a task for the FK.
+	task := pgTestTask(t, s)
+
+	embedding := make([]float32, 1536)
+	embedding[0] = 0.1
+	embedding[1] = 0.9
+
+	r := &models.Reading{
+		ID:             "bf_READ001",
+		TaskID:         task.ID,
+		URL:            "https://example.com/article",
+		Title:          "Test Article",
+		TLDR:           "A short summary",
+		Tags:           []string{"go", "testing"},
+		Keywords:       []string{"tdd", "postgres"},
+		People:         []string{"Alice"},
+		Orgs:           []string{"Acme"},
+		NoveltyVerdict: "novel",
+		Connections: []models.Connection{
+			{ReadingID: "bf_READ000", Reason: "similar topic"},
+		},
+		Summary:   "A longer summary of the article.",
+		RawOutput: []byte(`{"key":"value"}`),
+		Embedding: embedding,
+		CreatedAt: now,
+	}
+
+	if err := s.CreateReading(ctx, r); err != nil {
+		t.Fatalf("CreateReading: %v", err)
+	}
+
+	// Read back via raw SQL to verify all fields.
+	var (
+		gotID, gotTaskID, gotURL, gotTitle, gotTLDR string
+		gotNovelty, gotSummary                      string
+		gotTags, gotKeywords, gotPeople, gotOrgs    []string
+		gotConnections, gotRawOutput                []byte
+		gotEmbedding                                string
+		gotCreatedAt                                time.Time
+	)
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, task_id, url, title, tldr,
+		       tags, keywords, people, orgs,
+		       novelty_verdict, connections, summary, raw_output,
+		       embedding::text, created_at
+		FROM readings WHERE id = $1`, r.ID).Scan(
+		&gotID, &gotTaskID, &gotURL, &gotTitle, &gotTLDR,
+		&gotTags, &gotKeywords, &gotPeople, &gotOrgs,
+		&gotNovelty, &gotConnections, &gotSummary, &gotRawOutput,
+		&gotEmbedding, &gotCreatedAt,
+	)
+	if err != nil {
+		t.Fatalf("query reading back: %v", err)
+	}
+
+	if gotID != r.ID {
+		t.Errorf("ID = %q, want %q", gotID, r.ID)
+	}
+	if gotTaskID != r.TaskID {
+		t.Errorf("TaskID = %q, want %q", gotTaskID, r.TaskID)
+	}
+	if gotURL != r.URL {
+		t.Errorf("URL = %q, want %q", gotURL, r.URL)
+	}
+	if gotTitle != r.Title {
+		t.Errorf("Title = %q, want %q", gotTitle, r.Title)
+	}
+	if gotTLDR != r.TLDR {
+		t.Errorf("TLDR = %q, want %q", gotTLDR, r.TLDR)
+	}
+	if gotNovelty != r.NoveltyVerdict {
+		t.Errorf("NoveltyVerdict = %q, want %q", gotNovelty, r.NoveltyVerdict)
+	}
+	if gotSummary != r.Summary {
+		t.Errorf("Summary = %q, want %q", gotSummary, r.Summary)
+	}
+	if len(gotTags) != len(r.Tags) || gotTags[0] != "go" || gotTags[1] != "testing" {
+		t.Errorf("Tags = %v, want %v", gotTags, r.Tags)
+	}
+	if len(gotKeywords) != len(r.Keywords) || gotKeywords[0] != "tdd" {
+		t.Errorf("Keywords = %v, want %v", gotKeywords, r.Keywords)
+	}
+	if len(gotPeople) != len(r.People) || gotPeople[0] != "Alice" {
+		t.Errorf("People = %v, want %v", gotPeople, r.People)
+	}
+	if len(gotOrgs) != len(r.Orgs) || gotOrgs[0] != "Acme" {
+		t.Errorf("Orgs = %v, want %v", gotOrgs, r.Orgs)
+	}
+	if !gotCreatedAt.Equal(r.CreatedAt) {
+		t.Errorf("CreatedAt = %v, want %v", gotCreatedAt, r.CreatedAt)
+	}
+	// Verify embedding is non-empty (starts with "[0.1,0.9,")
+	if gotEmbedding == "" || gotEmbedding[0] != '[' {
+		t.Errorf("Embedding = %q, want non-empty vector", gotEmbedding)
+	}
+}
+
+func TestPG_UpsertReading_Insert(t *testing.T) {
+	s := testPostgresStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	task := pgTestTask(t, s)
+
+	embedding := make([]float32, 1536)
+	embedding[0] = 0.5
+
+	r := &models.Reading{
+		ID:             "bf_READ002",
+		TaskID:         task.ID,
+		URL:            "https://example.com/new-article",
+		Title:          "New Article",
+		TLDR:           "Brand new",
+		Tags:           []string{"new"},
+		Keywords:       []string{"fresh"},
+		People:         []string{},
+		Orgs:           []string{},
+		NoveltyVerdict: "novel",
+		Connections:    []models.Connection{},
+		Summary:        "Full summary",
+		RawOutput:      []byte(`{}`),
+		Embedding:      embedding,
+		CreatedAt:      now,
+	}
+
+	if err := s.UpsertReading(ctx, r); err != nil {
+		t.Fatalf("UpsertReading (insert): %v", err)
+	}
+
+	// Verify row exists.
+	var gotTitle string
+	err := s.pool.QueryRow(ctx, "SELECT title FROM readings WHERE url = $1", r.URL).Scan(&gotTitle)
+	if err != nil {
+		t.Fatalf("query after upsert-insert: %v", err)
+	}
+	if gotTitle != "New Article" {
+		t.Errorf("Title = %q, want %q", gotTitle, "New Article")
+	}
+}
+
+func TestPG_UpsertReading_Update(t *testing.T) {
+	s := testPostgresStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	task := pgTestTask(t, s)
+
+	embedding := make([]float32, 1536)
+	embedding[0] = 0.3
+
+	original := &models.Reading{
+		ID:             "bf_READ003",
+		TaskID:         task.ID,
+		URL:            "https://example.com/updated",
+		Title:          "Original Title",
+		TLDR:           "Original TLDR",
+		Tags:           []string{"v1"},
+		Keywords:       []string{"old"},
+		People:         []string{},
+		Orgs:           []string{},
+		NoveltyVerdict: "novel",
+		Connections:    []models.Connection{},
+		Summary:        "Original summary",
+		RawOutput:      []byte(`{"v":1}`),
+		Embedding:      embedding,
+		CreatedAt:      now,
+	}
+	if err := s.CreateReading(ctx, original); err != nil {
+		t.Fatalf("CreateReading (seed): %v", err)
+	}
+
+	// Upsert with same URL but different content and a new ID (force re-read).
+	embedding[0] = 0.7
+	updated := &models.Reading{
+		ID:             "bf_READ004",
+		TaskID:         task.ID,
+		URL:            "https://example.com/updated",
+		Title:          "Updated Title",
+		TLDR:           "Updated TLDR",
+		Tags:           []string{"v2"},
+		Keywords:       []string{"new"},
+		People:         []string{"Bob"},
+		Orgs:           []string{"NewCo"},
+		NoveltyVerdict: "not_novel",
+		Connections:    []models.Connection{{ReadingID: "bf_READ001", Reason: "overlap"}},
+		Summary:        "Updated summary",
+		RawOutput:      []byte(`{"v":2}`),
+		Embedding:      embedding,
+		CreatedAt:      now,
+	}
+	if err := s.UpsertReading(ctx, updated); err != nil {
+		t.Fatalf("UpsertReading (update): %v", err)
+	}
+
+	// Verify exactly one row for that URL.
+	var count int
+	if err := s.pool.QueryRow(ctx, "SELECT count(*) FROM readings WHERE url = $1", original.URL).Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("row count = %d, want 1", count)
+	}
+
+	// Verify the row has updated content but keeps the original ID.
+	var gotID, gotTitle, gotTLDR, gotNovelty string
+	err := s.pool.QueryRow(ctx, "SELECT id, title, tldr, novelty_verdict FROM readings WHERE url = $1", original.URL).
+		Scan(&gotID, &gotTitle, &gotTLDR, &gotNovelty)
+	if err != nil {
+		t.Fatalf("query after upsert-update: %v", err)
+	}
+	if gotID != original.ID {
+		t.Errorf("ID = %q, want original %q (upsert should preserve ID)", gotID, original.ID)
+	}
+	if gotTitle != "Updated Title" {
+		t.Errorf("Title = %q, want %q", gotTitle, "Updated Title")
+	}
+	if gotTLDR != "Updated TLDR" {
+		t.Errorf("TLDR = %q, want %q", gotTLDR, "Updated TLDR")
+	}
+	if gotNovelty != "not_novel" {
+		t.Errorf("NoveltyVerdict = %q, want %q", gotNovelty, "not_novel")
+	}
+}
+
+func TestPG_MatchReadings_SimilarityOrdering(t *testing.T) {
+	s := testPostgresStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	task := pgTestTask(t, s)
+
+	// Create 3 readings with unit vectors along different dimensions.
+	// Reading A: dimension 0
+	// Reading B: dimension 1
+	// Reading C: dimension 2
+	makeEmbedding := func(dim int) []float32 {
+		v := make([]float32, 1536)
+		v[dim] = 1.0
+		return v
+	}
+
+	readings := []struct {
+		id    string
+		url   string
+		title string
+		dim   int
+	}{
+		{"bf_SIM_A", "https://example.com/a", "Article A", 0},
+		{"bf_SIM_B", "https://example.com/b", "Article B", 1},
+		{"bf_SIM_C", "https://example.com/c", "Article C", 2},
+	}
+	for _, rd := range readings {
+		r := &models.Reading{
+			ID:          rd.id,
+			TaskID:      task.ID,
+			URL:         rd.url,
+			Title:       rd.title,
+			Tags:        []string{},
+			Keywords:    []string{},
+			People:      []string{},
+			Orgs:        []string{},
+			Connections: []models.Connection{},
+			RawOutput:   []byte(`{}`),
+			Embedding:   makeEmbedding(rd.dim),
+			CreatedAt:   now,
+		}
+		if err := s.CreateReading(ctx, r); err != nil {
+			t.Fatalf("CreateReading %s: %v", rd.id, err)
+		}
+	}
+
+	// Query with a vector close to dimension 0 (should rank A first).
+	query := makeEmbedding(0)
+	query[1] = 0.1 // slight component toward B
+
+	rows, err := s.pool.Query(ctx, "SELECT id, title, similarity FROM reader.match_readings($1::vector, $2)", pgvector.NewVector(query), 3)
+	if err != nil {
+		t.Fatalf("match_readings: %v", err)
+	}
+	defer rows.Close()
+
+	type result struct {
+		ID         string
+		Title      string
+		Similarity float64
+	}
+	var results []result
+	for rows.Next() {
+		var r result
+		if err := rows.Scan(&r.ID, &r.Title, &r.Similarity); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		results = append(results, r)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+
+	if len(results) != 3 {
+		t.Fatalf("got %d results, want 3", len(results))
+	}
+
+	// A should be most similar (closest to dim 0).
+	if results[0].ID != "bf_SIM_A" {
+		t.Errorf("rank 1 = %q, want bf_SIM_A", results[0].ID)
+	}
+	// B should be second (slight component in dim 1).
+	if results[1].ID != "bf_SIM_B" {
+		t.Errorf("rank 2 = %q, want bf_SIM_B", results[1].ID)
+	}
+	// C should be last.
+	if results[2].ID != "bf_SIM_C" {
+		t.Errorf("rank 3 = %q, want bf_SIM_C", results[2].ID)
+	}
+
+	// Similarities should be monotonically decreasing.
+	for i := 1; i < len(results); i++ {
+		if results[i].Similarity >= results[i-1].Similarity {
+			t.Errorf("similarity[%d] = %f >= similarity[%d] = %f, want decreasing",
+				i, results[i].Similarity, i-1, results[i-1].Similarity)
+		}
 	}
 }

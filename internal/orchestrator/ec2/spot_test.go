@@ -107,6 +107,8 @@ func (s *interruptionStore) UpsertDiscordTaskThread(context.Context, *models.Dis
 func (s *interruptionStore) GetDiscordTaskThread(context.Context, string) (*models.DiscordTaskThread, error) {
 	return nil, store.ErrNotFound
 }
+func (s *interruptionStore) CreateReading(context.Context, *models.Reading) error       { return nil }
+func (s *interruptionStore) UpsertReading(context.Context, *models.Reading) error       { return nil }
 func (s *interruptionStore) WithTx(_ context.Context, fn func(store.Store) error) error { return fn(s) }
 func (s *interruptionStore) Close() error                                               { return nil }
 

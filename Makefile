@@ -146,11 +146,11 @@ tunnel:
 cloudflared-setup:
 	@$(ENV); bash scripts/cloudflared-setup.sh
 
-copy-env:
-	cp ~/dev/etc/.env .env
+restore-env:
+	cp ~/dev/etc/backflow/.env .env
 
-overwrite-env:
-	cp .env ~/dev/etc/.env
+backup-env:
+	cp .env ~/dev/etc/backflow/.env
 
 deps:
 	go mod tidy

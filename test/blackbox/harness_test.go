@@ -92,7 +92,7 @@ func TestMain(m *testing.M) {
 
 	// --- Step 3: Start Postgres via testcontainers ---
 	fmt.Println("==> Starting Postgres testcontainer...")
-	pgContainer, err := postgres.Run(ctx, "postgres:16-alpine",
+	pgContainer, err := postgres.Run(ctx, "pgvector/pgvector:pg16",
 		postgres.WithDatabase("backflow_blackbox"),
 		postgres.WithUsername("test"),
 		postgres.WithPassword("test"),

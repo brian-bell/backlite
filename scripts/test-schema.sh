@@ -72,7 +72,7 @@ docker run -d --name "$PG_CONTAINER" \
     -e POSTGRES_USER=backflow \
     -e POSTGRES_PASSWORD=backflow \
     -p "${PG_PORT}:5432" \
-    postgres:16-alpine >/dev/null
+    pgvector/pgvector:pg16 >/dev/null
 
 echo "Waiting for Postgres..."
 for i in $(seq 1 15); do

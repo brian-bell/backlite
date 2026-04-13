@@ -343,7 +343,9 @@ func (s *mockStore) WithTx(_ context.Context, fn func(store.Store) error) error 
 	return fn(s)
 }
 
-func (s *mockStore) Close() error { return nil }
+func (s *mockStore) CreateReading(context.Context, *models.Reading) error { return nil }
+func (s *mockStore) UpsertReading(context.Context, *models.Reading) error { return nil }
+func (s *mockStore) Close() error                                         { return nil }
 
 // --- Mock notifier ---
 

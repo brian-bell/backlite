@@ -39,7 +39,7 @@ var (
 func TestMain(m *testing.M) {
 	ctx := context.Background()
 
-	pgContainer, err := postgres.Run(ctx, "postgres:16-alpine",
+	pgContainer, err := postgres.Run(ctx, "pgvector/pgvector:pg16",
 		postgres.WithDatabase("backflow_test"),
 		postgres.WithUsername("test"),
 		postgres.WithPassword("test"),

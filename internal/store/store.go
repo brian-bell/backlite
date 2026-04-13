@@ -79,6 +79,10 @@ type Store interface {
 	GetAPIKeyByHash(ctx context.Context, keyHash string) (*models.APIKey, error)
 	CreateAPIKey(ctx context.Context, key *models.APIKey) error
 
+	// Readings
+	CreateReading(ctx context.Context, r *models.Reading) error
+	UpsertReading(ctx context.Context, r *models.Reading) error
+
 	// Transactions
 	WithTx(ctx context.Context, fn func(Store) error) error
 

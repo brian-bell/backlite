@@ -14,6 +14,7 @@ require (
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/oklog/ulid/v2 v2.1.1
+	github.com/pgvector/pgvector-go v0.3.0
 	github.com/pressly/goose/v3 v3.27.0
 	github.com/rs/zerolog v1.34.0
 	github.com/testcontainers/testcontainers-go v0.41.0

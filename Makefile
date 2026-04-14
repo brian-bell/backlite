@@ -1,9 +1,11 @@
 .PHONY: build run test clean lint \
        docker-agent-build docker-agent-build-local docker-agent-push docker-agent-deploy \
+       docker-reader-build docker-reader-build-local docker-reader-push docker-reader-deploy \
        docker-server-build docker-server-build-local docker-server-deploy \
        docker-fake-agent-build test-fake-agent test-blackbox test-schema test-soak \
        db-pending db-provisioning db-running db-completed db-failed db-interrupted db-cancelled db-recovering \
-       setup-aws deps tunnel cloudflared-setup test-docker-status-writer copy-env overwrite-env
+       setup-aws deps tunnel cloudflared-setup test-docker-status-writer test-reader-status-writer \
+       test-reader-scripts copy-env overwrite-env
 
 BINARY := backflow
 PKG := github.com/backflow-labs/backflow
@@ -32,6 +34,13 @@ test:
 
 test-docker-status-writer:
 	bash scripts/test-docker-status-writer.sh
+
+test-reader-status-writer:
+	bash scripts/test-reader-status-writer.sh
+
+test-reader-scripts:
+	bash docker/reader/test_read_scripts.sh
+	bash docker/reader/test_entrypoint.sh
 
 docker-fake-agent-build:
 	$(DOCKER) build -t backflow-fake-agent test/blackbox/fake-agent/
@@ -80,6 +89,33 @@ docker-agent-deploy:
 		--push \
 		docker/agent/ && \
 	echo "Pushed to $$ECR/backflow-agent:latest"
+
+docker-reader-build:
+	$(DOCKER) buildx build \
+		--platform linux/amd64,linux/arm64 \
+		-t backflow-reader \
+		docker/reader/
+
+docker-reader-build-local:
+	$(DOCKER) build -t backflow-reader docker/reader/
+
+docker-reader-push:
+	@echo "Usage: make docker-reader-push REGISTRY=<ecr-uri>"
+	$(DOCKER) tag backflow-reader $(REGISTRY):latest
+	$(DOCKER) push $(REGISTRY):latest
+
+docker-reader-deploy:
+	@$(ENV); \
+	ACCOUNT_ID=$$(aws sts get-caller-identity --query Account --output text) && \
+	REGION=$${AWS_REGION:-us-east-1} && \
+	ECR=$$ACCOUNT_ID.dkr.ecr.$$REGION.amazonaws.com && \
+	aws ecr get-login-password --region $$REGION | $(DOCKER) login --username AWS --password-stdin $$ECR && \
+	$(DOCKER) buildx build \
+		--platform linux/amd64,linux/arm64 \
+		-t $$ECR/backflow-reader:latest \
+		--push \
+		docker/reader/ && \
+	echo "Pushed to $$ECR/backflow-reader:latest"
 
 docker-server-build:
 	$(DOCKER) buildx build \

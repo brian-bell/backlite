@@ -141,6 +141,16 @@ The test harness (1.0) is the prerequisite for everything else. Once it exists, 
 
 ---
 
+## Future Directions (Not Committed)
+
+### Fly Machines as an agent runtime
+- **Idea:** Add a `fly` operating mode alongside `ec2` / `local` / `fargate`. One Fly Machine per Backflow task, provisioned via the Machines API, mirroring the Fargate adapter's lifecycle.
+- **Appeal:** Consolidation (the orchestrator already runs on Fly, so agents there = one cloud, no ECS cluster / task def / VPC / IAM roles to maintain). Cold starts ~1s vs Fargate's 30–60s ENI attachment. Simpler setup, per-second billing, more regions.
+- **Against:** No spot tier (Fargate Spot is ~70% cheaper for bursty batch workloads). S3 stays a dependency unless we also migrate agent output + large-prompt offload to Tigris/R2. The existing `internal/orchestrator/fargate/` adapter (log parsing, CloudWatch, recovery) is real sunk work to replicate. Fargate has a higher resource ceiling and more mature observability.
+- **Revisit when:** (a) we want to drop AWS entirely and are ready to migrate storage, or (b) cold-start latency becomes a real UX complaint. Until one of those triggers, Fargate for agents + Fly for the orchestrator is the right split.
+
+---
+
 ## Business Model: Open-Core + Managed Hosting
 
 | Tier | What's Included | Price |

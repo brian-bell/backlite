@@ -2,13 +2,17 @@
 set -euo pipefail
 
 # Backflow AWS infrastructure setup
-# Creates: ECR repo, IAM roles, security group, S3 bucket,
+# Creates: ECR repos (agent + reader), IAM roles, security group, S3 bucket,
 #          launch template (EC2 mode), ECS cluster + task definition (Fargate mode),
 #          and GitHub Actions OIDC provider + CI deploy role
+
+# Disable the AWS CLI v2 pager so every aws call runs non-interactively.
+export AWS_PAGER=""
 
 REGION="${AWS_REGION:-us-east-1}"
 GITHUB_REPO="${BACKFLOW_GITHUB_REPO:-}"  # e.g. "org/repo"
 ECR_REPO="backflow-agent"
+READER_ECR_REPO="backflow-reader"
 CI_ROLE="backflow-ci-deploy"
 IAM_ROLE="backflow-ec2-role"
 SG_NAME="backflow-agent-sg"
@@ -65,6 +69,24 @@ ECR_URI=$(aws ecr describe-repositories \
     --query 'repositories[0].repositoryUri' \
     --output text)
 echo "    ECR URI: ${ECR_URI}"
+
+# --- Reader ECR Repository ---
+echo "==> Creating reader ECR repository..."
+if aws ecr describe-repositories --repository-names "$READER_ECR_REPO" --region "$REGION" &>/dev/null; then
+    echo "    Reader ECR repo already exists"
+else
+    aws ecr create-repository \
+        --repository-name "$READER_ECR_REPO" \
+        --region "$REGION" \
+        --image-scanning-configuration scanOnPush=true
+fi
+
+READER_ECR_URI=$(aws ecr describe-repositories \
+    --repository-names "$READER_ECR_REPO" \
+    --region "$REGION" \
+    --query 'repositories[0].repositoryUri' \
+    --output text)
+echo "    Reader ECR URI: ${READER_ECR_URI}"
 
 # --- GitHub Actions OIDC + CI Deploy Role ---
 if [ -n "$GITHUB_REPO" ]; then
@@ -138,7 +160,10 @@ CIEOF
         "ecr:UploadLayerPart",
         "ecr:CompleteLayerUpload"
       ],
-      "Resource": "arn:aws:ecr:${REGION}:${ACCOUNT_ID}:repository/${ECR_REPO}"
+      "Resource": [
+        "arn:aws:ecr:${REGION}:${ACCOUNT_ID}:repository/${ECR_REPO}",
+        "arn:aws:ecr:${REGION}:${ACCOUNT_ID}:repository/${READER_ECR_REPO}"
+      ]
     }
   ]
 }
@@ -638,6 +663,7 @@ echo "  Then set them as Fly secrets:"
 echo "    fly secrets set AWS_ACCESS_KEY_ID=<key> AWS_SECRET_ACCESS_KEY=<secret>"
 echo ""
 echo "Next steps:"
-echo "  1. Build and push the agent image: make docker-build && make docker-push REGISTRY=${ECR_URI}"
-echo "  2. Set ANTHROPIC_API_KEY and GITHUB_TOKEN in .env"
-echo "  3. Run: make run"
+echo "  1. Build and push the agent image:  make docker-agent-deploy"
+echo "  2. Build and push the reader image: make docker-reader-deploy"
+echo "  3. Set ANTHROPIC_API_KEY and GITHUB_TOKEN in .env"
+echo "  4. Run: make run"

@@ -210,3 +210,4 @@ Additional docs in `docs/`:
 - `sizing.md` — EC2 instance sizing and container density guide
 - `setup-ci.md` — GitHub Actions CI/CD setup for agent image builds
 - `fly-setup.md` — Fly.io deployment setup and configuration
+- `supabase-setup.md` — Supabase project setup, reader Data API configuration, and key model

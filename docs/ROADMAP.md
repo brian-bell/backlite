@@ -40,7 +40,7 @@ See #174, #181, #185. New `read` task mode that fetches a URL, summarizes it via
 
 ## Active Roadmap
 
-Five items, ordered for execution. The previously-planned standalone dashboard and human-in-the-loop input gate have been merged or cut.
+Four items, ordered for execution. The previously-planned standalone dashboard has been merged into item #1.
 
 ### 1. Public Site — Landing + Live Dashboard
 
@@ -51,7 +51,7 @@ A new front-end project that serves two purposes from one codebase:
 
 The site is publicly accessible. Visitors see a **seeded demo database** with sanitized historical tasks and readings — they can poke around real-looking data without deploying Backflow. Authenticated operator (the user) gets the same surfaces against the live database.
 
-**Why this is item #1:** without a public surface, every other piece of work has no audience. Items #3-#5 need something to link to.
+**Why this is item #1:** without a public surface, every other piece of work has no audience. Items #2-#4 need something to link to.
 
 **Files:** new top-level directory (e.g. `site/`); no changes required to `internal/api/server.go` if the site deploys separately. If it deploys as part of the same Fly app, mount under `/` and move the API to `/api/v1/`.
 
@@ -65,35 +65,27 @@ The site is publicly accessible. Visitors see a **seeded demo database** with sa
 
 ---
 
-### 2. ~~Human-in-the-Loop Input Gate~~ — CUT
-
-Removed from roadmap at user direction. Retain `task.needs_input` event emission as-is; do not build the response pathways (API endpoint, Discord reply detection, SMS reply matching, continuation tasks).
-
-**Consequence:** `needs_input` remains effectively terminal. If it becomes a daily papercut, revisit later.
-
----
-
-### 3. Reading Mode Investments
+### 2. Reading Mode Investments
 
 Doubles down on the most novel feature in the codebase.
 
-#### 3.1 Reading Inbox UI
+#### 2.1 Reading Inbox UI
 Lives inside the site (item #1) as a second top-level surface alongside the dashboard. Search past readings (full-text + similarity), browse by tag, view the connection graph from `connections` JSONB, click into a reading to view raw output and re-summarize.
 
 **Files:** site (item #1); new endpoints under `internal/api/handlers.go` for `/api/v1/readings` (list, get); `internal/store/postgres.go` for query helpers (`ListReadings`, `SearchReadings`).
 
-#### 3.2 Daily Digest
+#### 2.2 Daily Digest
 Once-a-day Discord/SMS message with newly-read items + "you might want to revisit X" suggestions based on novelty scores and connection density. No new UI.
 
 **Files:** new `internal/orchestrator/digest.go` goroutine alongside the poll loop; uses existing `notify.EventBus` or sends directly via `DiscordNotifier` / `MessagingNotifier`.
 
 **Why this matters:** the "SMS a URL → TLDR back → connections to prior reads" loop has no comparable open-source product. Code-agent runners are commodity; chat-native personal-knowledge agents are not. This is the differentiator both for daily use (you'll actually return to past readings) and for portfolio narrative (the genuinely-unique thing in this codebase).
 
-**Effort:** M (3.1) + S (3.2). **Validation:** can find a reading from 30 days ago via search; daily digest fires at the configured time and includes both new readings and revisit suggestions.
+**Effort:** M (2.1) + S (2.2). **Validation:** can find a reading from 30 days ago via search; daily digest fires at the configured time and includes both new readings and revisit suggestions.
 
 ---
 
-### 4. Dashboard — Merged Into Item #1
+### 3. Dashboard — Merged Into Item #1
 
 No longer a standalone roadmap item. Built as the operator surface inside the public site.
 
@@ -101,9 +93,9 @@ No longer a standalone roadmap item. Built as the operator surface inside the pu
 
 ---
 
-### 5. Distribution Post
+### 4. Distribution Post
 
-One serious blog post submitted to HN and lobste.rs, published once items #1 and #3 are live so the post links to a working demo. Working title: *"Building a multi-mode coding agent runner in Go."*
+One serious blog post submitted to HN and lobste.rs, published once items #1 and #2 are live so the post links to a working demo. Working title: *"Building a multi-mode coding agent runner in Go."*
 
 Substantive technical content drawn from real decisions:
 - Why polling beats events for this workload
@@ -125,7 +117,7 @@ The following items from prior roadmap drafts are explicitly NOT on the active p
 |--------------|--------|
 | 1.3 Slack Notifier | You live in Discord; Slack is "team" thinking |
 | 1.4 Rate Limiting | Reframe later as a budget circuit breaker if a runaway-spend incident actually happens |
-| 2.1 Human-in-the-Loop Input Gate | Cut (see item #2 above) |
+| 2.1 Human-in-the-Loop Input Gate | Cut at user direction; `task.needs_input` event remains as-is but no response pathway will be built |
 | 2.3 Scheduling | Cron + curl covers it; no recurring jobs needed today |
 | 2.4 Real-Time Log Streaming | Polling logs is fine for one user |
 | 3.1 Workflow DAGs | XL effort, single-user payoff |
@@ -147,10 +139,10 @@ The following items from prior roadmap drafts are explicitly NOT on the active p
 |-------|------|-------|
 | **Now** | Site scaffolding (#1) — framework choice, deploy story, design system, marketing surface | Decide SPA vs SSR up front; dashboard needs interactive charts |
 | **Next** | Demo data seeding + operator dashboard surface (#1 continued) | Wire the demo-vs-live data switch |
-| **Then** | Reading inbox UI (#3.1) | Second top-level surface in the site |
-| **Then** | Daily digest (#3.2) | Backend cron, no UI |
+| **Then** | Reading inbox UI (#2.1) | Second top-level surface in the site |
+| **Then** | Daily digest (#2.2) | Backend cron, no UI |
 | **Then** | 60-second demo video | Recorded against demo or real data, embedded in landing |
-| **Last** | HN/lobste.rs post (#5) | Links to live demo and inbox |
+| **Last** | HN/lobste.rs post (#4) | Links to live demo and inbox |
 
 Estimated total: **6-10 weeks** of focused evening/weekend work.
 

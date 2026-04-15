@@ -146,6 +146,7 @@ func (m *Manager) buildEnvFlags(task *models.Task) []string {
 		fmt.Sprintf("-e MAX_TURNS=%d", task.MaxTurns),
 		fmt.Sprintf("-e CREATE_PR=%t", task.CreatePR),
 		fmt.Sprintf("-e SELF_REVIEW=%t", task.SelfReview),
+		fmt.Sprintf("-e FORCE=%t", task.Force),
 	}
 
 	if task.PRTitle != "" {

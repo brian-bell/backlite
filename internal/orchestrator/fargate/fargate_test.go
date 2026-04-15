@@ -86,6 +86,25 @@ func TestFargateBuildECSEnvVars(t *testing.T) {
 	}
 }
 
+func TestFargateBuildECSEnvVars_ForceFlag(t *testing.T) {
+	manager := NewManager(&config.Config{}, nil)
+	for _, force := range []bool{true, false} {
+		task := &models.Task{ID: "bf_x", Prompt: "p", Force: force}
+		envVars := manager.buildECSEnvVars(task)
+		got := ""
+		for _, pair := range envVars {
+			if aws.ToString(pair.Name) == "FORCE" {
+				got = aws.ToString(pair.Value)
+				break
+			}
+		}
+		want := map[bool]string{true: "true", false: "false"}[force]
+		if got != want {
+			t.Errorf("force=%v: FORCE env = %q, want %q", force, got, want)
+		}
+	}
+}
+
 func TestFargate_SelectTaskDefinition(t *testing.T) {
 	cases := []struct {
 		name     string

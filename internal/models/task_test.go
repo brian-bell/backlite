@@ -213,6 +213,11 @@ func TestCreateTaskRequestValidation(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "reserved env var key FORCE",
+			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"FORCE": "true"}},
+			wantErr: true,
+		},
+		{
 			name:    "non-reserved env var key allowed",
 			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"MY_CUSTOM_VAR": "val"}},
 			wantErr: false,

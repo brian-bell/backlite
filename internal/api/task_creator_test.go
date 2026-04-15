@@ -169,6 +169,129 @@ func TestNewReadTask_ValidationError_NotStoreFailure(t *testing.T) {
 	}
 }
 
+func strPtr(s string) *string { return &s }
+
+// TestNewTask_TaskModeRead_DispatchesToNewReadTask verifies the REST API entry
+// point: clients who pass task_mode="read" get a reader-mode task without the
+// handler having to know about NewReadTask.
+func TestNewTask_TaskModeRead_DispatchesToNewReadTask(t *testing.T) {
+	cfg := readTestConfig()
+	s := &mockStore{}
+	req := &models.CreateTaskRequest{
+		Prompt:   "https://example.com/post",
+		TaskMode: strPtr("read"),
+	}
+
+	task, err := NewTask(context.Background(), req, s, cfg, nil)
+	if err != nil {
+		t.Fatalf("NewTask: %v", err)
+	}
+	if task.TaskMode != models.TaskModeRead {
+		t.Errorf("TaskMode = %q, want %q", task.TaskMode, models.TaskModeRead)
+	}
+	if task.AgentImage != "backflow-reader:v1" {
+		t.Errorf("AgentImage = %q, want reader image", task.AgentImage)
+	}
+	if task.CreatePR {
+		t.Error("CreatePR = true, want false for read mode")
+	}
+	if task.MaxBudgetUSD != 0.5 {
+		t.Errorf("MaxBudgetUSD = %v, want 0.5 (read cap)", task.MaxBudgetUSD)
+	}
+	if task.MaxRuntimeSec != 300 {
+		t.Errorf("MaxRuntimeSec = %d, want 300 (read cap)", task.MaxRuntimeSec)
+	}
+	if task.MaxTurns != 20 {
+		t.Errorf("MaxTurns = %d, want 20 (read cap)", task.MaxTurns)
+	}
+}
+
+func TestNewTask_ExplicitCodeOrReviewTaskMode_Rejected(t *testing.T) {
+	cfg := readTestConfig()
+	s := &mockStore{}
+	for _, mode := range []string{"code", "review"} {
+		t.Run(mode, func(t *testing.T) {
+			req := &models.CreateTaskRequest{
+				Prompt:   "Fix bug",
+				TaskMode: strPtr(mode),
+			}
+			_, err := NewTask(context.Background(), req, s, cfg, nil)
+			if err == nil {
+				t.Fatalf("task_mode=%q: expected validation error, got nil", mode)
+			}
+			if !contains(err.Error(), "inferred") {
+				t.Errorf("task_mode=%q: error = %q, want mention of 'inferred'", mode, err.Error())
+			}
+		})
+	}
+}
+
+func TestNewTask_InvalidTaskMode_ValidationError(t *testing.T) {
+	cfg := readTestConfig()
+	s := &mockStore{}
+	req := &models.CreateTaskRequest{
+		Prompt:   "Fix bug",
+		TaskMode: strPtr("garbage"),
+	}
+
+	_, err := NewTask(context.Background(), req, s, cfg, nil)
+	if err == nil {
+		t.Fatal("expected validation error, got nil")
+	}
+	if errors.Is(err, ErrStoreFailure) {
+		t.Errorf("validation error should not match ErrStoreFailure, got: %v", err)
+	}
+	if msg := err.Error(); !contains(msg, "task_mode") {
+		t.Errorf("error = %q, want message mentioning task_mode", msg)
+	}
+}
+
+// contains is a tiny substring helper local to these tests.
+func contains(s, substr string) bool {
+	for i := 0; i+len(substr) <= len(s); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
+func TestNewTask_CopiesForceFromRequest(t *testing.T) {
+	cfg := readTestConfig()
+	s := &mockStore{}
+	trueVal := true
+	req := &models.CreateTaskRequest{
+		Prompt: "Fix bug",
+		Force:  &trueVal,
+	}
+
+	task, err := NewTask(context.Background(), req, s, cfg, nil)
+	if err != nil {
+		t.Fatalf("NewTask: %v", err)
+	}
+	if !task.Force {
+		t.Error("Force = false, want true for non-read task with force=true")
+	}
+}
+
+func TestNewReadTask_CopiesForceFromRequest(t *testing.T) {
+	cfg := readTestConfig()
+	s := &mockStore{}
+	trueVal := true
+	req := &models.CreateTaskRequest{
+		Prompt: "https://example.com/post",
+		Force:  &trueVal,
+	}
+
+	task, err := NewReadTask(context.Background(), req, s, cfg, nil)
+	if err != nil {
+		t.Fatalf("NewReadTask: %v", err)
+	}
+	if !task.Force {
+		t.Error("Force = false, want true")
+	}
+}
+
 // TestNewReadTask_IgnoresPRFields pins the documented contract that read
 // tasks never open PRs. A future refactor must not silently start honoring
 // PRTitle, PRBody, CreatePR, or SelfReview.

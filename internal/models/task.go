@@ -118,6 +118,7 @@ func (t *Task) EnvVarsJSON() string {
 // infers repo_url, target_branch, and task_mode from the prompt.
 type CreateTaskRequest struct {
 	Prompt          string            `json:"prompt"`
+	TaskMode        *string           `json:"task_mode,omitempty"`
 	Harness         string            `json:"harness,omitempty"`
 	Context         string            `json:"context,omitempty"`
 	Model           string            `json:"model,omitempty"`
@@ -128,6 +129,7 @@ type CreateTaskRequest struct {
 	CreatePR        *bool             `json:"create_pr,omitempty"`
 	SelfReview      *bool             `json:"self_review,omitempty"`
 	SaveAgentOutput *bool             `json:"save_agent_output,omitempty"`
+	Force           *bool             `json:"force,omitempty"`
 	PRTitle         string            `json:"pr_title,omitempty"`
 	PRBody          string            `json:"pr_body,omitempty"`
 	AllowedTools    []string          `json:"allowed_tools,omitempty"`
@@ -155,6 +157,7 @@ var reservedEnvVarKeys = map[string]bool{
 	"MAX_TURNS":         true,
 	"CREATE_PR":         true,
 	"SELF_REVIEW":       true,
+	"FORCE":             true,
 	"PR_TITLE":          true,
 	"PR_BODY":           true,
 	"CLAUDE_MD":         true,
@@ -224,6 +227,13 @@ func (r *CreateTaskRequest) Validate() error {
 		case "low", "medium", "high", "xhigh":
 		default:
 			return fmt.Errorf("effort must be low, medium, high, or xhigh")
+		}
+	}
+	if r.TaskMode != nil {
+		switch *r.TaskMode {
+		case "", TaskModeAuto, TaskModeRead:
+		default:
+			return fmt.Errorf("task_mode must be auto or read (code and review are inferred from the prompt)")
 		}
 	}
 	return nil

@@ -322,6 +322,71 @@ func TestCreateReviewTask(t *testing.T) {
 	}
 }
 
+func TestCreateReadTask_ViaPOSTTasks(t *testing.T) {
+	ctx := context.Background()
+	if _, err := truncatePool.Exec(ctx, "TRUNCATE tasks, instances, allowed_senders, api_keys CASCADE"); err != nil {
+		t.Fatalf("truncate: %v", err)
+	}
+	_, thisFile, _, _ := runtime.Caller(0)
+	migrationsDir := filepath.Join(filepath.Dir(thisFile), "..", "..", "migrations")
+	s, err := store.NewPostgres(ctx, sharedConnStr, migrationsDir)
+	if err != nil {
+		t.Fatalf("NewPostgres: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	cfg := &config.Config{
+		AnthropicAPIKey:       "sk-test",
+		ReaderImage:           "backflow-reader:v1",
+		DefaultHarness:        "claude_code",
+		DefaultClaudeModel:    "claude-sonnet-4-6",
+		DefaultCodexModel:     "gpt-5.4",
+		DefaultEffort:         "medium",
+		DefaultMaxBudget:      10.0,
+		DefaultMaxRuntime:     30 * 60e9,
+		DefaultMaxTurns:       200,
+		DefaultReadMaxBudget:  0.5,
+		DefaultReadMaxRuntime: 300 * 1e9,
+		DefaultReadMaxTurns:   20,
+	}
+	srv := NewServer(s, cfg, noopLogFetcher{}, noopEmitter{})
+
+	body := `{"prompt":"https://example.com/article","task_mode":"read","force":true}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	checkResponse(t, req, w)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Data struct {
+			ID         string `json:"id"`
+			TaskMode   string `json:"task_mode"`
+			Force      bool   `json:"force"`
+			AgentImage string `json:"agent_image"`
+			CreatePR   bool   `json:"create_pr"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Data.TaskMode != "read" {
+		t.Errorf("task_mode = %q, want read", resp.Data.TaskMode)
+	}
+	if !resp.Data.Force {
+		t.Error("force = false, want true")
+	}
+	if resp.Data.AgentImage != "backflow-reader:v1" {
+		t.Errorf("agent_image = %q, want reader image", resp.Data.AgentImage)
+	}
+	if resp.Data.CreatePR {
+		t.Error("create_pr = true, want false for read mode")
+	}
+}
+
 func TestDeleteTask(t *testing.T) {
 	srv := testServer(t)
 

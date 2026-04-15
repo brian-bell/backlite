@@ -27,6 +27,10 @@ func NewTask(ctx context.Context, req *models.CreateTaskRequest, s store.Store, 
 		return nil, err
 	}
 
+	if req.TaskMode != nil && *req.TaskMode == models.TaskModeRead {
+		return NewReadTask(ctx, req, s, cfg, bus)
+	}
+
 	now := time.Now().UTC()
 
 	task := &models.Task{
@@ -38,6 +42,7 @@ func NewTask(ctx context.Context, req *models.CreateTaskRequest, s store.Store, 
 		Context:       req.Context,
 		Model:         req.Model,
 		Effort:        req.Effort,
+		Force:         req.Force != nil && *req.Force,
 		MaxBudgetUSD:  req.MaxBudgetUSD,
 		MaxRuntimeSec: req.MaxRuntimeSec,
 		MaxTurns:      req.MaxTurns,
@@ -93,6 +98,7 @@ func NewReadTask(ctx context.Context, req *models.CreateTaskRequest, s store.Sto
 		Context:       req.Context,
 		Model:         req.Model,
 		Effort:        req.Effort,
+		Force:         req.Force != nil && *req.Force,
 		MaxBudgetUSD:  req.MaxBudgetUSD,
 		MaxRuntimeSec: req.MaxRuntimeSec,
 		MaxTurns:      req.MaxTurns,

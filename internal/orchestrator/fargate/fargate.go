@@ -257,6 +257,7 @@ func (m *Manager) buildECSEnvVars(task *models.Task) []ecstypes.KeyValuePair {
 		ecsEnvVar("MAX_TURNS", strconv.Itoa(task.MaxTurns)),
 		ecsEnvVar("CREATE_PR", strconv.FormatBool(task.CreatePR)),
 		ecsEnvVar("SELF_REVIEW", strconv.FormatBool(task.SelfReview)),
+		ecsEnvVar("FORCE", strconv.FormatBool(task.Force)),
 	}
 
 	if task.PRTitle != "" {

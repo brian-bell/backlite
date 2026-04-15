@@ -553,7 +553,7 @@ components:
           $ref: "#/components/schemas/TaskStatus"
         task_mode:
           type: string
-          enum: [auto, code, review]
+          enum: [auto, code, review, read]
           example: auto
         harness:
           type: string
@@ -581,6 +581,14 @@ components:
           type: string
           enum: [low, medium, high, xhigh]
           example: medium
+        agent_image:
+          type: string
+          description: Docker image used by the orchestrator for this task (reader image for read mode, default agent image otherwise).
+          example: "backflow-agent:v1"
+        force:
+          type: boolean
+          description: For read-mode tasks, signals the agent to skip duplicate-detection and the completion handler to upsert instead of insert. No effect for code/review tasks.
+          example: false
         max_budget_usd:
           type: number
           minimum: 0
@@ -686,8 +694,21 @@ components:
       properties:
         prompt:
           type: string
-          description: Task instructions for the agent.
+          description: Task instructions for the agent. For read-mode tasks, the URL to summarize.
           example: "Fix the authentication bug in https://github.com/owner/repo"
+        task_mode:
+          type: string
+          enum: [auto, read]
+          description: >
+            Explicit task mode. Omit (or "auto") to let the agent's Prep stage infer
+            code vs. review from the prompt. Set to "read" to create a reading-mode
+            task (the prompt is the URL to summarize). Explicit "code" and "review"
+            are not accepted — they are always inferred.
+          example: read
+        force:
+          type: boolean
+          description: For read-mode tasks, skip duplicate detection and upsert on completion. No effect for other modes.
+          example: false
         harness:
           type: string
           enum: [claude_code, codex]

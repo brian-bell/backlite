@@ -167,6 +167,18 @@ func TestBuildEnvFlags(t *testing.T) {
 	}
 }
 
+func TestBuildEnvFlagsForceFlag(t *testing.T) {
+	dm := NewManager(&config.Config{})
+	for _, force := range []bool{true, false} {
+		task := &models.Task{ID: "bf_x", Prompt: "p", Force: force}
+		joined := strings.Join(dm.buildEnvFlags(task), " ")
+		want := "-e FORCE=" + map[bool]string{true: "true", false: "false"}[force]
+		if !strings.Contains(joined, want) {
+			t.Errorf("force=%v: flags missing %q\ngot: %s", force, want, joined)
+		}
+	}
+}
+
 func TestBuildRunCommand(t *testing.T) {
 	cfg := &config.Config{
 		AnthropicAPIKey: "sk-test",

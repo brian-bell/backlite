@@ -47,7 +47,7 @@ func TestCancelTask_RunningTask(t *testing.T) {
 	s := &taskActionStore{
 		task: &models.Task{ID: "bf_1", Status: models.TaskStatusRunning},
 	}
-	bus := &capturingEmitter2{}
+	bus := &capturingEmitter{}
 
 	err := CancelTask(context.Background(), "bf_1", s, bus)
 	if err != nil {
@@ -65,7 +65,7 @@ func TestCancelTask_ProvisioningTask(t *testing.T) {
 	s := &taskActionStore{
 		task: &models.Task{ID: "bf_1", Status: models.TaskStatusProvisioning},
 	}
-	bus := &capturingEmitter2{}
+	bus := &capturingEmitter{}
 
 	err := CancelTask(context.Background(), "bf_1", s, bus)
 	if err != nil {
@@ -80,7 +80,7 @@ func TestCancelTask_PendingTask(t *testing.T) {
 	s := &taskActionStore{
 		task: &models.Task{ID: "bf_1", Status: models.TaskStatusPending},
 	}
-	bus := &capturingEmitter2{}
+	bus := &capturingEmitter{}
 
 	err := CancelTask(context.Background(), "bf_1", s, bus)
 	if err != nil {
@@ -95,7 +95,7 @@ func TestCancelTask_RecoveringTask(t *testing.T) {
 	s := &taskActionStore{
 		task: &models.Task{ID: "bf_1", Status: models.TaskStatusRecovering},
 	}
-	bus := &capturingEmitter2{}
+	bus := &capturingEmitter{}
 
 	err := CancelTask(context.Background(), "bf_1", s, bus)
 	if err != nil {
@@ -110,7 +110,7 @@ func TestCancelTask_CompletedTask_ReturnsError(t *testing.T) {
 	s := &taskActionStore{
 		task: &models.Task{ID: "bf_1", Status: models.TaskStatusCompleted},
 	}
-	bus := &capturingEmitter2{}
+	bus := &capturingEmitter{}
 
 	err := CancelTask(context.Background(), "bf_1", s, bus)
 	if err == nil {
@@ -126,7 +126,7 @@ func TestCancelTask_CompletedTask_ReturnsError(t *testing.T) {
 
 func TestCancelTask_NotFound(t *testing.T) {
 	s := &taskActionStore{getErr: store.ErrNotFound}
-	bus := &capturingEmitter2{}
+	bus := &capturingEmitter{}
 
 	err := CancelTask(context.Background(), "bf_missing", s, bus)
 	if err == nil {
@@ -139,7 +139,7 @@ func TestCancelTask_StoreError(t *testing.T) {
 		task:      &models.Task{ID: "bf_1", Status: models.TaskStatusRunning},
 		cancelErr: fmt.Errorf("db error"),
 	}
-	bus := &capturingEmitter2{}
+	bus := &capturingEmitter{}
 
 	err := CancelTask(context.Background(), "bf_1", s, bus)
 	if err == nil {

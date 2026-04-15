@@ -74,7 +74,7 @@ const taskColumns = `id, status, task_mode, harness, repo_url, branch, target_br
 	create_pr, self_review, save_agent_output, pr_title, pr_body, pr_url, output_url,
 	allowed_tools, claude_md, env_vars,
 	instance_id, container_id, retry_count, user_retry_count, cost_usd, elapsed_time_sec, error,
-	ready_for_retry, reply_channel,
+	ready_for_retry, reply_channel, agent_image,
 	created_at, updated_at, started_at, completed_at`
 
 func (s *PostgresStore) CreateTask(ctx context.Context, task *models.Task) error {
@@ -95,7 +95,7 @@ func (s *PostgresStore) CreateTask(ctx context.Context, task *models.Task) error
 			create_pr, self_review, save_agent_output, pr_title, pr_body, pr_url, output_url,
 			allowed_tools, claude_md, env_vars,
 			instance_id, container_id, retry_count, user_retry_count, cost_usd, elapsed_time_sec, error,
-			ready_for_retry, reply_channel,
+			ready_for_retry, reply_channel, agent_image,
 			created_at, updated_at, started_at, completed_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7,
@@ -104,8 +104,8 @@ func (s *PostgresStore) CreateTask(ctx context.Context, task *models.Task) error
 			$15, $16, $17, $18, $19, $20, $21,
 			$22, $23, $24,
 			$25, $26, $27, $28, $29, $30, $31,
-			$32, $33,
-			$34, $35, $36, $37
+			$32, $33, $34,
+			$35, $36, $37, $38
 		)`,
 		task.ID, task.Status, task.TaskMode, task.Harness, task.RepoURL, task.Branch, task.TargetBranch,
 		task.Prompt, task.Context, task.Model, task.Effort,
@@ -114,7 +114,7 @@ func (s *PostgresStore) CreateTask(ctx context.Context, task *models.Task) error
 		task.PRTitle, task.PRBody, task.PRURL, task.OutputURL,
 		allowedTools, task.ClaudeMD, envVars,
 		task.InstanceID, task.ContainerID, task.RetryCount, task.UserRetryCount, task.CostUSD, task.ElapsedTimeSec, task.Error,
-		task.ReadyForRetry, task.ReplyChannel,
+		task.ReadyForRetry, task.ReplyChannel, task.AgentImage,
 		task.CreatedAt, task.UpdatedAt, task.StartedAt, task.CompletedAt,
 	)
 	return err
@@ -550,7 +550,7 @@ func scanPGTask(row pgScanner) (*models.Task, error) {
 		&t.PRTitle, &t.PRBody, &t.PRURL, &t.OutputURL,
 		&allowedTools, &t.ClaudeMD, &envVars,
 		&t.InstanceID, &t.ContainerID, &t.RetryCount, &t.UserRetryCount, &t.CostUSD, &t.ElapsedTimeSec, &t.Error,
-		&t.ReadyForRetry, &t.ReplyChannel,
+		&t.ReadyForRetry, &t.ReplyChannel, &t.AgentImage,
 		&t.CreatedAt, &t.UpdatedAt, &t.StartedAt, &t.CompletedAt,
 	)
 	if err != nil {

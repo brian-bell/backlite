@@ -31,6 +31,7 @@ const (
 	TaskModeAuto   = "auto"   // Prep stage infers code or review from the prompt
 	TaskModeCode   = "code"   // Default: clone, code, commit, push, optionally create PR
 	TaskModeReview = "review" // Review an existing PR and post feedback as comments
+	TaskModeRead   = "read"   // Fetch a URL, summarize it, and store the reading
 )
 
 type Harness string
@@ -52,6 +53,7 @@ type Task struct {
 	Context         string            `json:"context,omitempty"`
 	Model           string            `json:"model,omitempty"`
 	Effort          string            `json:"effort,omitempty"`
+	AgentImage      string            `json:"agent_image,omitempty"`
 	MaxBudgetUSD    float64           `json:"max_budget_usd,omitempty"`
 	MaxRuntimeSec   int               `json:"max_runtime_sec,omitempty"`
 	MaxTurns        int               `json:"max_turns,omitempty"`
@@ -159,6 +161,8 @@ var reservedEnvVarKeys = map[string]bool{
 	"ANTHROPIC_API_KEY": true,
 	"OPENAI_API_KEY":    true,
 	"GITHUB_TOKEN":      true,
+	"SUPABASE_URL":      true,
+	"SUPABASE_ANON_KEY": true,
 }
 
 // containsNullByte returns true if s contains a null byte, which PostgreSQL

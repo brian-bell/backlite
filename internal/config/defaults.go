@@ -4,6 +4,7 @@ import "github.com/backflow-labs/backflow/internal/models"
 
 // TaskDefaults holds resolved default values for new tasks.
 type TaskDefaults struct {
+	AgentImage      string
 	Harness         string
 	ClaudeModel     string
 	CodexModel      string
@@ -27,6 +28,7 @@ type BoolOverrides struct {
 // TaskDefaults returns resolved defaults for the given task mode.
 func (c *Config) TaskDefaults(taskMode string) TaskDefaults {
 	d := TaskDefaults{
+		AgentImage:      c.AgentImage,
 		Harness:         c.DefaultHarness,
 		ClaudeModel:     c.DefaultClaudeModel,
 		CodexModel:      c.DefaultCodexModel,
@@ -39,7 +41,14 @@ func (c *Config) TaskDefaults(taskMode string) TaskDefaults {
 		SaveAgentOutput: c.DefaultSaveOutput,
 	}
 
-	if taskMode == models.TaskModeReview {
+	switch taskMode {
+	case models.TaskModeReview:
+		d.CreatePR = false
+	case models.TaskModeRead:
+		d.AgentImage = c.ReaderImage
+		d.MaxBudgetUSD = c.DefaultReadMaxBudget
+		d.MaxRuntimeSec = int(c.DefaultReadMaxRuntime.Seconds())
+		d.MaxTurns = c.DefaultReadMaxTurns
 		d.CreatePR = false
 	}
 	// Auto mode uses the same defaults as code mode (superset).
@@ -64,6 +73,9 @@ func (d TaskDefaults) Apply(task *models.Task, overrides *BoolOverrides) {
 	if task.Effort == "" {
 		task.Effort = d.Effort
 	}
+	if task.AgentImage == "" {
+		task.AgentImage = d.AgentImage
+	}
 	if task.MaxBudgetUSD == 0 {
 		task.MaxBudgetUSD = d.MaxBudgetUSD
 	}
@@ -75,8 +87,8 @@ func (d TaskDefaults) Apply(task *models.Task, overrides *BoolOverrides) {
 	}
 
 	// Booleans: use override if provided, otherwise default.
-	// Review mode always forces CreatePR=false regardless of override.
-	if task.TaskMode == models.TaskModeReview {
+	// Review and read modes always force CreatePR=false regardless of override.
+	if task.TaskMode == models.TaskModeReview || task.TaskMode == models.TaskModeRead {
 		task.CreatePR = false
 	} else {
 		task.CreatePR = boolOrDefault(overrides.createPR(), d.CreatePR)

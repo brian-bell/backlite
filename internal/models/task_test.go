@@ -1,6 +1,10 @@
 package models
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 func TestCreateTaskRequestValidation(t *testing.T) {
 	tests := []struct {
@@ -199,6 +203,16 @@ func TestCreateTaskRequestValidation(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "reserved env var key SUPABASE_URL",
+			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"SUPABASE_URL": "https://evil.supabase.co"}},
+			wantErr: true,
+		},
+		{
+			name:    "reserved env var key SUPABASE_ANON_KEY",
+			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"SUPABASE_ANON_KEY": "sb_publishable_attacker"}},
+			wantErr: true,
+		},
+		{
 			name:    "non-reserved env var key allowed",
 			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"MY_CUSTOM_VAR": "val"}},
 			wantErr: false,
@@ -212,6 +226,31 @@ func TestCreateTaskRequestValidation(t *testing.T) {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestTaskAgentImageJSON(t *testing.T) {
+	task := Task{ID: "bf_test", AgentImage: "backflow-reader:v1"}
+	data, err := json.Marshal(task)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if !strings.Contains(string(data), `"agent_image":"backflow-reader:v1"`) {
+		t.Errorf("missing agent_image in marshaled task: %s", data)
+	}
+
+	var got Task
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got.AgentImage != "backflow-reader:v1" {
+		t.Errorf("AgentImage = %q, want %q", got.AgentImage, "backflow-reader:v1")
+	}
+}
+
+func TestTaskModeReadConstant(t *testing.T) {
+	if TaskModeRead != "read" {
+		t.Errorf("TaskModeRead = %q, want %q", TaskModeRead, "read")
 	}
 }
 

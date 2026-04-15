@@ -93,7 +93,7 @@ func (m *Manager) RunAgent(ctx context.Context, _ *models.Instance, task *models
 
 	input := &ecs.RunTaskInput{
 		Cluster:        aws.String(m.config.ECSCluster),
-		TaskDefinition: aws.String(m.config.ECSTaskDefinition),
+		TaskDefinition: aws.String(m.selectTaskDefinition(task)),
 		Count:          aws.Int32(1),
 		ClientToken:    aws.String(task.ID),
 		StartedBy:      aws.String(task.ID),
@@ -272,6 +272,15 @@ func (m *Manager) buildECSEnvVars(task *models.Task) []ecstypes.KeyValuePair {
 		vars = append(vars, ecsEnvVar("GITHUB_TOKEN", m.config.GitHubToken))
 	}
 
+	if task.TaskMode == models.TaskModeRead {
+		if m.config.SupabaseURL != "" {
+			vars = append(vars, ecsEnvVar("SUPABASE_URL", m.config.SupabaseURL))
+		}
+		if m.config.SupabaseAnonKey != "" {
+			vars = append(vars, ecsEnvVar("SUPABASE_ANON_KEY", m.config.SupabaseAnonKey))
+		}
+	}
+
 	keys := make([]string, 0, len(task.EnvVars))
 	for key := range task.EnvVars {
 		keys = append(keys, key)
@@ -312,6 +321,17 @@ func (m *Manager) buildLogStreamName(taskARN string) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("%s/%s/%s", m.logStreamPrefix(), m.containerName(), taskID), nil
+}
+
+// selectTaskDefinition returns the ECS task definition to use for a task.
+// ECS ContainerOverride cannot override the container image, so reader-mode
+// tasks need their own task definition. Falls back to the default when the
+// reader task definition isn't configured.
+func (m *Manager) selectTaskDefinition(task *models.Task) string {
+	if task.TaskMode == models.TaskModeRead && m.config.ECSReaderTaskDefinition != "" {
+		return m.config.ECSReaderTaskDefinition
+	}
+	return m.config.ECSTaskDefinition
 }
 
 func (m *Manager) containerName() string {

@@ -140,6 +140,7 @@ func TestPG_TaskRoundTrip(t *testing.T) {
 		TargetBranch:    "main",
 		Prompt:          "Fix the bug",
 		Model:           "claude-sonnet-4-6",
+		AgentImage:      "backflow-agent:v2",
 		MaxBudgetUSD:    10.0,
 		MaxTurns:        200,
 		CreatePR:        true,
@@ -196,8 +197,38 @@ func TestPG_TaskRoundTrip(t *testing.T) {
 	if got.EnvVars["FOO"] != "bar" {
 		t.Errorf("EnvVars[FOO] = %q, want bar", got.EnvVars["FOO"])
 	}
+	if got.AgentImage != "backflow-agent:v2" {
+		t.Errorf("AgentImage = %q, want %q", got.AgentImage, "backflow-agent:v2")
+	}
 	if !got.CreatedAt.Equal(now) {
 		t.Errorf("CreatedAt = %v, want %v", got.CreatedAt, now)
+	}
+}
+
+func TestPG_TaskRoundTrip_DefaultAgentImage(t *testing.T) {
+	s := testPostgresStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	task := &models.Task{
+		ID:        "bf_TEST_NOIMG",
+		Status:    models.TaskStatusPending,
+		TaskMode:  models.TaskModeCode,
+		Harness:   models.HarnessClaudeCode,
+		Prompt:    "Fix bug",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := s.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	got, err := s.GetTask(ctx, "bf_TEST_NOIMG")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.AgentImage != "" {
+		t.Errorf("AgentImage = %q, want empty (default)", got.AgentImage)
 	}
 }
 

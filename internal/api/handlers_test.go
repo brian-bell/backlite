@@ -25,12 +25,6 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-type capturingEmitter struct {
-	events []notify.Event
-}
-
-func (c *capturingEmitter) Emit(e notify.Event) { c.events = append(c.events, e) }
-
 var (
 	sharedConnStr string
 	truncatePool  *pgxpool.Pool

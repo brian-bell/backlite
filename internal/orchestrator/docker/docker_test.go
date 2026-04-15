@@ -244,6 +244,98 @@ func TestBuildRunCommand_CustomImage(t *testing.T) {
 	}
 }
 
+func TestBuildEnvFlags_ReadModeIncludesSupabase(t *testing.T) {
+	cfg := &config.Config{
+		SupabaseURL:     "https://test.supabase.co",
+		SupabaseAnonKey: "sb_publishable_test",
+	}
+	dm := NewManager(cfg)
+	task := &models.Task{ID: "bf_01ABC", TaskMode: models.TaskModeRead}
+
+	joined := strings.Join(dm.buildEnvFlags(task), " ")
+
+	if !strings.Contains(joined, "-e SUPABASE_URL='https://test.supabase.co'") {
+		t.Errorf("flags should include SUPABASE_URL, got: %s", joined)
+	}
+	if !strings.Contains(joined, "-e SUPABASE_ANON_KEY='sb_publishable_test'") {
+		t.Errorf("flags should include SUPABASE_ANON_KEY, got: %s", joined)
+	}
+}
+
+func TestBuildEnvFlags_NonReadModeOmitsSupabase(t *testing.T) {
+	cfg := &config.Config{
+		SupabaseURL:     "https://test.supabase.co",
+		SupabaseAnonKey: "sb_publishable_test",
+	}
+	dm := NewManager(cfg)
+	task := &models.Task{ID: "bf_01ABC", TaskMode: models.TaskModeCode}
+
+	joined := strings.Join(dm.buildEnvFlags(task), " ")
+
+	if strings.Contains(joined, "SUPABASE_URL") {
+		t.Errorf("flags should not include SUPABASE_URL for non-read mode, got: %s", joined)
+	}
+	if strings.Contains(joined, "SUPABASE_ANON_KEY") {
+		t.Errorf("flags should not include SUPABASE_ANON_KEY for non-read mode, got: %s", joined)
+	}
+}
+
+func TestBuildEnvFlags_ReadModeMissingSupabaseConfig(t *testing.T) {
+	cfg := &config.Config{}
+	dm := NewManager(cfg)
+	task := &models.Task{ID: "bf_01ABC", TaskMode: models.TaskModeRead}
+
+	joined := strings.Join(dm.buildEnvFlags(task), " ")
+
+	if strings.Contains(joined, "SUPABASE_URL") {
+		t.Errorf("flags should omit SUPABASE_URL when cfg is empty, got: %s", joined)
+	}
+	if strings.Contains(joined, "SUPABASE_ANON_KEY") {
+		t.Errorf("flags should omit SUPABASE_ANON_KEY when cfg is empty, got: %s", joined)
+	}
+}
+
+func TestBuildRunCommand_UsesTaskAgentImage(t *testing.T) {
+	cfg := &config.Config{
+		ContainerCPUs:  2,
+		ContainerMemGB: 8,
+		AgentImage:     "backflow-agent",
+	}
+	dm := NewManager(cfg)
+	task := &models.Task{
+		ID:         "bf_01ABC",
+		AgentImage: "backflow-reader:v1",
+	}
+
+	cmd := dm.buildRunCommand(task, "")
+
+	if !strings.HasSuffix(cmd, "backflow-reader:v1") {
+		t.Errorf("command should end with task.AgentImage, got: %s", cmd)
+	}
+	if strings.HasSuffix(cmd, "backflow-agent") {
+		t.Errorf("command should not fall back to cfg.AgentImage when task.AgentImage is set, got: %s", cmd)
+	}
+}
+
+func TestBuildRunCommand_FallsBackToConfigAgentImage(t *testing.T) {
+	cfg := &config.Config{
+		ContainerCPUs:  2,
+		ContainerMemGB: 8,
+		AgentImage:     "backflow-agent",
+	}
+	dm := NewManager(cfg)
+	task := &models.Task{
+		ID:         "bf_01ABC",
+		AgentImage: "",
+	}
+
+	cmd := dm.buildRunCommand(task, "")
+
+	if !strings.HasSuffix(cmd, "backflow-agent") {
+		t.Errorf("command should fall back to cfg.AgentImage when task.AgentImage is empty, got: %s", cmd)
+	}
+}
+
 func TestBuildSecretEnvPairs(t *testing.T) {
 	cfg := &config.Config{
 		AnthropicAPIKey: "sk-test-key",

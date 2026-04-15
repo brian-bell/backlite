@@ -9,16 +9,21 @@ import (
 
 func testConfig() *Config {
 	return &Config{
-		DefaultHarness:     "claude_code",
-		DefaultClaudeModel: "claude-sonnet-4-6",
-		DefaultCodexModel:  "gpt-5.4",
-		DefaultEffort:      "medium",
-		DefaultMaxBudget:   10.0,
-		DefaultMaxRuntime:  1800 * time.Second,
-		DefaultMaxTurns:    200,
-		DefaultCreatePR:    true,
-		DefaultSelfReview:  false,
-		DefaultSaveOutput:  true,
+		AgentImage:            "backflow-agent",
+		ReaderImage:           "backflow-reader",
+		DefaultHarness:        "claude_code",
+		DefaultClaudeModel:    "claude-sonnet-4-6",
+		DefaultCodexModel:     "gpt-5.4",
+		DefaultEffort:         "medium",
+		DefaultMaxBudget:      10.0,
+		DefaultMaxRuntime:     1800 * time.Second,
+		DefaultMaxTurns:       200,
+		DefaultReadMaxBudget:  0.5,
+		DefaultReadMaxRuntime: 300 * time.Second,
+		DefaultReadMaxTurns:   20,
+		DefaultCreatePR:       true,
+		DefaultSelfReview:     false,
+		DefaultSaveOutput:     true,
 	}
 }
 
@@ -71,6 +76,35 @@ func TestTaskDefaults_ReviewMode(t *testing.T) {
 	}
 	if !d.SaveAgentOutput {
 		t.Error("SaveAgentOutput = false, want true")
+	}
+}
+
+func TestTaskDefaults_ReadMode(t *testing.T) {
+	cfg := testConfig()
+	d := cfg.TaskDefaults(models.TaskModeRead)
+
+	if d.AgentImage != "backflow-reader" {
+		t.Errorf("AgentImage = %q, want %q", d.AgentImage, "backflow-reader")
+	}
+	if d.MaxBudgetUSD != 0.5 {
+		t.Errorf("MaxBudgetUSD = %v, want %v (read cap)", d.MaxBudgetUSD, 0.5)
+	}
+	if d.MaxRuntimeSec != 300 {
+		t.Errorf("MaxRuntimeSec = %d, want %d (read cap)", d.MaxRuntimeSec, 300)
+	}
+	if d.MaxTurns != 20 {
+		t.Errorf("MaxTurns = %d, want %d (read cap)", d.MaxTurns, 20)
+	}
+	if d.CreatePR {
+		t.Error("CreatePR = true, want false in read mode")
+	}
+}
+
+func TestTaskDefaults_CodeMode_AgentImage(t *testing.T) {
+	cfg := testConfig()
+	d := cfg.TaskDefaults(models.TaskModeCode)
+	if d.AgentImage != "backflow-agent" {
+		t.Errorf("AgentImage = %q, want %q in code mode", d.AgentImage, "backflow-agent")
 	}
 }
 
@@ -208,6 +242,42 @@ func TestApply_HarnessModelCoupling(t *testing.T) {
 	}
 	if task.Model == claudeModel {
 		t.Errorf("codex model %q should differ from claude model %q", task.Model, claudeModel)
+	}
+}
+
+func TestApply_FillsAgentImage(t *testing.T) {
+	cfg := testConfig()
+	d := cfg.TaskDefaults(models.TaskModeRead)
+	task := &models.Task{TaskMode: models.TaskModeRead}
+
+	d.Apply(task, nil)
+
+	if task.AgentImage != "backflow-reader" {
+		t.Errorf("AgentImage = %q, want %q (from read defaults)", task.AgentImage, "backflow-reader")
+	}
+}
+
+func TestApply_PreservesExplicitAgentImage(t *testing.T) {
+	cfg := testConfig()
+	d := cfg.TaskDefaults(models.TaskModeCode)
+	task := &models.Task{AgentImage: "custom:tag"}
+
+	d.Apply(task, nil)
+
+	if task.AgentImage != "custom:tag" {
+		t.Errorf("AgentImage = %q, want %q (preserve explicit)", task.AgentImage, "custom:tag")
+	}
+}
+
+func TestApply_ReadModeIgnoresCreatePROverride(t *testing.T) {
+	cfg := testConfig()
+	d := cfg.TaskDefaults(models.TaskModeRead)
+	task := &models.Task{TaskMode: models.TaskModeRead}
+
+	d.Apply(task, &BoolOverrides{CreatePR: boolPtr(true)})
+
+	if task.CreatePR {
+		t.Error("CreatePR = true, want false — read mode should ignore CreatePR override")
 	}
 }
 

@@ -113,6 +113,11 @@ func (m *Manager) buildRunCommand(task *models.Task, envFilePath string) string 
 		envFileFlag = "--env-file " + envFilePath
 	}
 
+	image := task.AgentImage
+	if image == "" {
+		image = m.config.AgentImage
+	}
+
 	return fmt.Sprintf(
 		"docker run -d --cpus=%d --memory=%dg %s %s %s %s",
 		m.config.ContainerCPUs,
@@ -120,7 +125,7 @@ func (m *Manager) buildRunCommand(task *models.Task, envFilePath string) string 
 		envFileFlag,
 		volumeFlags,
 		strings.Join(envFlags, " "),
-		m.config.AgentImage,
+		image,
 	)
 }
 
@@ -154,6 +159,17 @@ func (m *Manager) buildEnvFlags(task *models.Task) []string {
 	}
 	if task.Context != "" {
 		flags = append(flags, envFlag("TASK_CONTEXT", shellEscape(task.Context)))
+	}
+
+	if task.TaskMode == models.TaskModeRead {
+		// SUPABASE_ANON_KEY is a low-privilege publishable JWT (RLS-scoped SELECT only),
+		// so it's passed via -e rather than --env-file.
+		if m.config.SupabaseURL != "" {
+			flags = append(flags, envFlag("SUPABASE_URL", shellEscape(m.config.SupabaseURL)))
+		}
+		if m.config.SupabaseAnonKey != "" {
+			flags = append(flags, envFlag("SUPABASE_ANON_KEY", shellEscape(m.config.SupabaseAnonKey)))
+		}
 	}
 
 	for k, v := range task.EnvVars {

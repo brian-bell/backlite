@@ -86,6 +86,103 @@ func TestFargateBuildECSEnvVars(t *testing.T) {
 	}
 }
 
+func TestFargate_SelectTaskDefinition(t *testing.T) {
+	cases := []struct {
+		name     string
+		cfg      *config.Config
+		taskMode string
+		want     string
+	}{
+		{
+			name:     "read mode with reader task def set",
+			cfg:      &config.Config{ECSTaskDefinition: "agent-td:1", ECSReaderTaskDefinition: "reader-td:3"},
+			taskMode: models.TaskModeRead,
+			want:     "reader-td:3",
+		},
+		{
+			name:     "read mode with reader task def empty falls back",
+			cfg:      &config.Config{ECSTaskDefinition: "agent-td:1"},
+			taskMode: models.TaskModeRead,
+			want:     "agent-td:1",
+		},
+		{
+			name:     "code mode ignores reader task def",
+			cfg:      &config.Config{ECSTaskDefinition: "agent-td:1", ECSReaderTaskDefinition: "reader-td:3"},
+			taskMode: models.TaskModeCode,
+			want:     "agent-td:1",
+		},
+		{
+			name:     "review mode ignores reader task def",
+			cfg:      &config.Config{ECSTaskDefinition: "agent-td:1", ECSReaderTaskDefinition: "reader-td:3"},
+			taskMode: models.TaskModeReview,
+			want:     "agent-td:1",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewManager(tc.cfg, nil)
+			got := m.selectTaskDefinition(&models.Task{TaskMode: tc.taskMode})
+			if got != tc.want {
+				t.Errorf("selectTaskDefinition = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFargateBuildECSEnvVars_ReadModeIncludesSupabase(t *testing.T) {
+	manager := NewManager(&config.Config{
+		SupabaseURL:     "https://test.supabase.co",
+		SupabaseAnonKey: "sb_publishable_test",
+	}, nil)
+	task := &models.Task{ID: "bf_01ABC", TaskMode: models.TaskModeRead}
+
+	envVars := manager.buildECSEnvVars(task)
+	got := make(map[string]string, len(envVars))
+	for _, pair := range envVars {
+		got[aws.ToString(pair.Name)] = aws.ToString(pair.Value)
+	}
+
+	if got["SUPABASE_URL"] != "https://test.supabase.co" {
+		t.Errorf("SUPABASE_URL = %q, want %q", got["SUPABASE_URL"], "https://test.supabase.co")
+	}
+	if got["SUPABASE_ANON_KEY"] != "sb_publishable_test" {
+		t.Errorf("SUPABASE_ANON_KEY = %q, want %q", got["SUPABASE_ANON_KEY"], "sb_publishable_test")
+	}
+}
+
+func TestFargateBuildECSEnvVars_NonReadModeOmitsSupabase(t *testing.T) {
+	manager := NewManager(&config.Config{
+		SupabaseURL:     "https://test.supabase.co",
+		SupabaseAnonKey: "sb_publishable_test",
+	}, nil)
+	task := &models.Task{ID: "bf_01ABC", TaskMode: models.TaskModeCode}
+
+	envVars := manager.buildECSEnvVars(task)
+	for _, pair := range envVars {
+		if aws.ToString(pair.Name) == "SUPABASE_URL" {
+			t.Error("SUPABASE_URL should be omitted for non-read mode")
+		}
+		if aws.ToString(pair.Name) == "SUPABASE_ANON_KEY" {
+			t.Error("SUPABASE_ANON_KEY should be omitted for non-read mode")
+		}
+	}
+}
+
+func TestFargateBuildECSEnvVars_ReadModeMissingSupabaseConfig(t *testing.T) {
+	manager := NewManager(&config.Config{}, nil)
+	task := &models.Task{ID: "bf_01ABC", TaskMode: models.TaskModeRead}
+
+	envVars := manager.buildECSEnvVars(task)
+	for _, pair := range envVars {
+		if aws.ToString(pair.Name) == "SUPABASE_URL" {
+			t.Error("SUPABASE_URL should be omitted when cfg value is empty")
+		}
+		if aws.ToString(pair.Name) == "SUPABASE_ANON_KEY" {
+			t.Error("SUPABASE_ANON_KEY should be omitted when cfg value is empty")
+		}
+	}
+}
+
 func TestFargateMapECSTaskStatus(t *testing.T) {
 	tests := []struct {
 		name      string

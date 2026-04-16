@@ -314,6 +314,158 @@ func TestDiscordEmbedFormatting(t *testing.T) {
 		}
 	})
 
+	t.Run("reading completed new verdict full embed", func(t *testing.T) {
+		embed := discordEmbedForEvent(Event{
+			Type:           EventTaskCompleted,
+			TaskID:         "bf_r1",
+			TaskMode:       "read",
+			Prompt:         "https://example.com/article",
+			TLDR:           "Article explains how transformers work",
+			NoveltyVerdict: "new",
+			Tags:           []string{"ml", "transformers"},
+			Connections: []models.Connection{
+				{ReadingID: "bf_r0", Reason: "Related overview of attention mechanisms"},
+			},
+			Timestamp: time.Now().UTC(),
+		})
+
+		if embed.Title != "Reading completed" {
+			t.Fatalf("Title = %q, want %q", embed.Title, "Reading completed")
+		}
+		wantDesc := "New reading saved: https://example.com/article"
+		if embed.Description != wantDesc {
+			t.Fatalf("Description = %q, want %q", embed.Description, wantDesc)
+		}
+		if embed.Color != 0x57F287 {
+			t.Fatalf("Color = %#x, want 0x57F287 (green)", embed.Color)
+		}
+		if embed.URL != "" {
+			t.Fatalf("URL = %q, want empty (no PR for readings)", embed.URL)
+		}
+		if !containsField(embed.Fields, "TL;DR", "Article explains how transformers work") {
+			t.Fatalf("fields = %#v, want TL;DR field", embed.Fields)
+		}
+		if !containsField(embed.Fields, "Tags", "ml, transformers") {
+			t.Fatalf("fields = %#v, want Tags field", embed.Fields)
+		}
+		if !containsField(embed.Fields, "Connections", "attention mechanisms") {
+			t.Fatalf("fields = %#v, want Connections field", embed.Fields)
+		}
+		// Should NOT have PR URL field
+		if containsField(embed.Fields, "Pull Request", "") {
+			t.Fatal("reading embed should not have Pull Request field")
+		}
+	})
+
+	t.Run("reading completed nothing new verdict", func(t *testing.T) {
+		embed := discordEmbedForEvent(Event{
+			Type:           EventTaskCompleted,
+			TaskID:         "bf_r2",
+			TaskMode:       "read",
+			TLDR:           "Summarizes transformer architecture basics",
+			NoveltyVerdict: "nothing new",
+			Tags:           []string{"ml"},
+			Connections: []models.Connection{
+				{ReadingID: "bf_r0", Reason: "Covers same attention mechanism overview"},
+			},
+			Timestamp: time.Now().UTC(),
+		})
+
+		if embed.Title != "Reading completed" {
+			t.Fatalf("Title = %q, want %q", embed.Title, "Reading completed")
+		}
+		if embed.Color != 0x95A5A6 {
+			t.Fatalf("Color = %#x, want 0x95A5A6 (grey)", embed.Color)
+		}
+		if !strings.Contains(embed.Description, "Nothing new") {
+			t.Fatalf("Description = %q, want 'Nothing new' language", embed.Description)
+		}
+		if !containsField(embed.Fields, "TL;DR", "transformer architecture") {
+			t.Fatalf("fields = %#v, want TL;DR field", embed.Fields)
+		}
+		if !containsField(embed.Fields, "Most Similar", "attention mechanism") {
+			t.Fatalf("fields = %#v, want Most Similar field with connection reason", embed.Fields)
+		}
+	})
+
+	t.Run("reading completed duplicate verdict", func(t *testing.T) {
+		embed := discordEmbedForEvent(Event{
+			Type:           EventTaskCompleted,
+			TaskID:         "bf_r3",
+			TaskMode:       "read",
+			TLDR:           "Same article about transformers",
+			NoveltyVerdict: "duplicate",
+			Timestamp:      time.Now().UTC(),
+		})
+
+		if embed.Title != "Reading completed" {
+			t.Fatalf("Title = %q, want %q", embed.Title, "Reading completed")
+		}
+		if embed.Color != 0x95A5A6 {
+			t.Fatalf("Color = %#x, want 0x95A5A6 (grey)", embed.Color)
+		}
+		if !strings.Contains(embed.Description, "Already read") {
+			t.Fatalf("Description = %q, want 'Already read' language", embed.Description)
+		}
+		if !containsField(embed.Fields, "TL;DR", "transformers") {
+			t.Fatalf("fields = %#v, want TL;DR field", embed.Fields)
+		}
+		// Should NOT have tags or connections fields for duplicate
+		if containsField(embed.Fields, "Tags", "") {
+			t.Fatal("duplicate embed should not have Tags field")
+		}
+		if containsField(embed.Fields, "Connections", "") {
+			t.Fatal("duplicate embed should not have Connections field")
+		}
+	})
+
+	t.Run("reading completed empty verdict", func(t *testing.T) {
+		embed := discordEmbedForEvent(Event{
+			Type:      EventTaskCompleted,
+			TaskID:    "bf_r5",
+			TaskMode:  "read",
+			TLDR:      "Overview of Go concurrency patterns",
+			Timestamp: time.Now().UTC(),
+		})
+
+		if embed.Title != "Reading completed" {
+			t.Fatalf("Title = %q, want %q", embed.Title, "Reading completed")
+		}
+		if embed.Color != 0x57F287 {
+			t.Fatalf("Color = %#x, want 0x57F287 (green)", embed.Color)
+		}
+		if containsField(embed.Fields, "Verdict", "") {
+			t.Fatal("embed should not have Verdict field when NoveltyVerdict is empty")
+		}
+	})
+
+	t.Run("reading failed shows reading-specific title", func(t *testing.T) {
+		embed := discordEmbedForEvent(Event{
+			Type:         EventTaskFailed,
+			TaskID:       "bf_r4",
+			TaskMode:     "read",
+			Message:      "embedding API returned 429",
+			AgentLogTail: "rate limited",
+			Timestamp:    time.Now().UTC(),
+		})
+
+		if embed.Title != "Reading failed" {
+			t.Fatalf("Title = %q, want %q", embed.Title, "Reading failed")
+		}
+		if embed.Color != 0xED4245 {
+			t.Fatalf("Color = %#x, want 0xED4245 (red)", embed.Color)
+		}
+		if !strings.Contains(embed.Description, "Reading") {
+			t.Fatalf("Description = %q, want reading-specific failure message", embed.Description)
+		}
+		if !containsField(embed.Fields, "Failure", "429") {
+			t.Fatalf("fields = %#v, want Failure field", embed.Fields)
+		}
+		if !containsField(embed.Fields, "Log Tail", "rate limited") {
+			t.Fatalf("fields = %#v, want Log Tail field", embed.Fields)
+		}
+	})
+
 	t.Run("running stays concise", func(t *testing.T) {
 		embed := discordEmbedForEvent(Event{
 			Type:      EventTaskRunning,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -190,8 +191,14 @@ func discordTitleForEvent(event Event) string {
 	case EventTaskRunning:
 		return "Task running"
 	case EventTaskCompleted:
+		if event.TaskMode == models.TaskModeRead {
+			return "Reading completed"
+		}
 		return "Task completed"
 	case EventTaskFailed:
+		if event.TaskMode == models.TaskModeRead {
+			return "Reading failed"
+		}
 		return "Task failed"
 	case EventTaskInterrupted:
 		return "Task interrupted"
@@ -229,6 +236,9 @@ func discordEmbedContent(event Event) (string, []discord.EmbedField, int) {
 			{Name: "Task", Value: event.TaskID, Inline: true},
 		}, 0x57F287
 	case EventTaskCompleted:
+		if event.TaskMode == models.TaskModeRead {
+			return readingCompletedContent(event)
+		}
 		fields := []discord.EmbedField{
 			{Name: "Task", Value: event.TaskID, Inline: true},
 		}
@@ -240,9 +250,13 @@ func discordEmbedContent(event Event) (string, []discord.EmbedField, int) {
 		}
 		return fmt.Sprintf("Task %s completed.", event.TaskID), fields, 0x57F287
 	case EventTaskFailed:
-		desc := fmt.Sprintf("Task %s failed.", event.TaskID)
+		noun := "Task"
+		if event.TaskMode == models.TaskModeRead {
+			noun = "Reading"
+		}
+		desc := fmt.Sprintf("%s %s failed.", noun, event.TaskID)
 		if event.RetryLimitReached {
-			desc = fmt.Sprintf("Task %s failed. Retry limit reached.", event.TaskID)
+			desc = fmt.Sprintf("%s %s failed. Retry limit reached.", noun, event.TaskID)
 		}
 		fields := []discord.EmbedField{
 			{Name: "Task", Value: event.TaskID, Inline: true},
@@ -291,6 +305,54 @@ func discordEmbedContent(event Event) (string, []discord.EmbedField, int) {
 		return fmt.Sprintf("Task %s: %s", event.TaskID, event.Type), []discord.EmbedField{
 			{Name: "Task", Value: event.TaskID, Inline: true},
 		}, 0x95A5A6
+	}
+}
+
+func readingCompletedContent(event Event) (string, []discord.EmbedField, int) {
+	fields := []discord.EmbedField{
+		{Name: "Task", Value: event.TaskID, Inline: true},
+	}
+
+	switch event.NoveltyVerdict {
+	case "duplicate":
+		if event.TLDR != "" {
+			fields = append(fields, discord.EmbedField{Name: "TL;DR", Value: truncate(event.TLDR, maxEmbedTextLength), Inline: false})
+		}
+		return "Already read this — here's what you captured:", fields, 0x95A5A6
+
+	case "nothing new":
+		if event.TLDR != "" {
+			fields = append(fields, discord.EmbedField{Name: "TL;DR", Value: truncate(event.TLDR, maxEmbedTextLength), Inline: false})
+		}
+		if len(event.Connections) > 0 {
+			c := event.Connections[0]
+			fields = append(fields, discord.EmbedField{Name: "Most Similar", Value: truncate(fmt.Sprintf("**%s** — %s", c.ReadingID, c.Reason), maxEmbedTextLength), Inline: false})
+		}
+		return "Nothing new here.", fields, 0x95A5A6
+
+	default:
+		// "new" or unrecognized verdict — full embed.
+		if event.NoveltyVerdict != "" {
+			fields = append(fields, discord.EmbedField{Name: "Verdict", Value: event.NoveltyVerdict, Inline: true})
+		}
+		if event.TLDR != "" {
+			fields = append(fields, discord.EmbedField{Name: "TL;DR", Value: truncate(event.TLDR, maxEmbedTextLength), Inline: false})
+		}
+		if len(event.Tags) > 0 {
+			fields = append(fields, discord.EmbedField{Name: "Tags", Value: strings.Join(event.Tags, ", "), Inline: false})
+		}
+		if len(event.Connections) > 0 {
+			var lines []string
+			for _, c := range event.Connections {
+				lines = append(lines, fmt.Sprintf("**%s** — %s", c.ReadingID, c.Reason))
+			}
+			fields = append(fields, discord.EmbedField{Name: "Connections", Value: truncate(strings.Join(lines, "\n"), maxEmbedTextLength), Inline: false})
+		}
+		desc := "New reading saved."
+		if event.Prompt != "" {
+			desc = fmt.Sprintf("New reading saved: %s", event.Prompt)
+		}
+		return desc, fields, 0x57F287
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/backflow-labs/backflow/internal/config"
 	"github.com/backflow-labs/backflow/internal/models"
 	"github.com/backflow-labs/backflow/internal/notify"
 )
@@ -436,6 +437,86 @@ func TestDispatch_ReadTaskWithoutEmbedder_Fails(t *testing.T) {
 	}
 	if o.running != 0 {
 		t.Errorf("running = %d, want 0", o.running)
+	}
+}
+
+// TestDispatch_ReadTask_OrchestratorMissingReaderImage_Fails ensures an
+// orchestrator that doesn't have a reader image configured refuses to dispatch
+// read tasks rather than silently running them on the default agent image.
+// Protects against cross-orchestrator mis-dispatch in shared-DB setups.
+func TestDispatch_ReadTask_OrchestratorMissingReaderImage_Fails(t *testing.T) {
+	s := newMockStore()
+	s.CreateInstance(context.Background(), newLocalInstance())
+	task := &models.Task{
+		ID:         "bf_read_no_reader",
+		Status:     models.TaskStatusPending,
+		TaskMode:   models.TaskModeRead,
+		Prompt:     "https://example.com/post",
+		AgentImage: "backflow-reader", // set by the creating orchestrator
+	}
+	s.CreateTask(context.Background(), task)
+
+	bus, _ := newTestBus()
+	defer bus.Close()
+	mock := &mockDockerManager{
+		runAgentID:     "cont-should-not-run",
+		inspectResults: map[string]ContainerStatus{},
+	}
+	// ReaderImage is unset on this orchestrator — embedder set so we isolate
+	// the reader-image guard.
+	o := newTestOrchestrator(s, bus, withDocker(mock), withEmbedder(&mockEmbedder{}))
+
+	task, _ = s.GetTask(context.Background(), "bf_read_no_reader")
+	err := o.dispatch(context.Background(), task)
+	if err == nil {
+		t.Fatal("expected error from dispatch when orchestrator has no reader image")
+	}
+	if !strings.Contains(err.Error(), "BACKFLOW_READER_IMAGE") {
+		t.Errorf("error = %q, want mention of BACKFLOW_READER_IMAGE", err.Error())
+	}
+
+	got, _ := s.GetTask(context.Background(), "bf_read_no_reader")
+	if got.ContainerID != "" {
+		t.Errorf("ContainerID = %q, want empty (no container should start)", got.ContainerID)
+	}
+	if got.Status == models.TaskStatusRunning {
+		t.Errorf("task should not be running, got %q", got.Status)
+	}
+}
+
+// TestDispatch_ReadTask_Fargate_MissingReaderTaskDefinition_Fails guards the
+// fargate-mode equivalent of the above check.
+func TestDispatch_ReadTask_Fargate_MissingReaderTaskDefinition_Fails(t *testing.T) {
+	s := newMockStore()
+	s.CreateInstance(context.Background(), newLocalInstance())
+	task := &models.Task{
+		ID:         "bf_read_fargate_no_reader_td",
+		Status:     models.TaskStatusPending,
+		TaskMode:   models.TaskModeRead,
+		Prompt:     "https://example.com/post",
+		AgentImage: "backflow-reader",
+	}
+	s.CreateTask(context.Background(), task)
+
+	bus, _ := newTestBus()
+	defer bus.Close()
+	mock := &mockDockerManager{
+		runAgentID:     "cont-should-not-run",
+		inspectResults: map[string]ContainerStatus{},
+	}
+	o := newTestOrchestrator(s, bus, withDocker(mock), withEmbedder(&mockEmbedder{}))
+	// Fargate mode with a reader image but no reader task definition.
+	o.config.Mode = config.ModeFargate
+	o.config.ReaderImage = "backflow-reader"
+	o.config.ECSReaderTaskDefinition = ""
+
+	task, _ = s.GetTask(context.Background(), "bf_read_fargate_no_reader_td")
+	err := o.dispatch(context.Background(), task)
+	if err == nil {
+		t.Fatal("expected error when fargate orchestrator lacks reader task definition")
+	}
+	if !strings.Contains(err.Error(), "BACKFLOW_ECS_READER_TASK_DEFINITION") {
+		t.Errorf("error = %q, want mention of BACKFLOW_ECS_READER_TASK_DEFINITION", err.Error())
 	}
 }
 

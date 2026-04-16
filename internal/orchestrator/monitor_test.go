@@ -484,15 +484,12 @@ func TestHandleCompletion_ReadSuccess_EmbedsAndCreatesReading(t *testing.T) {
 	}
 	emb.mu.Unlock()
 
-	// CreateReading received the reading, UpsertReading was NOT called.
+	// UpsertReading received the reading (always upsert, regardless of force).
 	s.mu.Lock()
-	if len(s.createdReadings) != 1 {
-		t.Fatalf("createdReadings = %d, want 1", len(s.createdReadings))
+	if len(s.upsertedReadings) != 1 {
+		t.Fatalf("upsertedReadings = %d, want 1", len(s.upsertedReadings))
 	}
-	if len(s.upsertedReadings) != 0 {
-		t.Errorf("upsertedReadings = %d, want 0 for non-force task", len(s.upsertedReadings))
-	}
-	r := s.createdReadings[0]
+	r := s.upsertedReadings[0]
 	s.mu.Unlock()
 
 	if r.URL != "https://example.com/post" {
@@ -587,13 +584,13 @@ func TestHandleCompletion_ReadSuccess_AssignsUniqueReadingIDs(t *testing.T) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.createdReadings) != 2 {
-		t.Fatalf("createdReadings = %d, want 2", len(s.createdReadings))
+	if len(s.upsertedReadings) != 2 {
+		t.Fatalf("upsertedReadings = %d, want 2", len(s.upsertedReadings))
 	}
-	if s.createdReadings[0].ID == s.createdReadings[1].ID {
-		t.Errorf("reading IDs collided: %q == %q", s.createdReadings[0].ID, s.createdReadings[1].ID)
+	if s.upsertedReadings[0].ID == s.upsertedReadings[1].ID {
+		t.Errorf("reading IDs collided: %q == %q", s.upsertedReadings[0].ID, s.upsertedReadings[1].ID)
 	}
-	for i, r := range s.createdReadings {
+	for i, r := range s.upsertedReadings {
 		if !strings.HasPrefix(r.ID, "bf_") {
 			t.Errorf("reading[%d].ID = %q, want bf_-prefixed", i, r.ID)
 		}
@@ -606,11 +603,12 @@ func TestHandleCompletion_ReadEmptyURL_MarksTaskFailed(t *testing.T) {
 
 	s.CreateInstance(context.Background(), newLocalInstance())
 
+	// Both status.URL and task.Prompt are empty — no fallback possible.
 	s.CreateTask(context.Background(), &models.Task{
 		ID:          "bf_read_empty_url",
 		Status:      models.TaskStatusRunning,
 		TaskMode:    models.TaskModeRead,
-		Prompt:      "https://example.com/post",
+		Prompt:      "",
 		InstanceID:  "local",
 		ContainerID: "cont1",
 		StartedAt:   &now,
@@ -659,9 +657,110 @@ func TestHandleCompletion_ReadEmptyURL_MarksTaskFailed(t *testing.T) {
 	}
 }
 
+// TestHandleCompletion_ReadDuplicate_SkipsWrite verifies that a non-forced
+// duplicate reading completes successfully without overwriting the existing row.
+func TestHandleCompletion_ReadDuplicate_SkipsWrite(t *testing.T) {
+	s := newMockStore()
+	now := time.Now().UTC()
+
+	s.CreateInstance(context.Background(), newLocalInstance())
+
+	s.CreateTask(context.Background(), &models.Task{
+		ID:          "bf_read_dup",
+		Status:      models.TaskStatusRunning,
+		TaskMode:    models.TaskModeRead,
+		Force:       false,
+		Prompt:      "https://example.com/post",
+		InstanceID:  "local",
+		ContainerID: "cont1",
+		StartedAt:   &now,
+	})
+
+	bus, n := newTestBus()
+	emb := &mockEmbedder{vector: []float32{0.1}}
+	o := newTestOrchestrator(s, bus, withEmbedder(emb))
+	o.running = 1
+
+	task, _ := s.GetTask(context.Background(), "bf_read_dup")
+	o.handleCompletion(context.Background(), task, ContainerStatus{
+		Done:           true,
+		Complete:       true,
+		TaskMode:       models.TaskModeRead,
+		URL:            "https://example.com/post",
+		TLDR:           "already read",
+		NoveltyVerdict: "duplicate",
+	})
+	bus.Close()
+
+	got, _ := s.GetTask(context.Background(), "bf_read_dup")
+	if got.Status != models.TaskStatusCompleted {
+		t.Errorf("task.Status = %q, want completed", got.Status)
+	}
+
+	s.mu.Lock()
+	if len(s.upsertedReadings) != 0 {
+		t.Errorf("upsertedReadings = %d, want 0 for non-forced duplicate", len(s.upsertedReadings))
+	}
+	s.mu.Unlock()
+
+	// Embedder should not be called for duplicates (no embedding to write).
+	emb.mu.Lock()
+	if len(emb.calls) != 0 {
+		t.Errorf("embedder calls = %v, want none for duplicate", emb.calls)
+	}
+	emb.mu.Unlock()
+
+	events := n.eventTypes()
+	if len(events) != 1 || events[0] != notify.EventTaskCompleted {
+		t.Errorf("events = %v, want [task.completed]", events)
+	}
+}
+
+// TestHandleCompletion_ReadDuplicate_Force_StillWrites verifies that a forced
+// duplicate reading still writes (upserts) to refresh the reading row.
+func TestHandleCompletion_ReadDuplicate_Force_StillWrites(t *testing.T) {
+	s := newMockStore()
+	now := time.Now().UTC()
+
+	s.CreateInstance(context.Background(), newLocalInstance())
+
+	s.CreateTask(context.Background(), &models.Task{
+		ID:          "bf_read_dup_force",
+		Status:      models.TaskStatusRunning,
+		TaskMode:    models.TaskModeRead,
+		Force:       true,
+		Prompt:      "https://example.com/post",
+		InstanceID:  "local",
+		ContainerID: "cont1",
+		StartedAt:   &now,
+	})
+
+	bus, _ := newTestBus()
+	emb := &mockEmbedder{vector: []float32{0.5}}
+	o := newTestOrchestrator(s, bus, withEmbedder(emb))
+	o.running = 1
+
+	task, _ := s.GetTask(context.Background(), "bf_read_dup_force")
+	o.handleCompletion(context.Background(), task, ContainerStatus{
+		Done:           true,
+		Complete:       true,
+		TaskMode:       models.TaskModeRead,
+		URL:            "https://example.com/post",
+		TLDR:           "refreshed summary",
+		NoveltyVerdict: "duplicate",
+	})
+	bus.Close()
+
+	s.mu.Lock()
+	if len(s.upsertedReadings) != 1 {
+		t.Fatalf("upsertedReadings = %d, want 1 for forced duplicate", len(s.upsertedReadings))
+	}
+	s.mu.Unlock()
+}
+
 func TestHandleCompletion_ReadStoreFailure_MarksTaskFailed(t *testing.T) {
 	s := newMockStore()
-	s.createReadingErr = fmt.Errorf("db write failed")
+	s.upsertReadingErr = fmt.Errorf("db write failed")
 	now := time.Now().UTC()
 
 	s.CreateInstance(context.Background(), newLocalInstance())
@@ -787,9 +886,6 @@ func TestHandleCompletion_ReadForce_CallsUpsertReading(t *testing.T) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.createdReadings) != 0 {
-		t.Errorf("createdReadings = %d, want 0 for force task", len(s.createdReadings))
-	}
 	if len(s.upsertedReadings) != 1 {
 		t.Fatalf("upsertedReadings = %d, want 1", len(s.upsertedReadings))
 	}

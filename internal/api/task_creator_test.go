@@ -15,10 +15,12 @@ import (
 // mockStore implements store.Store for unit tests that need a failing CreateTask.
 type mockStore struct {
 	store.Store
-	createErr error
+	createErr   error
+	createCalls int
 }
 
 func (m *mockStore) CreateTask(_ context.Context, _ *models.Task) error {
+	m.createCalls++
 	return m.createErr
 }
 
@@ -166,6 +168,51 @@ func TestNewReadTask_ValidationError_NotStoreFailure(t *testing.T) {
 	}
 	if errors.Is(err, ErrStoreFailure) {
 		t.Errorf("validation error should not match ErrStoreFailure, got: %v", err)
+	}
+}
+
+// TestNewReadTask_NoReaderImage_FailsFast ensures a read task is rejected at
+// creation time when the server isn't configured with a reader image — no DB
+// row gets created and the caller gets an immediate, actionable error.
+func TestNewReadTask_NoReaderImage_FailsFast(t *testing.T) {
+	cfg := readTestConfig()
+	cfg.ReaderImage = ""
+	s := &mockStore{}
+	req := &models.CreateTaskRequest{Prompt: "https://example.com/post"}
+
+	task, err := NewReadTask(context.Background(), req, s, cfg, nil)
+	if err == nil {
+		t.Fatal("expected error when ReaderImage is unset, got nil")
+	}
+	if task != nil {
+		t.Errorf("expected nil task on error, got %+v", task)
+	}
+	if errors.Is(err, ErrStoreFailure) {
+		t.Errorf("configuration error should not wrap ErrStoreFailure, got: %v", err)
+	}
+	if !contains(err.Error(), "BACKFLOW_READER_IMAGE") {
+		t.Errorf("error should name the missing env var; got: %v", err)
+	}
+	if s.createCalls != 0 {
+		t.Errorf("store.CreateTask should not be called; got %d calls", s.createCalls)
+	}
+}
+
+// TestNewReadTask_Fargate_NoReaderTaskDefinition_FailsFast ensures the same
+// fail-fast behavior in Fargate mode when the reader task definition isn't set.
+func TestNewReadTask_Fargate_NoReaderTaskDefinition_FailsFast(t *testing.T) {
+	cfg := readTestConfig()
+	cfg.Mode = config.ModeFargate
+	cfg.ECSReaderTaskDefinition = ""
+	s := &mockStore{}
+	req := &models.CreateTaskRequest{Prompt: "https://example.com/post"}
+
+	_, err := NewReadTask(context.Background(), req, s, cfg, nil)
+	if err == nil {
+		t.Fatal("expected error when ECSReaderTaskDefinition is unset in fargate mode, got nil")
+	}
+	if !contains(err.Error(), "BACKFLOW_ECS_READER_TASK_DEFINITION") {
+		t.Errorf("error should name the missing env var; got: %v", err)
 	}
 }
 

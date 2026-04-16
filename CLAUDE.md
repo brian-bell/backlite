@@ -89,7 +89,7 @@ Two goroutines: chi REST API on `:8080` + polling orchestrator (5s default). Thr
 
 ### Fake agent (`test/blackbox/fake-agent/`)
 
-Minimal Alpine image used by black-box and soak tests. Reads `FAKE_OUTCOME` env var to simulate outcomes: `success`, `slow_success`, `fail`, `needs_input`, `timeout`, `crash`. Writes `status.json` and emits `BACKFLOW_STATUS_JSON:` just like the real agent. Does not create `claude_output.log` (soak tasks set `save_agent_output: false`).
+Minimal Alpine image used by black-box and soak tests. Reads `FAKE_OUTCOME` env var to simulate outcomes: `success`, `slow_success`, `fail`, `needs_input`, `timeout`, `crash`. Writes `status.json` and emits `BACKFLOW_STATUS_JSON:` just like the real agent. Does not create `container_output.log` (soak tasks set `save_agent_output: false`).
 
 ### Soak test (`test/soak/`)
 

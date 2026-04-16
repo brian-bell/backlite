@@ -2,10 +2,13 @@
 set -euo pipefail
 
 # --- Configuration from environment ---
-if [ -z "${URL:-}" ]; then
-    echo "ERROR: URL is required" >&2
+# The orchestrator passes the URL in PROMPT (matching the DB column).
+# Alias to URL for readability in the reading prompt below.
+if [ -z "${PROMPT:-}" ]; then
+    echo "ERROR: PROMPT is required (the URL to read)" >&2
     exit 1
 fi
+URL="$PROMPT"
 HARNESS="${HARNESS:-claude_code}"
 MODEL="${MODEL:-claude-sonnet-4-6}"
 EFFORT="${EFFORT:-medium}"
@@ -56,7 +59,8 @@ fetch_s3_var() {
         export "$target_var"
     fi
 }
-fetch_s3_var "URL_S3_URL" "URL"
+fetch_s3_var "PROMPT_S3_URL" "PROMPT"
+URL="$PROMPT"  # re-alias after potential S3 download
 
 if [ "$HARNESS" = "codex" ]; then
     echo "==> Logging in to codex with API key..."
@@ -123,7 +127,7 @@ Do not write any other files. Do not make commits or PRs."
 # =============================================================================
 
 cd "$WORKSPACE"
-HARNESS_LOG="${WORKSPACE}/reader_output.log"
+HARNESS_LOG="${WORKSPACE}/container_output.log"
 
 echo "==> Running ${HARNESS} for URL: ${URL}"
 set +e

@@ -41,14 +41,21 @@ const (
 
 // Interaction is the minimal Discord interaction payload needed for routing.
 type Interaction struct {
-	Type   int             `json:"type"`
-	Data   json.RawMessage `json:"data,omitempty"`
-	Member *MemberInfo     `json:"member,omitempty"`
+	Type    int             `json:"type"`
+	Data    json.RawMessage `json:"data,omitempty"`
+	GuildID string          `json:"guild_id,omitempty"`
+	Member  *MemberInfo     `json:"member,omitempty"`
 }
 
 // MemberInfo holds the guild member information sent with an interaction.
 type MemberInfo struct {
-	Roles []string `json:"roles"`
+	Roles []string     `json:"roles"`
+	User  *DiscordUser `json:"user,omitempty"`
+}
+
+// DiscordUser carries the subset of the Discord user object used by Backflow.
+type DiscordUser struct {
+	ID string `json:"id"`
 }
 
 // CommandData contains the parsed command name from an application command interaction.
@@ -191,7 +198,7 @@ func handleApplicationCommand(ctx context.Context, w http.ResponseWriter, intera
 	if !ok {
 		respondJSON(w, ChannelMessageResponse{
 			Type: ResponseTypeChannelMessage,
-			Data: MessageData{Content: fmt.Sprintf("Use /%s create, /%s status, /%s list, /%s cancel, or /%s retry.", actions.CommandName, actions.CommandName, actions.CommandName, actions.CommandName, actions.CommandName)},
+			Data: MessageData{Content: fmt.Sprintf("Use %s.", subcommandsHelp(actions.CommandName))},
 		})
 		return
 	}
@@ -306,6 +313,8 @@ func handleApplicationCommand(ctx context.Context, w http.ResponseWriter, intera
 			Type: ResponseTypeChannelMessage,
 			Data: MessageData{Content: fmt.Sprintf("Task %s has been cancelled.", taskID), Flags: FlagEphemeral},
 		})
+	case "read":
+		handleReadCommand(ctx, w, interaction, options, actions)
 	case "retry":
 		if !hasPermission(interaction.Member, actions.AllowedRoles) {
 			respondJSON(w, ChannelMessageResponse{
@@ -344,7 +353,7 @@ func handleApplicationCommand(ctx context.Context, w http.ResponseWriter, intera
 	default:
 		respondJSON(w, ChannelMessageResponse{
 			Type: ResponseTypeChannelMessage,
-			Data: MessageData{Content: fmt.Sprintf("Unknown subcommand: %s. Use /%s create, /%s status, /%s list, /%s cancel, or /%s retry.", subcommand, actions.CommandName, actions.CommandName, actions.CommandName, actions.CommandName, actions.CommandName)},
+			Data: MessageData{Content: fmt.Sprintf("Unknown subcommand: %s. Use %s.", subcommand, subcommandsHelp(actions.CommandName))},
 		})
 	}
 }
@@ -495,6 +504,35 @@ func intOption(options []CommandOption, name string) (int, error) {
 		return n, nil
 	}
 	return 0, fmt.Errorf("missing required option: %s", name)
+}
+
+// subcommandsHelp renders the list of /backflow subcommands as the
+// human-readable fragment used inside "Use ..." messages — e.g.
+// "/backflow create, /backflow status, ..., or /backflow read".
+func subcommandsHelp(cmdName string) string {
+	subs := []string{"create", "status", "list", "cancel", "retry", "read"}
+	parts := make([]string, len(subs))
+	for i, s := range subs {
+		parts[i] = "/" + cmdName + " " + s
+	}
+	if len(parts) == 1 {
+		return parts[0]
+	}
+	return strings.Join(parts[:len(parts)-1], ", ") + ", or " + parts[len(parts)-1]
+}
+
+func boolOption(options []CommandOption, name string) (value, ok bool) {
+	for _, opt := range options {
+		if opt.Name != name {
+			continue
+		}
+		var b bool
+		if err := json.Unmarshal(opt.Value, &b); err != nil {
+			return false, false
+		}
+		return b, true
+	}
+	return false, false
 }
 
 const (

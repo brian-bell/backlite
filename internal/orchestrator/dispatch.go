@@ -7,6 +7,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 
+	"github.com/backflow-labs/backflow/internal/config"
 	"github.com/backflow-labs/backflow/internal/models"
 	"github.com/backflow-labs/backflow/internal/notify"
 	"github.com/backflow-labs/backflow/internal/store"
@@ -48,8 +49,16 @@ func (o *Orchestrator) dispatchPending(ctx context.Context) {
 // dispatch assigns a task to an available instance, starts the container,
 // and transitions the task from pending → provisioning → running.
 func (o *Orchestrator) dispatch(ctx context.Context, task *models.Task) error {
-	if task.TaskMode == models.TaskModeRead && o.embedder == nil {
-		return fmt.Errorf("cannot dispatch read task: no embedder configured (set OPENAI_API_KEY)")
+	if task.TaskMode == models.TaskModeRead {
+		if o.embedder == nil {
+			return fmt.Errorf("cannot dispatch read task: no embedder configured (set OPENAI_API_KEY)")
+		}
+		if o.config.ReaderImage == "" {
+			return fmt.Errorf("cannot dispatch read task: no reader image configured (set BACKFLOW_READER_IMAGE)")
+		}
+		if o.config.Mode == config.ModeFargate && o.config.ECSReaderTaskDefinition == "" {
+			return fmt.Errorf("cannot dispatch read task: no reader task definition configured (set BACKFLOW_ECS_READER_TASK_DEFINITION)")
+		}
 	}
 
 	instance, err := o.findAvailableInstance(ctx)

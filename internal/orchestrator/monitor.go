@@ -186,8 +186,18 @@ func (o *Orchestrator) handleReadingCompletion(ctx context.Context, task *models
 	if o.embedder == nil {
 		return nil, fmt.Errorf("reading completion: no embedder configured")
 	}
-	if status.URL == "" {
+	url := status.URL
+	if url == "" {
+		url = task.Prompt // read-mode tasks always have the URL as the prompt
+	}
+	if url == "" {
 		return nil, fmt.Errorf("reading completion: agent reported empty url")
+	}
+
+	// Agent confirmed the URL already exists — complete without overwriting
+	// the existing reading (which has richer content than the duplicate stub).
+	if status.NoveltyVerdict == "duplicate" && !task.Force {
+		return notify.WithReading(status.TLDR, status.NoveltyVerdict, status.Tags, status.Connections), nil
 	}
 
 	vec, err := o.embedder.Embed(ctx, status.TLDR)
@@ -203,7 +213,7 @@ func (o *Orchestrator) handleReadingCompletion(ctx context.Context, task *models
 	reading := &models.Reading{
 		ID:             "bf_" + ulid.Make().String(),
 		TaskID:         task.ID,
-		URL:            status.URL,
+		URL:            url,
 		Title:          status.Title,
 		TLDR:           status.TLDR,
 		Tags:           status.Tags,
@@ -218,14 +228,8 @@ func (o *Orchestrator) handleReadingCompletion(ctx context.Context, task *models
 		CreatedAt:      time.Now().UTC(),
 	}
 
-	if task.Force {
-		if err := o.store.UpsertReading(ctx, reading); err != nil {
-			return nil, fmt.Errorf("upsert reading: %w", err)
-		}
-	} else {
-		if err := o.store.CreateReading(ctx, reading); err != nil {
-			return nil, fmt.Errorf("create reading: %w", err)
-		}
+	if err := o.store.UpsertReading(ctx, reading); err != nil {
+		return nil, fmt.Errorf("upsert reading: %w", err)
 	}
 
 	return notify.WithReading(status.TLDR, status.NoveltyVerdict, status.Tags, status.Connections), nil
@@ -269,7 +273,7 @@ func (o *Orchestrator) saveAgentOutput(ctx context.Context, task *models.Task) {
 		return
 	}
 
-	key := fmt.Sprintf("tasks/%s/agent_output.log", task.ID)
+	key := fmt.Sprintf("tasks/%s/container_output.log", task.ID)
 	url, err := o.s3.Upload(ctx, key, []byte(data))
 	if err != nil {
 		log.Warn().Err(err).Str("task_id", task.ID).Msg("failed to upload agent output to S3")

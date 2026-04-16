@@ -321,7 +321,7 @@ func (m *Manager) enrichFromStatusJSON(ctx context.Context, instanceID, containe
 
 // GetAgentOutput extracts the agent's output log from a container via docker cp.
 func (m *Manager) GetAgentOutput(ctx context.Context, instanceID, containerID string) (string, error) {
-	cmd := fmt.Sprintf("f=$(mktemp) && docker cp %s:/home/agent/workspace/claude_output.log \"$f\" 2>/dev/null && cat \"$f\" && rm -f \"$f\"", containerID)
+	cmd := fmt.Sprintf("f=$(mktemp) && docker cp %s:/home/agent/workspace/container_output.log \"$f\" 2>/dev/null && cat \"$f\" && rm -f \"$f\"", containerID)
 	return m.runCommand(ctx, instanceID, cmd)
 }
 

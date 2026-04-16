@@ -69,7 +69,7 @@ write_reader_status() {
         >/dev/null
 
     local tmp="${STATUS_FILE}.tmp"
-    jq --argjson reading "$reading_json" '. + {reading: $reading}' "$STATUS_FILE" > "$tmp"
+    jq --argjson reading "$reading_json" '. + $reading' "$STATUS_FILE" > "$tmp"
     mv "$tmp" "$STATUS_FILE"
 
     echo "BACKFLOW_STATUS_JSON:$(jq -c . "$STATUS_FILE")"

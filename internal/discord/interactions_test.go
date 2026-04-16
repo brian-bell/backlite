@@ -336,11 +336,11 @@ func TestRegisterCommands(t *testing.T) {
 	if commands[0].Name != "backflow" {
 		t.Errorf("command name = %q, want %q", commands[0].Name, "backflow")
 	}
-	if len(commands[0].Options) != 5 {
-		t.Fatalf("options = %v, want 5 subcommands", commands[0].Options)
+	if len(commands[0].Options) != 6 {
+		t.Fatalf("options = %v, want 6 subcommands", commands[0].Options)
 	}
-	if commands[0].Options[0].Name != "create" || commands[0].Options[1].Name != "status" || commands[0].Options[2].Name != "list" || commands[0].Options[3].Name != "cancel" || commands[0].Options[4].Name != "retry" {
-		t.Fatalf("subcommands = %v, want create, status, list, cancel and retry", commands[0].Options)
+	if commands[0].Options[0].Name != "create" || commands[0].Options[1].Name != "status" || commands[0].Options[2].Name != "list" || commands[0].Options[3].Name != "cancel" || commands[0].Options[4].Name != "retry" || commands[0].Options[5].Name != "read" {
+		t.Fatalf("subcommands = %v, want create, status, list, cancel, retry, and read", commands[0].Options)
 	}
 	if len(commands[0].Options[0].Options) != 0 {
 		t.Errorf("create subcommand has %d options, want 0", len(commands[0].Options[0].Options))

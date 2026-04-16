@@ -12,20 +12,20 @@ fail() {
     exit 1
 }
 
-# --- Missing URL env var ---
+# --- Missing PROMPT env var ---
 (
-    unset URL
+    unset PROMPT
     if output=$("$ENTRYPOINT" 2>&1); then
-        fail "entrypoint with no URL should exit non-zero"
+        fail "entrypoint with no PROMPT should exit non-zero"
     fi
-    if [[ "$output" != *"URL"* ]]; then
-        fail "entrypoint missing URL: expected error to mention URL, got: $output"
+    if [[ "$output" != *"PROMPT"* ]]; then
+        fail "entrypoint missing PROMPT: expected error to mention PROMPT, got: $output"
     fi
 )
 
-# --- URL set but no ANTHROPIC_API_KEY (claude_code is default) ---
+# --- PROMPT set but no ANTHROPIC_API_KEY (claude_code is default) ---
 (
-    export URL="https://example.com/article"
+    export PROMPT="https://example.com/article"
     unset ANTHROPIC_API_KEY HARNESS OPENAI_API_KEY
     if output=$("$ENTRYPOINT" 2>&1); then
         fail "entrypoint with claude_code harness and no key should exit non-zero"
@@ -35,9 +35,9 @@ fail() {
     fi
 )
 
-# --- URL + HARNESS=codex but no OPENAI_API_KEY ---
+# --- PROMPT + HARNESS=codex but no OPENAI_API_KEY ---
 (
-    export URL="https://example.com/article"
+    export PROMPT="https://example.com/article"
     export HARNESS=codex
     unset OPENAI_API_KEY ANTHROPIC_API_KEY
     if output=$("$ENTRYPOINT" 2>&1); then
@@ -91,7 +91,7 @@ exit 0
 STUB
     chmod +x "$stubdir/claude"
 
-    export URL="https://example.com/article"
+    export PROMPT="https://example.com/article"
     export ANTHROPIC_API_KEY="dummy"
     export HARNESS="claude_code"
     export READER_WORKSPACE="$stubdir/workspace"

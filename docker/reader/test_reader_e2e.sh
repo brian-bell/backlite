@@ -48,7 +48,7 @@ docker run --rm \
 
 # Full entrypoint run (real ANTHROPIC_API_KEY)
 docker run --rm \
-  -e URL="https://example.com/article" \
+  -e PROMPT="https://example.com/article" \
   -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
   -e OPENAI_API_KEY="$OPENAI_API_KEY" \
   -e SUPABASE_URL="$SUPABASE_URL" \

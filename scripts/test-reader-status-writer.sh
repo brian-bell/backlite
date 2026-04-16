@@ -33,7 +33,7 @@ if [ "$base_output" != "$base_expected" ]; then
   exit 1
 fi
 
-# --- write_reader_status nests reading fields under "reading" ---
+# --- write_reader_status merges reading fields flat into status.json ---
 reading_json='{
   "url": "https://example.com/article",
   "title": "Example Article",
@@ -56,20 +56,20 @@ if ! jq -e '
   .task_mode == "read" and
   .cost_usd == 0.05 and
   .elapsed_time_sec == 45 and
-  .reading.url == "https://example.com/article" and
-  .reading.title == "Example Article" and
-  .reading.tldr == "Short summary" and
-  (.reading.tags | length) == 2 and
-  .reading.tags[0] == "ai" and
-  (.reading.keywords | length) == 2 and
-  (.reading.people | length) == 1 and
-  .reading.people[0] == "Ada Lovelace" and
-  (.reading.orgs | length) == 1 and
-  .reading.novelty_verdict == "novel" and
-  (.reading.connections | length) == 1 and
-  .reading.connections[0].reading_id == "abc123" and
-  .reading.connections[0].reason == "same topic" and
-  .reading.summary_markdown == "# Heading\n\nBody"
+  .url == "https://example.com/article" and
+  .title == "Example Article" and
+  .tldr == "Short summary" and
+  (.tags | length) == 2 and
+  .tags[0] == "ai" and
+  (.keywords | length) == 2 and
+  (.people | length) == 1 and
+  .people[0] == "Ada Lovelace" and
+  (.orgs | length) == 1 and
+  .novelty_verdict == "novel" and
+  (.connections | length) == 1 and
+  .connections[0].reading_id == "abc123" and
+  .connections[0].reason == "same topic" and
+  .summary_markdown == "# Heading\n\nBody"
 ' "$STATUS_FILE" >/dev/null; then
   echo "reader status.json did not match expected content" >&2
   jq . "$STATUS_FILE" >&2

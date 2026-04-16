@@ -121,6 +121,24 @@ func RegisterCommands(baseURL, appID, botToken, commandName string) error {
 						},
 					},
 				},
+				{
+					Name:        "read",
+					Description: "Submit a URL for reading",
+					Type:        1, // SUB_COMMAND
+					Options: []slashCommandOption{
+						{
+							Name:        "url",
+							Description: "The URL to read",
+							Type:        3, // STRING
+							Required:    true,
+						},
+						{
+							Name:        "force",
+							Description: "Bypass duplicate detection and re-read",
+							Type:        5, // BOOLEAN
+						},
+					},
+				},
 			},
 		},
 	}

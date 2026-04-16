@@ -32,6 +32,7 @@ make deps               # go mod tidy
 make clean              # Remove bin/ directory
 make cloudflared-setup  # Create cloudflared tunnel, DNS route, and config (one-time)
 make tunnel             # Start cloudflared tunnel → $BACKFLOW_DOMAIN → localhost:8080
+make deploy-site        # Deploy site/ to Cloudflare Pages (backflow-site) via wrangler
 make db-running         # Show running tasks (also: db-pending, db-completed, db-failed, etc.)
 make docker-agent-build       # Buildx multi-platform agent image (amd64+arm64)
 make docker-agent-build-local # Single-architecture agent build

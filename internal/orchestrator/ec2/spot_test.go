@@ -94,19 +94,6 @@ func (s *interruptionStore) GetAllowedSender(context.Context, string, string) (*
 func (s *interruptionStore) CreateAllowedSender(context.Context, *models.AllowedSender) error {
 	return nil
 }
-func (s *interruptionStore) UpsertDiscordInstall(context.Context, *models.DiscordInstall) error {
-	return nil
-}
-func (s *interruptionStore) GetDiscordInstall(context.Context, string) (*models.DiscordInstall, error) {
-	return nil, store.ErrNotFound
-}
-func (s *interruptionStore) DeleteDiscordInstall(context.Context, string) error { return nil }
-func (s *interruptionStore) UpsertDiscordTaskThread(context.Context, *models.DiscordTaskThread) error {
-	return nil
-}
-func (s *interruptionStore) GetDiscordTaskThread(context.Context, string) (*models.DiscordTaskThread, error) {
-	return nil, store.ErrNotFound
-}
 func (s *interruptionStore) UpsertReading(context.Context, *models.Reading) error { return nil }
 func (s *interruptionStore) GetReadingByURL(context.Context, string) (*models.Reading, error) {
 	return nil, store.ErrNotFound

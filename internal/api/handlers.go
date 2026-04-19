@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
@@ -187,6 +189,34 @@ func (h *Handlers) RetryTask(w http.ResponseWriter, r *http.Request) {
 	}
 	task.RedactReplyChannel()
 	writeJSON(w, http.StatusOK, task)
+}
+
+func (h *Handlers) GetTaskOutput(w http.ResponseWriter, r *http.Request) {
+	h.serveOutputFile(w, r, "container_output.log", "text/plain; charset=utf-8")
+}
+
+func (h *Handlers) GetTaskOutputJSON(w http.ResponseWriter, r *http.Request) {
+	h.serveOutputFile(w, r, "task.json", "application/json")
+}
+
+// serveOutputFile streams a single file from {DataDir}/tasks/{id}/{name}.
+// Returns 404 when the file is missing (the task directory may not have been
+// populated yet, or the task may not exist).
+func (h *Handlers) serveOutputFile(w http.ResponseWriter, r *http.Request, name, contentType string) {
+	id := chi.URLParam(r, "id")
+	path := filepath.Join(h.config.DataDir, "tasks", id, name)
+
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			writeError(w, http.StatusNotFound, "output not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to access output file")
+		return
+	}
+
+	w.Header().Set("Content-Type", contentType)
+	http.ServeFile(w, r, path)
 }
 
 func (h *Handlers) HealthCheck(w http.ResponseWriter, r *http.Request) {

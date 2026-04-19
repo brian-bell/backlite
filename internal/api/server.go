@@ -39,6 +39,8 @@ func NewServer(s store.Store, cfg *config.Config, logs LogFetcher, bus notify.Em
 			r.Delete("/{id}", h.DeleteTask)
 			r.Post("/{id}/retry", h.RetryTask)
 			r.Get("/{id}/logs", h.GetTaskLogs)
+			r.Get("/{id}/output", h.GetTaskOutput)
+			r.Get("/{id}/output.json", h.GetTaskOutputJSON)
 		})
 	})
 

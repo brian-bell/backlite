@@ -1928,3 +1928,108 @@ func TestKillTask_StopContainerError(t *testing.T) {
 		t.Errorf("expected [task.failed], got %v", types)
 	}
 }
+
+// --- saveAgentOutput (filesystem writer) ---
+
+func TestSaveAgentOutput_WritesViaWriter(t *testing.T) {
+	s := newMockStore()
+	now := time.Now().UTC()
+
+	s.CreateTask(context.Background(), &models.Task{
+		ID:              "bf_fs_out",
+		Status:          models.TaskStatusRunning,
+		SaveAgentOutput: true,
+		InstanceID:      "local",
+		ContainerID:     "cont1",
+		StartedAt:       &now,
+		CreatedAt:       now,
+	})
+
+	bus, _ := newTestBus()
+	defer bus.Close()
+	writer := &mockWriter{}
+	docker := &mockDockerManager{agentOutput: "agent log bytes"}
+	o := newTestOrchestrator(s, bus, withDocker(docker), withOutputs(writer))
+
+	task, _ := s.GetTask(context.Background(), "bf_fs_out")
+	o.saveAgentOutput(context.Background(), task)
+
+	if len(writer.saves) != 1 {
+		t.Fatalf("expected 1 writer.Save call, got %d", len(writer.saves))
+	}
+	save := writer.saves[0]
+	if save.taskID != "bf_fs_out" {
+		t.Errorf("taskID = %q, want %q", save.taskID, "bf_fs_out")
+	}
+	if string(save.log) != "agent log bytes" {
+		t.Errorf("log = %q, want %q", string(save.log), "agent log bytes")
+	}
+
+	meta, ok := save.metadata.(taskMetadata)
+	if !ok {
+		t.Fatalf("metadata = %T, want taskMetadata", save.metadata)
+	}
+	if meta.ID != "bf_fs_out" {
+		t.Errorf("metadata.ID = %q, want %q", meta.ID, "bf_fs_out")
+	}
+
+	if task.OutputURL != "/api/v1/tasks/bf_fs_out/output" {
+		t.Errorf("task.OutputURL = %q, want %q", task.OutputURL, "/api/v1/tasks/bf_fs_out/output")
+	}
+}
+
+func TestSaveAgentOutput_NilWriter(t *testing.T) {
+	s := newMockStore()
+	now := time.Now().UTC()
+
+	s.CreateTask(context.Background(), &models.Task{
+		ID:              "bf_fs_nil",
+		Status:          models.TaskStatusRunning,
+		SaveAgentOutput: true,
+		InstanceID:      "local",
+		ContainerID:     "cont1",
+		StartedAt:       &now,
+	})
+
+	bus, _ := newTestBus()
+	defer bus.Close()
+	// No outputs writer configured — should be a silent no-op.
+	o := newTestOrchestrator(s, bus)
+
+	task, _ := s.GetTask(context.Background(), "bf_fs_nil")
+	o.saveAgentOutput(context.Background(), task)
+
+	if task.OutputURL != "" {
+		t.Errorf("task.OutputURL = %q, want empty when writer is nil", task.OutputURL)
+	}
+}
+
+func TestSaveAgentOutput_GateOffWhenSaveDisabled(t *testing.T) {
+	s := newMockStore()
+	now := time.Now().UTC()
+
+	s.CreateTask(context.Background(), &models.Task{
+		ID:              "bf_fs_gate",
+		Status:          models.TaskStatusRunning,
+		SaveAgentOutput: false, // gated off
+		InstanceID:      "local",
+		ContainerID:     "cont1",
+		StartedAt:       &now,
+	})
+
+	bus, _ := newTestBus()
+	defer bus.Close()
+	writer := &mockWriter{}
+	docker := &mockDockerManager{agentOutput: "never written"}
+	o := newTestOrchestrator(s, bus, withDocker(docker), withOutputs(writer))
+
+	task, _ := s.GetTask(context.Background(), "bf_fs_gate")
+	o.saveAgentOutput(context.Background(), task)
+
+	if len(writer.saves) != 0 {
+		t.Errorf("expected 0 Save calls (SaveAgentOutput=false), got %d", len(writer.saves))
+	}
+	if task.OutputURL != "" {
+		t.Errorf("task.OutputURL = %q, want empty when save gated off", task.OutputURL)
+	}
+}

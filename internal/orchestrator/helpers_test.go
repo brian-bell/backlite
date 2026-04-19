@@ -420,6 +420,10 @@ type mockDockerManager struct {
 
 	// Error injection for StopContainer.
 	stopContainerErr error
+
+	// GetAgentOutput behavior.
+	agentOutput    string
+	agentOutputErr error
 }
 
 func (m *mockDockerManager) RunAgent(ctx context.Context, instance *models.Instance, task *models.Task) (string, error) {
@@ -455,7 +459,31 @@ func (m *mockDockerManager) GetLogs(_ context.Context, _, _ string, _ int) (stri
 }
 
 func (m *mockDockerManager) GetAgentOutput(_ context.Context, _, _ string) (string, error) {
-	return "", fmt.Errorf("not implemented")
+	if m.agentOutputErr != nil {
+		return "", m.agentOutputErr
+	}
+	return m.agentOutput, nil
+}
+
+// --- Mock filesystem writer ---
+
+type mockWriter struct {
+	saves []mockWriterSave
+	err   error
+}
+
+type mockWriterSave struct {
+	taskID   string
+	log      []byte
+	metadata any
+}
+
+func (m *mockWriter) Save(_ context.Context, taskID string, logBytes []byte, metadata any) (string, error) {
+	if m.err != nil {
+		return "", m.err
+	}
+	m.saves = append(m.saves, mockWriterSave{taskID: taskID, log: logBytes, metadata: metadata})
+	return "/api/v1/tasks/" + taskID + "/output", nil
 }
 
 // --- Mock S3 client ---
@@ -529,6 +557,10 @@ func withDocker(d Runner) func(*Orchestrator) {
 
 func withS3(s S3Client) func(*Orchestrator) {
 	return func(o *Orchestrator) { o.s3 = s }
+}
+
+func withOutputs(w Writer) func(*Orchestrator) {
+	return func(o *Orchestrator) { o.outputs = w }
 }
 
 func withEmbedder(e embeddings.Embedder) func(*Orchestrator) {

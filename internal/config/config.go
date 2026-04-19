@@ -108,6 +108,9 @@ type Config struct {
 	// S3 (task data: agent output, offloaded config for large prompts)
 	S3Bucket string
 
+	// Filesystem data directory (agent output log + task metadata written here)
+	DataDir string
+
 	// Logging
 	LogFile string
 
@@ -177,6 +180,7 @@ func Load() (*Config, error) {
 		SupabaseURL:             os.Getenv("SUPABASE_URL"),
 		SupabaseAnonKey:         os.Getenv("SUPABASE_ANON_KEY"),
 		S3Bucket:                os.Getenv("BACKFLOW_S3_BUCKET"),
+		DataDir:                 envOr("BACKFLOW_DATA_DIR", "./data"),
 		GitHubToken:             os.Getenv("GITHUB_TOKEN"),
 		WebhookURL:              os.Getenv("BACKFLOW_WEBHOOK_URL"),
 		DiscordAppID:            os.Getenv("BACKFLOW_DISCORD_APP_ID"),

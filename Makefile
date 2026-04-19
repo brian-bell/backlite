@@ -172,7 +172,6 @@ tunnel:
 	@$(ENV); \
 	echo "Starting cloudflared tunnel → $$BACKFLOW_DOMAIN → http://localhost:8080"; \
 	echo "Discord interactions endpoint: https://$$BACKFLOW_DOMAIN/webhooks/discord"; \
-	echo "SMS inbound webhook:           https://$$BACKFLOW_DOMAIN/webhooks/sms/inbound"; \
 	cloudflared tunnel run $$BACKFLOW_TUNNEL_NAME
 
 cloudflared-setup:

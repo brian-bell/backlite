@@ -321,14 +321,6 @@ func (s *mockStore) ResetRunningContainers(_ context.Context, id string) error {
 	return nil
 }
 
-func (s *mockStore) GetAllowedSender(_ context.Context, channelType, address string) (*models.AllowedSender, error) {
-	return nil, store.ErrNotFound
-}
-
-func (s *mockStore) CreateAllowedSender(_ context.Context, sender *models.AllowedSender) error {
-	return nil
-}
-
 func (s *mockStore) UpsertDiscordInstall(_ context.Context, _ *models.DiscordInstall) error {
 	return nil
 }

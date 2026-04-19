@@ -43,7 +43,7 @@ make test-schema        # Schemathesis fuzz tests against OpenAPI spec
 
 ### Local Tunnel (for webhooks)
 
-To receive inbound webhooks (Discord interactions, Twilio SMS) during local development, expose your server with a [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps) named tunnel:
+To receive inbound webhooks (Discord interactions) during local development, expose your server with a [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps) named tunnel:
 
 ```bash
 brew install cloudflared
@@ -52,7 +52,7 @@ make cloudflared-setup   # One-time: create tunnel, DNS route, and config
 make tunnel              # Start the tunnel
 ```
 
-This routes `https://$BACKFLOW_DOMAIN` to `localhost:8080`. Set the domain as the Discord Interactions Endpoint URL and Twilio webhook URL. Discord task lifecycle notifications will then land in the configured channel and per-task thread. See [docs/discord-setup.md](docs/discord-setup.md) and [docs/sms-setup.md](docs/sms-setup.md) for full configuration.
+This routes `https://$BACKFLOW_DOMAIN` to `localhost:8080`. Set the domain as the Discord Interactions Endpoint URL. Discord task lifecycle notifications will then land in the configured channel and per-task thread. See [docs/discord-setup.md](docs/discord-setup.md) for full configuration.
 
 ## Submitting Tasks
 
@@ -137,7 +137,6 @@ curl -X POST http://localhost:8080/api/v1/tasks \
 | `GET` | `/api/v1/health` | Health check |
 | `GET` | `/debug/stats` | Operational stats (PID, uptime, running tasks, pool metrics) |
 | `POST` | `/webhooks/discord` | Discord interaction endpoint (signature-verified) |
-| `POST` | `/webhooks/sms/inbound` | Twilio inbound SMS webhook |
 
 ### Task Request Fields
 
@@ -397,17 +396,4 @@ Events: `task.created`, `task.running`, `task.completed`, `task.failed`, `task.n
 | `BACKFLOW_DISCORD_EVENTS` | all | Comma-separated event filter |
 
 See [docs/discord-setup.md](docs/discord-setup.md) for full setup instructions.
-
-### SMS (Twilio)
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `BACKFLOW_SMS_PROVIDER` | | Set to `twilio` to enable SMS |
-| `TWILIO_ACCOUNT_SID` | | Twilio Account SID (required when provider is `twilio`) |
-| `TWILIO_AUTH_TOKEN` | | Twilio Auth Token (required when provider is `twilio`) |
-| `BACKFLOW_SMS_FROM_NUMBER` | | Twilio phone number in E.164 format (required when provider is `twilio`) |
-| `BACKFLOW_SMS_EVENTS` | `task.completed,task.failed` | Comma-separated events that trigger outbound SMS |
-| `BACKFLOW_SMS_OUTBOUND_ENABLED` | `true` | Set to `false` to disable outbound SMS while keeping inbound |
-
-See [docs/sms-setup.md](docs/sms-setup.md) for full setup instructions including allowed sender registration and A2P 10DLC compliance.
 

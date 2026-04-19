@@ -61,10 +61,6 @@ type Store interface {
 	UpdateInstanceDetails(ctx context.Context, id string, privateIP, az string) error
 	ResetRunningContainers(ctx context.Context, id string) error
 
-	// Allowed senders
-	GetAllowedSender(ctx context.Context, channelType, address string) (*models.AllowedSender, error)
-	CreateAllowedSender(ctx context.Context, sender *models.AllowedSender) error
-
 	// Discord installs
 	UpsertDiscordInstall(ctx context.Context, install *models.DiscordInstall) error
 	GetDiscordInstall(ctx context.Context, guildID string) (*models.DiscordInstall, error)

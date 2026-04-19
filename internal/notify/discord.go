@@ -363,3 +363,12 @@ func threadNameForTask(taskID string) string {
 	}
 	return name[:100]
 }
+
+// truncate returns s bounded to maxLen runes, appending "..." when truncated.
+func truncate(s string, maxLen int) string {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
+		return s
+	}
+	return string(runes[:maxLen-3]) + "..."
+}

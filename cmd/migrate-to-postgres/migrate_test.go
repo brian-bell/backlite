@@ -353,7 +353,7 @@ func TestMigrate_Instances(t *testing.T) {
 	}
 }
 
-func TestMigrate_AllowedSenders(t *testing.T) {
+func TestMigrate_Senders(t *testing.T) {
 	ctx := context.Background()
 	sqliteDB := newTestSQLiteDB(t)
 	pgPool := newTestPgPool(t)

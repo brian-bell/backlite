@@ -845,37 +845,6 @@ func TestPG_ResetRunningContainers(t *testing.T) {
 	}
 }
 
-// --- AllowedSender ---
-
-func TestPG_CreateAllowedSender(t *testing.T) {
-	s := testPostgresStore(t)
-	ctx := context.Background()
-
-	sender := &models.AllowedSender{
-		ChannelType: "sms",
-		Address:     "+15551234567",
-		Enabled:     true,
-		CreatedAt:   time.Now().UTC().Truncate(time.Microsecond),
-	}
-	if err := s.CreateAllowedSender(ctx, sender); err != nil {
-		t.Fatalf("CreateAllowedSender: %v", err)
-	}
-
-	got, err := s.GetAllowedSender(ctx, "sms", "+15551234567")
-	if err != nil {
-		t.Fatalf("GetAllowedSender: %v", err)
-	}
-	if got.ChannelType != "sms" {
-		t.Errorf("ChannelType = %q, want sms", got.ChannelType)
-	}
-	if got.Address != "+15551234567" {
-		t.Errorf("Address = %q", got.Address)
-	}
-	if !got.Enabled {
-		t.Error("Enabled should be true")
-	}
-}
-
 // --- Review task ---
 
 func TestPG_ReviewTaskCRUD(t *testing.T) {

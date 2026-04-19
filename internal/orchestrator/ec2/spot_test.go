@@ -88,12 +88,6 @@ func (s *interruptionStore) UpdateInstanceDetails(context.Context, string, strin
 func (s *interruptionStore) IncrementRunningContainers(context.Context, string) error { return nil }
 func (s *interruptionStore) DecrementRunningContainers(context.Context, string) error { return nil }
 func (s *interruptionStore) ResetRunningContainers(context.Context, string) error     { return nil }
-func (s *interruptionStore) GetAllowedSender(context.Context, string, string) (*models.AllowedSender, error) {
-	return nil, store.ErrNotFound
-}
-func (s *interruptionStore) CreateAllowedSender(context.Context, *models.AllowedSender) error {
-	return nil
-}
 func (s *interruptionStore) UpsertDiscordInstall(context.Context, *models.DiscordInstall) error {
 	return nil
 }

@@ -54,7 +54,7 @@ func migrate(ctx context.Context, sqliteDB *sql.DB, pgPool *pgxpool.Pool) error 
 	if err := migrateInstances(ctx, sqliteDB, pgPool); err != nil {
 		return fmt.Errorf("instances: %w", err)
 	}
-	if err := migrateAllowedSenders(ctx, sqliteDB, pgPool); err != nil {
+	if err := migrateSenders(ctx, sqliteDB, pgPool); err != nil {
 		return fmt.Errorf("allowed_senders: %w", err)
 	}
 	return nil
@@ -252,7 +252,7 @@ func migrateInstances(ctx context.Context, sqliteDB *sql.DB, pgPool *pgxpool.Poo
 	return nil
 }
 
-func migrateAllowedSenders(ctx context.Context, sqliteDB *sql.DB, pgPool *pgxpool.Pool) error {
+func migrateSenders(ctx context.Context, sqliteDB *sql.DB, pgPool *pgxpool.Pool) error {
 	rows, err := sqliteDB.QueryContext(ctx, `SELECT
 		channel_type, address, enabled, created_at
 	FROM allowed_senders`)

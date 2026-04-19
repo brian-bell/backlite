@@ -223,23 +223,6 @@ func TestLoad_APIKey(t *testing.T) {
 	}
 }
 
-func TestLoad_SMSOutboundEnabled_DefaultTrue(t *testing.T) {
-	t.Setenv("ANTHROPIC_API_KEY", "test-key")
-	t.Setenv("BACKFLOW_DATABASE_URL", "postgres://user:pass@localhost:5432/db")
-	t.Setenv("BACKFLOW_SMS_PROVIDER", "twilio")
-	t.Setenv("TWILIO_ACCOUNT_SID", "AC123")
-	t.Setenv("TWILIO_AUTH_TOKEN", "secret")
-	t.Setenv("BACKFLOW_SMS_FROM_NUMBER", "+15551234567")
-
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load() returned error: %v", err)
-	}
-	if !cfg.SMSOutboundEnabled {
-		t.Error("SMSOutboundEnabled = false, want true (default when SMS provider is set)")
-	}
-}
-
 func TestLoad_LogFile_DefaultEmpty(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "test-key")
 	t.Setenv("BACKFLOW_DATABASE_URL", "postgres://user:pass@localhost:5432/db")
@@ -264,24 +247,6 @@ func TestLoad_LogFile_Set(t *testing.T) {
 	}
 	if cfg.LogFile != "/tmp/backflow.log" {
 		t.Errorf("LogFile = %q, want %q", cfg.LogFile, "/tmp/backflow.log")
-	}
-}
-
-func TestLoad_SMSOutboundEnabled_ExplicitFalse(t *testing.T) {
-	t.Setenv("ANTHROPIC_API_KEY", "test-key")
-	t.Setenv("BACKFLOW_DATABASE_URL", "postgres://user:pass@localhost:5432/db")
-	t.Setenv("BACKFLOW_SMS_PROVIDER", "twilio")
-	t.Setenv("TWILIO_ACCOUNT_SID", "AC123")
-	t.Setenv("TWILIO_AUTH_TOKEN", "secret")
-	t.Setenv("BACKFLOW_SMS_FROM_NUMBER", "+15551234567")
-	t.Setenv("BACKFLOW_SMS_OUTBOUND_ENABLED", "false")
-
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load() returned error: %v", err)
-	}
-	if cfg.SMSOutboundEnabled {
-		t.Error("SMSOutboundEnabled = true, want false (explicitly disabled)")
 	}
 }
 

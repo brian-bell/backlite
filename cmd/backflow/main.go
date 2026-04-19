@@ -32,7 +32,6 @@ import (
 
 const (
 	eventBusShutdownTimeout = 10 * time.Second
-	keepaliveInterval       = 30 * time.Second
 )
 
 // setupLogger configures a zerolog.Logger. When logFile is empty, logs go to
@@ -84,10 +83,6 @@ func main() {
 		defer closer.Close()
 		log.Logger = logger
 		log.Info().Str("log_file", cfg.LogFile).Msg("logging to file")
-	}
-
-	if cfg.RestrictAPI {
-		log.Info().Msg("API access restricted: all /api/v1/* endpoints return 403")
 	}
 
 	db, err := store.NewPostgres(context.Background(), cfg.DatabaseURL, "migrations")
@@ -224,10 +219,6 @@ func main() {
 	// Start orchestrator in background
 	go orch.Start(ctx)
 
-	// Start self-ping keepalive to prevent Fly.io from stopping the machine
-	// while tasks are pending or running.
-	go keepalive(ctx, db, cfg.ListenAddr)
-
 	// Start HTTP server
 	go func() {
 		log.Info().Str("addr", cfg.ListenAddr).Msg("API server starting")
@@ -256,57 +247,4 @@ func main() {
 	}
 
 	log.Info().Msg("shutdown complete")
-}
-
-// keepalive periodically pings the local health endpoint while there are
-// pending or running tasks, preventing Fly.io from stopping an idle machine
-// in the middle of active work.
-func keepalive(ctx context.Context, db store.Store, listenAddr string) {
-	// Derive the health URL from the listen address (e.g. ":8080" → "http://localhost:8080/health").
-	host := listenAddr
-	if len(host) > 0 && host[0] == ':' {
-		host = "localhost" + host
-	}
-	healthURL := "http://" + host + "/health"
-
-	client := &http.Client{Timeout: 5 * time.Second}
-	ticker := time.NewTicker(keepaliveInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if hasActiveTasks(ctx, db) {
-				resp, err := client.Get(healthURL)
-				if err != nil {
-					log.Warn().Err(err).Msg("keepalive ping failed")
-					continue
-				}
-				resp.Body.Close()
-			}
-		}
-	}
-}
-
-// hasActiveTasks reports whether any tasks are in a non-terminal state.
-func hasActiveTasks(ctx context.Context, db store.Store) bool {
-	for _, status := range []models.TaskStatus{
-		models.TaskStatusPending,
-		models.TaskStatusProvisioning,
-		models.TaskStatusRunning,
-		models.TaskStatusRecovering,
-		models.TaskStatusInterrupted,
-	} {
-		s := status
-		tasks, err := db.ListTasks(ctx, store.TaskFilter{Status: &s, Limit: 1})
-		if err != nil {
-			continue
-		}
-		if len(tasks) > 0 {
-			return true
-		}
-	}
-	return false
 }

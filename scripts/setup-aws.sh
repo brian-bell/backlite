@@ -597,84 +597,6 @@ READER_TASK_DEF_ARN=$(aws ecs register-task-definition \
     --output text)
 echo "    Reader task definition: ${READER_TASK_DEF_ARN}"
 
-# =============================================================================
-# Fly.io deployment IAM user
-# =============================================================================
-
-FLY_USER="backflow-fly"
-echo "==> Creating IAM user for Fly.io deployment..."
-if aws iam get-user --user-name "$FLY_USER" &>/dev/null; then
-    echo "    IAM user already exists, updating policy..."
-else
-    aws iam create-user --user-name "$FLY_USER"
-fi
-
-FLY_POLICY=$(cat <<FLYEOF
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "ECS",
-      "Effect": "Allow",
-      "Action": [
-        "ecs:RunTask",
-        "ecs:StopTask",
-        "ecs:DescribeTasks",
-        "ecs:ListTasks"
-      ],
-      "Resource": [
-        "arn:aws:ecs:${REGION}:${ACCOUNT_ID}:cluster/${ECS_CLUSTER}",
-        "arn:aws:ecs:${REGION}:${ACCOUNT_ID}:task/${ECS_CLUSTER}/*",
-        "arn:aws:ecs:${REGION}:${ACCOUNT_ID}:task-definition/${ECS_CONTAINER_NAME}:*",
-        "arn:aws:ecs:${REGION}:${ACCOUNT_ID}:task-definition/${READER_TASK_FAMILY}:*"
-      ]
-    },
-    {
-      "Sid": "ECSPassRole",
-      "Effect": "Allow",
-      "Action": "iam:PassRole",
-      "Resource": [
-        "arn:aws:iam::${ACCOUNT_ID}:role/${ECS_EXECUTION_ROLE}",
-        "arn:aws:iam::${ACCOUNT_ID}:role/${ECS_TASK_ROLE}"
-      ],
-      "Condition": {
-        "StringEquals": {
-          "iam:PassedToService": "ecs-tasks.amazonaws.com"
-        }
-      }
-    },
-    {
-      "Sid": "CloudWatchLogs",
-      "Effect": "Allow",
-      "Action": [
-        "logs:GetLogEvents",
-        "logs:FilterLogEvents",
-        "logs:DescribeLogStreams"
-      ],
-      "Resource": "arn:aws:logs:${REGION}:${ACCOUNT_ID}:log-group:${CW_LOG_GROUP}:*"
-    },
-    {
-      "Sid": "S3",
-      "Effect": "Allow",
-      "Action": [
-        "s3:PutObject",
-        "s3:GetObject"
-      ],
-      "Resource": "arn:aws:s3:::${S3_BUCKET}/*"
-    }
-  ]
-}
-FLYEOF
-)
-
-aws iam put-user-policy \
-    --user-name "$FLY_USER" \
-    --policy-name "${FLY_USER}-policy" \
-    --policy-document "$FLY_POLICY"
-
-echo "    IAM user: ${FLY_USER}"
-echo "    Policy: ECS (${ECS_CLUSTER}), CloudWatch (${CW_LOG_GROUP}), S3 (${S3_BUCKET})"
-
 echo ""
 echo "==> Setup complete!"
 echo ""
@@ -695,17 +617,11 @@ echo "  BACKFLOW_CLOUDWATCH_LOG_GROUP=${CW_LOG_GROUP}"
 echo "  BACKFLOW_S3_BUCKET=${S3_BUCKET}"
 echo "  AWS_REGION=${REGION}"
 if [ -n "$CI_ROLE_ARN" ]; then
-    echo "For GitHub Actions CI (see docs/setup-ci.md):"
+    echo "For GitHub Actions CI:"
     echo "  Add this secret to your GitHub repo:"
     echo "    AWS_ROLE_ARN=${CI_ROLE_ARN}"
     echo ""
 fi
-echo ""
-echo "For Fly.io deployment:"
-echo "  Create access keys for the ${FLY_USER} IAM user:"
-echo "    aws iam create-access-key --user-name ${FLY_USER}"
-echo "  Then set them as Fly secrets:"
-echo "    fly secrets set AWS_ACCESS_KEY_ID=<key> AWS_SECRET_ACCESS_KEY=<secret>"
 echo ""
 echo "Next steps:"
 echo "  1. Build and push the agent image:  make docker-agent-deploy"

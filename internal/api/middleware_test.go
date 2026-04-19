@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,39 +14,6 @@ import (
 	"github.com/backflow-labs/backflow/internal/models"
 	"github.com/backflow-labs/backflow/internal/store"
 )
-
-func TestRestrictAPI_BlocksAllAPIEndpoints(t *testing.T) {
-	cfg := &config.Config{RestrictAPI: true}
-	router := NewServer(&mockStore{}, cfg, noopLogFetcher{}, noopEmitter{})
-
-	paths := []struct {
-		method string
-		path   string
-	}{
-		{"GET", "/api/v1/health"},
-		{"GET", "/api/v1/tasks"},
-		{"POST", "/api/v1/tasks"},
-		{"GET", "/api/v1/tasks/bf_test123"},
-		{"DELETE", "/api/v1/tasks/bf_test123"},
-		{"GET", "/api/v1/tasks/bf_test123/logs"},
-	}
-
-	for _, tc := range paths {
-		req := httptest.NewRequest(tc.method, tc.path, nil)
-		rr := httptest.NewRecorder()
-		router.ServeHTTP(rr, req)
-
-		if rr.Code != http.StatusForbidden {
-			t.Errorf("%s %s: got status %d, want %d", tc.method, tc.path, rr.Code, http.StatusForbidden)
-		}
-
-		var resp envelope
-		json.NewDecoder(rr.Body).Decode(&resp)
-		if resp.Error == "" {
-			t.Errorf("%s %s: expected error message in response body", tc.method, tc.path)
-		}
-	}
-}
 
 func TestAPIAuth_RequiresBearerToken(t *testing.T) {
 	cfg := &config.Config{APIKey: "test-secret"}
@@ -236,8 +202,8 @@ func TestAPIAuth_RejectsExpiredDatabaseBearerToken(t *testing.T) {
 	}
 }
 
-func TestRestrictAPI_RootHealthStillAccessible(t *testing.T) {
-	cfg := &config.Config{RestrictAPI: true}
+func TestRootHealthAccessible(t *testing.T) {
+	cfg := &config.Config{}
 	router := NewServer(&mockStore{}, cfg, noopLogFetcher{}, noopEmitter{})
 
 	req := httptest.NewRequest("GET", "/health", nil)
@@ -249,8 +215,8 @@ func TestRestrictAPI_RootHealthStillAccessible(t *testing.T) {
 	}
 }
 
-func TestRestrictAPI_Disabled_AllowsAPIHealth(t *testing.T) {
-	cfg := &config.Config{RestrictAPI: false}
+func TestAPIHealthAccessible(t *testing.T) {
+	cfg := &config.Config{}
 	router := NewServer(&mockStore{}, cfg, noopLogFetcher{}, noopEmitter{})
 
 	req := httptest.NewRequest("GET", "/api/v1/health", nil)
@@ -259,5 +225,31 @@ func TestRestrictAPI_Disabled_AllowsAPIHealth(t *testing.T) {
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("GET /api/v1/health: got status %d, want %d", rr.Code, http.StatusOK)
+	}
+}
+
+// TestRestrictAPIEnvVar_NoLongerBlocksAPI asserts that setting
+// BACKFLOW_RESTRICT_API=true in the environment does NOT cause /api/v1/*
+// to be blocked. The env var was removed from config along with the
+// Fly.io deployment; loading config under this env must yield a router
+// that still serves /api/v1/health.
+func TestRestrictAPIEnvVar_NoLongerBlocksAPI(t *testing.T) {
+	t.Setenv("BACKFLOW_RESTRICT_API", "true")
+	t.Setenv("ANTHROPIC_API_KEY", "test-key")
+	t.Setenv("BACKFLOW_DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("config.Load() returned error: %v", err)
+	}
+
+	router := NewServer(&mockStore{}, cfg, noopLogFetcher{}, noopEmitter{})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /api/v1/health with BACKFLOW_RESTRICT_API=true: got status %d, want %d", rr.Code, http.StatusOK)
 	}
 }

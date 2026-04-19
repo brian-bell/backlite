@@ -25,7 +25,6 @@ make build          # Compile to bin/backflow
 make run            # Build + run (auto-sources .env, refreshes AWS creds if needed)
 make test           # Run all tests (no cache)
 make lint           # go vet
-make tunnel         # Start cloudflared tunnel → $BACKFLOW_DOMAIN → localhost:8080
 make deps           # go mod tidy
 make clean          # Remove bin/
 ```
@@ -43,16 +42,7 @@ make test-schema        # Schemathesis fuzz tests against OpenAPI spec
 
 ### Local Tunnel (for webhooks)
 
-To receive inbound webhooks (Discord interactions, Twilio SMS) during local development, expose your server with a [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps) named tunnel:
-
-```bash
-brew install cloudflared
-# Set BACKFLOW_TUNNEL_NAME and BACKFLOW_DOMAIN in .env
-make cloudflared-setup   # One-time: create tunnel, DNS route, and config
-make tunnel              # Start the tunnel
-```
-
-This routes `https://$BACKFLOW_DOMAIN` to `localhost:8080`. Set the domain as the Discord Interactions Endpoint URL and Twilio webhook URL. Discord task lifecycle notifications will then land in the configured channel and per-task thread. See [docs/discord-setup.md](docs/discord-setup.md) and [docs/sms-setup.md](docs/sms-setup.md) for full configuration.
+To receive inbound webhooks (Discord interactions, Twilio SMS) during local development, expose `localhost:8080` over HTTPS with a tunneling tool of your choice (for example `ngrok http 8080`). Set the public URL as the Discord Interactions Endpoint URL and the Twilio webhook URL. Discord task lifecycle notifications will then land in the configured channel and per-task thread. See [docs/discord-setup.md](docs/discord-setup.md) and [docs/sms-setup.md](docs/sms-setup.md) for full configuration.
 
 ## Submitting Tasks
 

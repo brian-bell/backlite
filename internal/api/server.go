@@ -1,8 +1,6 @@
 package api
 
 import (
-	"net/http"
-
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
@@ -26,9 +24,6 @@ func NewServer(s store.Store, cfg *config.Config, logs LogFetcher, bus notify.Em
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(AuthMiddleware(s, cfg.APIKey))
-		if cfg.RestrictAPI {
-			r.Use(blockPublicAccess)
-		}
 
 		r.Get("/health", h.HealthCheck)
 
@@ -43,10 +38,4 @@ func NewServer(s store.Store, cfg *config.Config, logs LogFetcher, bus notify.Em
 	})
 
 	return r
-}
-
-func blockPublicAccess(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeError(w, http.StatusForbidden, "API access restricted")
-	})
 }

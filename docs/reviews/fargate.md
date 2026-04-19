@@ -6,7 +6,7 @@ Now I'll synthesize all five reports into the final acceptance review.
 
 ## Summary
 
-The Fargate feature runs each Backflow task as a standalone ECS/Fargate task, implementing the `Runner` interface against ECS and CloudWatch. It is **Backflow's production deployment mode** (Fly.io, auto-deployed on merge to main), making its correctness foundational to every roadmap item. The happy path — task dispatch, status monitoring, spot interruption recovery, and large env-var offload to S3 — is well-implemented and running in production. However, two correctness bugs cause ECS failure scenarios to be silently misreported as "completed," and the documentation has multiple significant gaps that will block first-time operators. Five reviewers identified two blockers, eight significant issues, and eleven minor/note findings.
+The Fargate feature runs each Backflow task as a standalone ECS/Fargate task, implementing the `Runner` interface against ECS and CloudWatch. It is Backflow's production deployment mode, making its correctness foundational to every roadmap item. The happy path — task dispatch, status monitoring, spot interruption recovery, and large env-var offload to S3 — is well-implemented and running in production. However, two correctness bugs cause ECS failure scenarios to be silently misreported as "completed," and the documentation has multiple significant gaps that will block first-time operators. Five reviewers identified two blockers, eight significant issues, and eleven minor/note findings.
 
 ## Verdict: REQUEST CHANGES
 
@@ -41,11 +41,11 @@ The Fargate feature runs each Backflow task as a standalone ECS/Fargate task, im
 The `Runner` interface's `GetLogs(ctx, instanceID, containerID string, tail int) (string, error)` returns a batch string snapshot. Roadmap Tier 2.4 (Real-Time Log Streaming) explicitly requires "Fargate: cursor-based `FilterLogEvents`" — a different CloudWatch API with pagination and an entirely different call pattern. Implementing SSE will require either a new interface method or a breaking change to `Runner`. This should be planned before Tier 2.4 work begins so the refactor doesn't surprise downstream implementations (DockerManager also implements `Runner`).
 
 **7. Startup counter reset enables over-dispatch on rolling deploy**
-`syncSyntheticInstance` calls `ResetRunningContainers` on every start when the fargate instance already exists (`orchestrator.go:140`). A rolling Fly.io deploy — even a brief overlap of two machines — causes both instances to reset the counter to 0 and each dispatches up to `MaxConcurrentTasks`, potentially running 2× the intended concurrency simultaneously. Document the single-instance assumption explicitly in `fly.toml` and the ops runbook; or gate the counter reset on a leader-election / startup lock.
+`syncSyntheticInstance` calls `ResetRunningContainers` on every start when the fargate instance already exists (`orchestrator.go:140`). A rolling deploy — even a brief overlap of two Backflow instances — causes both instances to reset the counter to 0 and each dispatches up to `MaxConcurrentTasks`, potentially running 2× the intended concurrency simultaneously. Document the single-instance assumption explicitly in the ops runbook; or gate the counter reset on a leader-election / startup lock.
 
 **8. Documentation has four significant gaps**
 _(a)_ CLAUDE.md's Fargate section lists explicit defaults for 5 env vars, directly violating the project's own "do not record default values" guideline from the Documentation guidelines section of the same file.
-_(b)_ The S3 env-var offload feature — which silently activates on prompts exceeding ~7 KB, requires `BACKFLOW_S3_BUCKET`, and needs specific IAM permissions (`s3:PutObject`, `s3:GetObject` on `task-config/*`) — is completely undocumented. `BACKFLOW_S3_BUCKET` appears in `fly-setup.md` with no explanation.
+_(b)_ The S3 env-var offload feature — which silently activates on prompts exceeding ~7 KB, requires `BACKFLOW_S3_BUCKET`, and needs specific IAM permissions (`s3:PutObject`, `s3:GetObject` on `task-config/*`) — is completely undocumented.
 _(c)_ `BACKFLOW_CONTAINER_CPUS` and `BACKFLOW_CONTAINER_MEMORY_GB` directly size the ECS task (CPU units and memory MiB) and are absent from the CLAUDE.md Fargate section. An operator leaving them at defaults would not know what compute their agents are getting.
 _(d)_ There is no `docs/fargate-setup.md`. Discord and SMS each have dedicated setup guides (96 and 74 lines respectively) covering step-by-step configuration, prerequisites, and how to verify the integration. Fargate is the production deployment mode and has none, leaving operators without actionable IAM policy examples, CloudWatch log group setup instructions, or ECS cluster/task-definition guidance.
 
@@ -67,7 +67,7 @@ _(d)_ There is no `docs/fargate-setup.md`. Discord and SMS each have dedicated s
 
 7. **`MaxConcurrentTasks` has no upper-bound guard** — Only validated `>= 1`. A misconfigured value of 1000 would exhaust ECS account limits and incur runaway cost.
 
-8. **`ECSAssignPublicIP` defaults to true** — Document that `BACKFLOW_ECS_ASSIGN_PUBLIC_IP=false` is preferred when subnets have NAT gateway egress, and recommend outbound-443-only security groups in `fly-setup.md`.
+8. **`ECSAssignPublicIP` defaults to true** — Document that `BACKFLOW_ECS_ASSIGN_PUBLIC_IP=false` is preferred when subnets have NAT gateway egress, and recommend outbound-443-only security groups.
 
 9. **BACKFLOW_STATUS_JSON protocol undocumented** — Operators debugging a stuck task need to know the line format, the JSON schema fields, and that the orchestrator scans from the tail of the last 200 log lines. Add a brief mention in the Fargate section or operator runbook.
 

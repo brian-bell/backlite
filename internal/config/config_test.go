@@ -182,33 +182,6 @@ func TestLoad_DiscordAppID_MissingChannelID(t *testing.T) {
 	}
 }
 
-func TestLoad_RestrictAPI(t *testing.T) {
-	t.Setenv("ANTHROPIC_API_KEY", "test-key")
-	t.Setenv("BACKFLOW_DATABASE_URL", "postgres://user:pass@localhost:5432/db")
-	t.Setenv("BACKFLOW_RESTRICT_API", "true")
-
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load() returned error: %v", err)
-	}
-	if !cfg.RestrictAPI {
-		t.Error("RestrictAPI = false, want true when BACKFLOW_RESTRICT_API=true")
-	}
-}
-
-func TestLoad_RestrictAPI_DefaultFalse(t *testing.T) {
-	t.Setenv("ANTHROPIC_API_KEY", "test-key")
-	t.Setenv("BACKFLOW_DATABASE_URL", "postgres://user:pass@localhost:5432/db")
-
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load() returned error: %v", err)
-	}
-	if cfg.RestrictAPI {
-		t.Error("RestrictAPI = true, want false when BACKFLOW_RESTRICT_API is unset")
-	}
-}
-
 func TestLoad_APIKey(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "test-key")
 	t.Setenv("BACKFLOW_DATABASE_URL", "postgres://user:pass@localhost:5432/db")

@@ -68,7 +68,7 @@ Discord sends slash commands and other interactions to a webhook URL that you co
 3. Discord will send a PING request to verify the endpoint — Backflow responds with PONG automatically
 4. Click **Save Changes** — Discord will confirm the URL is valid
 
-The endpoint must be publicly reachable over HTTPS. For local development, use `cloudflared tunnel --url http://localhost:8080` (no account needed).
+The endpoint must be publicly reachable over HTTPS. For local development, expose `localhost:8080` with a tunneling tool of your choice (e.g. `ngrok http 8080`).
 
 ## 6. How It Works
 

@@ -207,15 +207,29 @@ func (h *Handlers) GetTaskOutputJSON(w http.ResponseWriter, r *http.Request) {
 }
 
 // serveOutputFile streams a single file from {DataDir}/tasks/{id}/{name}.
-// Returns 400 when the task ID is malformed, 404 when the file is missing
-// (the task directory may not have been populated yet, or the task may not
-// exist).
+// Returns 400 when the task ID is malformed and 404 when the task does not
+// exist, the current attempt is not terminal yet, or the file is missing.
 func (h *Handlers) serveOutputFile(w http.ResponseWriter, r *http.Request, name, contentType string) {
 	id := chi.URLParam(r, "id")
 	if !taskIDPattern.MatchString(id) {
 		writeError(w, http.StatusBadRequest, "invalid task id")
 		return
 	}
+
+	task, err := h.store.GetTask(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "output not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get task")
+		return
+	}
+	if !task.Status.IsTerminal() || task.OutputURL == "" {
+		writeError(w, http.StatusNotFound, "output not found")
+		return
+	}
+
 	path := filepath.Join(h.config.DataDir, "tasks", id, name)
 
 	if _, err := os.Stat(path); err != nil {

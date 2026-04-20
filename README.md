@@ -162,7 +162,7 @@ curl -X POST http://localhost:8080/api/v1/tasks \
 | `claude_md` | string | Extra CLAUDE.md content injected into the repo |
 | `allowed_tools` | []string | Restrict agent tool access |
 | `env_vars` | map | Extra env vars passed to the container (keys must be POSIX-valid; system keys like `ANTHROPIC_API_KEY` are reserved) |
-| `save_agent_output` | bool | Save agent output to S3 (omit to use server default) |
+| `save_agent_output` | bool | Persist agent output for the `/output` endpoints (omit to use server default) |
 
 ## Monitoring and Operations
 
@@ -410,4 +410,3 @@ See [docs/discord-setup.md](docs/discord-setup.md) for full setup instructions.
 | `BACKFLOW_SMS_OUTBOUND_ENABLED` | `true` | Set to `false` to disable outbound SMS while keeping inbound |
 
 See [docs/sms-setup.md](docs/sms-setup.md) for full setup instructions including allowed sender registration and A2P 10DLC compliance.
-

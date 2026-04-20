@@ -26,11 +26,11 @@ Stores agent tasks submitted via the REST API.
 | `max_turns` | `INTEGER` | `0` | Maximum agent conversation turns. 0 = unlimited. |
 | `create_pr` | `BOOLEAN` | `false` | Whether to create a pull request on completion. |
 | `self_review` | `BOOLEAN` | `false` | Whether the agent self-reviews before finishing. |
-| `save_agent_output` | `BOOLEAN` | `true` | Whether to upload agent output to S3. |
+| `save_agent_output` | `BOOLEAN` | `true` | Whether to persist agent output for the `/output` and `/output.json` endpoints. |
 | `pr_title` | `TEXT` | `''` | Pull request title (if `create_pr` is set). |
 | `pr_body` | `TEXT` | `''` | Pull request body/description. |
 | `pr_url` | `TEXT` | `''` | URL of the created PR (populated after completion). |
-| `output_url` | `TEXT` | `''` | S3 URL of the uploaded agent output. |
+| `output_url` | `TEXT` | `''` | API-relative URL of the persisted agent output log. |
 | `allowed_tools` | `JSONB` | `'[]'` | JSON array of allowed Claude Code tool names. |
 | `claude_md` | `TEXT` | `''` | Custom CLAUDE.md content injected into the agent container. |
 | `env_vars` | `JSONB` | `'{}'` | JSON object of environment variables passed to the container. |

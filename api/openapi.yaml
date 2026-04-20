@@ -724,7 +724,8 @@ components:
           example: true
         output_url:
           type: string
-          example: "https://s3.amazonaws.com/bucket/output.log"
+          description: API-relative URL of the persisted agent output log.
+          example: "/api/v1/tasks/bf_01HX00000000000000000DEADX/output"
         allowed_tools:
           type: array
           items:
@@ -855,7 +856,7 @@ components:
           example: false
         save_agent_output:
           type: boolean
-          description: Whether to upload agent output to S3. Defaults to server configuration.
+          description: Whether to persist agent output for retrieval via the output endpoints. Defaults to server configuration.
           example: true
         pr_title:
           type: string

@@ -74,19 +74,17 @@ Two goroutines: chi REST API on `:8080` + polling orchestrator (5s default). Thr
 - `GET /tasks/{id}/logs` — Stream container logs
 - `GET /tasks/{id}/output` — Return the agent's stdout log (`container_output.log`) persisted to `BACKFLOW_DATA_DIR` after the container exits
 - `GET /tasks/{id}/output.json` — Return the JSON task metadata snapshot (`task.json`) persisted alongside the output log
-- `POST /webhooks/discord` — Discord interaction endpoint (signature-verified)
 - `POST /webhooks/sms/inbound` — Twilio inbound SMS webhook
 
 ### Key modules (`internal/`)
 
-- **api/** — chi router, handlers, JSON responses, `LogFetcher` interface, `NewTask` shared task-creation helper (used by both REST handler and Discord modal), `CancelTask` and `RetryTask` shared action helpers (used by both REST handler and Discord)
+- **api/** — chi router, handlers, JSON responses, `LogFetcher` interface, `NewTask` shared task-creation helper, `CancelTask` and `RetryTask` shared action helpers
 - **orchestrator/** — Poll loop (`orchestrator.go`), dispatch (`dispatch.go`), monitoring (`monitor.go`, including `handleReadingCompletion` for read-mode tasks), recovery (`recovery.go`), local mode (`local.go`). Subpackages: `docker/` (Docker container management via SSM or local exec), `ec2/` (EC2 lifecycle, auto-scaler, spot interruption handler), `fargate/` (ECS/Fargate runner, CloudWatch log parsing), `s3/` (agent output upload)
 - **store/** — `Store` interface + PostgreSQL (`pgxpool`, goose migrations). Includes `UpsertReading` / `GetReadingByURL` for the `readings` table.
-- **models/** — `Task`, `Instance`, `AllowedSender`, `DiscordInstall`, and `Reading` (+ `Connection`) structs with status enums. `Task.AgentImage` records which Docker image the orchestrator used (read tasks get `ReaderImage`, others get the default agent image). `FindFirstURL` / `InferReviewMode` auto-detect review mode when a prompt's first URL is a GitHub PR URL.
+- **models/** — `Task`, `Instance`, `AllowedSender`, and `Reading` (+ `Connection`) structs with status enums. `Task.AgentImage` records which Docker image the orchestrator used (read tasks get `ReaderImage`, others get the default agent image). `FindFirstURL` / `InferReviewMode` auto-detect review mode when a prompt's first URL is a GitHub PR URL.
 - **embeddings/** — Thin `Embedder` interface (`Embed(ctx, text) ([]float32, error)`) with an `OpenAIEmbedder` HTTP client (no SDK). Used by the orchestrator to embed a reading's final TL;DR before writing the `readings` row.
-- **discord/** — Discord interaction handler (Ed25519 signature verification, PING/PONG, interaction routing, `/backflow create` modal for task creation, `/backflow read <url> [force]` for reading-mode task creation, `/backflow cancel` and `/backflow retry` commands, button click handling). `HandlerActions` struct groups callback functions and role-based authorization config.
 - **config/** — Env-var config (`BACKFLOW_*` prefix), three modes (`ec2`/`local`/`fargate`). `RestrictAPI` blocks all `/api/v1/*` endpoints when `BACKFLOW_RESTRICT_API=true` (used in Fly.io deployment). `BACKFLOW_API_KEY` enables single-token API auth; otherwise `api_keys` in Postgres can back authenticated API/debug requests. `TaskDefaults(taskMode)` returns resolved defaults — for `read` mode it swaps in `ReaderImage` plus the `BACKFLOW_DEFAULT_READ_MAX_*` caps. `Apply(task, overrides)` fills zero-value fields using `*bool` overrides (nil = use default, non-nil = use pointed value)
-- **notify/** — `Notifier` interface, `WebhookNotifier` (HTTP POST, 3 retries, event filtering), `DiscordNotifier` (lifecycle messages in channel + per-task threads), `NoopNotifier`, `EventBus` (async fan-out delivery via buffered channel), `NewEvent` constructor with `EventOption` functional options (including `WithReading` for read-mode completion events), `MessagingNotifier` (SMS via Twilio for reply channels). `Event` carries `TaskMode` plus optional reading fields (`TLDR`, `NoveltyVerdict`, `Tags`, `Connections`) populated only for read-task completion events.
+- **notify/** — `Notifier` interface, `WebhookNotifier` (HTTP POST, 3 retries, event filtering), `NoopNotifier`, `EventBus` (async fan-out delivery via buffered channel), `NewEvent` constructor with `EventOption` functional options (including `WithReading` for read-mode completion events), `MessagingNotifier` (SMS via Twilio for reply channels). `Event` carries `TaskMode` plus optional reading fields (`TLDR`, `NoveltyVerdict`, `Tags`, `Connections`) populated only for read-task completion events.
 - **messaging/** — `Messenger` interface, `TwilioMessenger` (outbound SMS), inbound SMS webhook handler, message parsing
 - **debug/** — `/debug/stats` handler: PID, uptime, running task count, pgxpool metrics
 
@@ -110,25 +108,6 @@ Node.js 24 image with Claude Code CLI + Codex CLI + git + gh. `entrypoint.sh`: c
 ### Webhook events
 
 `task.created`, `task.running`, `task.completed`, `task.failed`, `task.needs_input`, `task.interrupted`, `task.recovering`, `task.cancelled`, `task.retry`
-
-### Discord integration
-
-When `BACKFLOW_DISCORD_APP_ID` is set, Backflow enables the Discord integration:
-
-Required env vars:
-
-- `BACKFLOW_DISCORD_APP_ID` — Discord application ID
-- `BACKFLOW_DISCORD_PUBLIC_KEY` — Ed25519 public key for interaction verification
-- `BACKFLOW_DISCORD_BOT_TOKEN` — Bot token for API calls
-- `BACKFLOW_DISCORD_GUILD_ID` — Target server ID
-- `BACKFLOW_DISCORD_CHANNEL_ID` — Target channel ID
-
-Optional env vars:
-
-- `BACKFLOW_DISCORD_ALLOWED_ROLES` (comma-separated role IDs for mutation authorization)
-- `BACKFLOW_DISCORD_EVENTS` (comma-separated event filter; nil = all events)
-
-At startup, Backflow persists the install config to the `discord_installs` table, registers the `/backflow` slash command (with `create`, `status`, `list`, `cancel`, `retry`, and `read` subcommands) via the Discord API, mounts the interaction handler at `/webhooks/discord`, and subscribes a `DiscordNotifier` to the event bus. The `/backflow create` subcommand opens a modal dialog for task creation. The `/backflow read <url> [force]` subcommand creates a `task_mode=read` task for the given URL; the optional `force` flag bypasses the exact-URL duplicate check and upserts the existing reading on completion. The `/backflow cancel <task_id>` and `/backflow retry <task_id>` subcommands cancel or retry tasks respectively. All mutation commands enforce role-based permissions via `BACKFLOW_DISCORD_ALLOWED_ROLES`. The notifier creates a channel message on the first event for each task, then posts subsequent events as replies in a per-task thread. Thread messages include Cancel buttons for active tasks and Retry buttons for failed/interrupted tasks (cancelled tasks show a Retry button only after container cleanup completes).
 
 ## Reading mode
 
@@ -246,7 +225,7 @@ In Docker mode, secrets (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GITHUB_TOKEN`) 
 
 ## Database
 
-PostgreSQL via Supabase (session pooler). Tables: `tasks`, `instances`, `allowed_senders`, `api_keys`, `readings`, `discord_installs`, `discord_task_threads`. See `docs/schema.md` for the full column-level schema. Migrations are managed by [goose](https://github.com/pressly/goose) and live in `migrations/`. The store implementation is in `internal/store/postgres.go` using `pgxpool`. Set `BACKFLOW_DATABASE_URL` to the Supabase session pooler connection string.
+PostgreSQL via Supabase (session pooler). Tables: `tasks`, `instances`, `allowed_senders`, `api_keys`, `readings`. See `docs/schema.md` for the full column-level schema. Migrations are managed by [goose](https://github.com/pressly/goose) and live in `migrations/`. The store implementation is in `internal/store/postgres.go` using `pgxpool`. Set `BACKFLOW_DATABASE_URL` to the Supabase session pooler connection string.
 
 Migration workflow:
 
@@ -263,7 +242,6 @@ Create new migrations in `migrations/` with the next numeric prefix, `-- +goose 
 Additional docs in `docs/`:
 - `ROADMAP.md` — Product roadmap with phased implementation plan
 - `schema.md` — Database schema (tables, columns, indexes, status lifecycles)
-- `discord-setup.md` — Discord bot creation, server install, and Backflow configuration
 - `sms-setup.md` — Twilio SMS setup and allowed sender configuration
 - `sizing.md` — EC2 instance sizing and container density guide
 - `setup-ci.md` — GitHub Actions CI/CD setup for agent image builds

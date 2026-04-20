@@ -95,16 +95,6 @@ type Config struct {
 	SMSEvents          []string
 	SMSOutboundEnabled bool
 
-	// Discord
-	DiscordAppID        string
-	DiscordPublicKey    string
-	DiscordBotToken     string
-	DiscordGuildID      string
-	DiscordChannelID    string
-	DiscordCommandName  string
-	DiscordAllowedRoles []string
-	DiscordEvents       []string
-
 	// S3 (task data: agent output, offloaded config for large prompts)
 	S3Bucket string
 
@@ -126,8 +116,6 @@ type Config struct {
 	// Orchestrator
 	PollInterval time.Duration
 }
-
-func (c *Config) DiscordEnabled() bool { return c.DiscordAppID != "" }
 
 func (c *Config) MaxConcurrent() int {
 	if c.Mode == ModeFargate {
@@ -183,14 +171,6 @@ func Load() (*Config, error) {
 		DataDir:                 envOr("BACKFLOW_DATA_DIR", "./data"),
 		GitHubToken:             os.Getenv("GITHUB_TOKEN"),
 		WebhookURL:              os.Getenv("BACKFLOW_WEBHOOK_URL"),
-		DiscordAppID:            os.Getenv("BACKFLOW_DISCORD_APP_ID"),
-		DiscordPublicKey:        os.Getenv("BACKFLOW_DISCORD_PUBLIC_KEY"),
-		DiscordBotToken:         os.Getenv("BACKFLOW_DISCORD_BOT_TOKEN"),
-		DiscordGuildID:          os.Getenv("BACKFLOW_DISCORD_GUILD_ID"),
-		DiscordChannelID:        os.Getenv("BACKFLOW_DISCORD_CHANNEL_ID"),
-		DiscordCommandName:      envOr("BACKFLOW_DISCORD_COMMAND_NAME", "backflow"),
-		DiscordAllowedRoles:     envCSV("BACKFLOW_DISCORD_ALLOWED_ROLES"),
-		DiscordEvents:           envCSV("BACKFLOW_DISCORD_EVENTS"),
 		LogFile:                 os.Getenv("BACKFLOW_LOG_FILE"),
 		DatabaseURL:             os.Getenv("BACKFLOW_DATABASE_URL"),
 		MaxUserRetries:          envInt("BACKFLOW_MAX_USER_RETRIES", 2),
@@ -261,19 +241,6 @@ func Load() (*Config, error) {
 			}
 		default:
 			return nil, fmt.Errorf("invalid BACKFLOW_SMS_PROVIDER: %q (must be %q)", c.SMSProvider, "twilio")
-		}
-	}
-
-	if c.DiscordAppID != "" {
-		switch {
-		case c.DiscordPublicKey == "":
-			return nil, fmt.Errorf("BACKFLOW_DISCORD_PUBLIC_KEY is required when BACKFLOW_DISCORD_APP_ID is set")
-		case c.DiscordBotToken == "":
-			return nil, fmt.Errorf("BACKFLOW_DISCORD_BOT_TOKEN is required when BACKFLOW_DISCORD_APP_ID is set")
-		case c.DiscordGuildID == "":
-			return nil, fmt.Errorf("BACKFLOW_DISCORD_GUILD_ID is required when BACKFLOW_DISCORD_APP_ID is set")
-		case c.DiscordChannelID == "":
-			return nil, fmt.Errorf("BACKFLOW_DISCORD_CHANNEL_ID is required when BACKFLOW_DISCORD_APP_ID is set")
 		}
 	}
 

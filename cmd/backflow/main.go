@@ -17,7 +17,6 @@ import (
 	"github.com/backflow-labs/backflow/internal/api"
 	"github.com/backflow-labs/backflow/internal/config"
 	"github.com/backflow-labs/backflow/internal/debug"
-	"github.com/backflow-labs/backflow/internal/discord"
 	"github.com/backflow-labs/backflow/internal/embeddings"
 	"github.com/backflow-labs/backflow/internal/messaging"
 	"github.com/backflow-labs/backflow/internal/models"
@@ -171,47 +170,6 @@ func main() {
 		log.Info().Msg("SMS inbound webhook mounted at /webhooks/sms/inbound")
 	} else if cfg.SMSProvider != "" {
 		log.Warn().Msg("SMS inbound webhook NOT mounted: TWILIO_AUTH_TOKEN is required")
-	}
-
-	// Discord integration
-	if cfg.DiscordEnabled() {
-		pubKey, err := discord.ParsePublicKey(cfg.DiscordPublicKey)
-		if err != nil {
-			log.Fatal().Err(err).Msg("invalid BACKFLOW_DISCORD_PUBLIC_KEY")
-		}
-		router.Post("/webhooks/discord", discord.InteractionHandler(pubKey, db, discord.HandlerActions{
-			CreateTask: discord.CreateTaskFunc(func(ctx context.Context, req *models.CreateTaskRequest) (*models.Task, error) {
-				return api.NewTask(ctx, req, db, cfg, bus)
-			}),
-			CancelTask: discord.CancelTaskFunc(func(taskID string) error {
-				return api.CancelTask(context.Background(), taskID, db, bus)
-			}),
-			RetryTask: discord.RetryTaskFunc(func(taskID string) error {
-				return api.RetryTask(context.Background(), taskID, db, cfg.MaxUserRetries)
-			}),
-			AllowedRoles: cfg.DiscordAllowedRoles,
-			CommandName:  cfg.DiscordCommandName,
-		}))
-
-		now := time.Now().UTC()
-		install := &models.DiscordInstall{
-			GuildID:      cfg.DiscordGuildID,
-			AppID:        cfg.DiscordAppID,
-			ChannelID:    cfg.DiscordChannelID,
-			AllowedRoles: cfg.DiscordAllowedRoles,
-			InstalledAt:  now,
-			UpdatedAt:    now,
-		}
-		if err := db.UpsertDiscordInstall(context.Background(), install); err != nil {
-			log.Fatal().Err(err).Msg("failed to persist discord install state")
-		}
-
-		if err := discord.RegisterCommands("", cfg.DiscordAppID, cfg.DiscordBotToken, cfg.DiscordCommandName); err != nil {
-			log.Error().Err(err).Msg("failed to register discord slash commands")
-		}
-
-		bus.Subscribe(notify.NewDiscordNotifier(discord.NewClient(cfg.DiscordBotToken), db, cfg.DiscordChannelID, cfg.DiscordEvents))
-		log.Info().Str("guild_id", cfg.DiscordGuildID).Msg("discord integration enabled")
 	}
 
 	srv := &http.Server{

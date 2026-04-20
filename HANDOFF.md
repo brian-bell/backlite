@@ -8,3 +8,7 @@ Ledger of cross-PR tradeoffs. Each entry: decision → consequence for downstrea
 - **`GetReadingByURL` added to `Store`.** Selects all columns except `embedding`. The embedding vector is expensive to transport; if a future caller needs it, fetch by id or add a targeted accessor.
 - **Completion path uses `UpsertReading` unconditionally, and `CreateReading` is removed from the `Store` interface entirely.** The dispatch-time guard covers non-forced duplicates; the only remaining completion-time write paths are `Force=true` (overwrite by design) and the rare concurrent-dispatch race where two read tasks pass their lookup before either writes (for which "upsert" is the benign outcome). The unique index on `readings.url` remains as a crash-rather-than-corrupt backstop.
 - **API still lacks a `force` wire field.** The Discord `/backflow read` command already accepts `force` (default false). REST callers cannot set `Force` until the create endpoint is extended.
+
+## SMS removal docs cleanup
+
+- **Operator/public docs were updated in the SMS-removal slice, but legacy schema/history references remain until the schema-drop slice.** `.env.example`, Fly secret sync, Discord setup docs, and site/legal copy now reflect that SMS/Twilio support is gone. `docs/schema.md`, migrations, and historical review notes still mention `reply_channel` / `allowed_senders` because those database artifacts remain in place until the later migration that drops them; clean those references up when the schema actually changes.

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Backflow</title>
-  <meta name="description" content="Backflow runs coding agents in ephemeral containers. Submit tasks via API, Discord, or SMS.">
+  <meta name="description" content="Backflow runs coding agents in ephemeral containers. Submit tasks via API or Discord.">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -224,7 +224,7 @@
   <!-- Home -->
   <section id="home">
     <h1>Backflow</h1>
-    <p>Backflow is an automation service that runs coding agents in ephemeral containers on behalf of authorized users. Tasks are submitted via API, Discord, or SMS and produce pull requests, code reviews, or content summaries.</p>
+    <p>Backflow is an automation service that runs coding agents in ephemeral containers on behalf of authorized users. Tasks are submitted via API or Discord and produce pull requests, code reviews, or content summaries.</p>
 
     <div class="features">
       <div class="feature">
@@ -240,8 +240,8 @@
         <p>Summarize any URL. The reader agent fetches content, drafts a TL;DR, and stores it for semantic search.</p>
       </div>
       <div class="feature">
-        <div class="feature-name">Multi-channel</div>
-        <p>Submit tasks via REST API, Discord slash commands, or SMS. Get status notifications wherever you are.</p>
+      <div class="feature-name">Interfaces</div>
+        <p>Submit tasks via REST API or Discord slash commands. Get status updates via Discord threads or webhooks.</p>
       </div>
     </div>
 
@@ -251,12 +251,11 @@
   <!-- Privacy Policy -->
   <section id="privacy" class="legal">
     <h1>Privacy Policy</h1>
-    <p class="effective">Effective April 14, 2026</p>
+    <p class="effective">Effective April 20, 2026</p>
 
     <h2>Information We Collect</h2>
     <p>When you use Backflow, we may collect the following information:</p>
     <ul>
-      <li>Phone number (if you submit tasks via SMS)</li>
       <li>Task prompts and associated metadata (repository URLs, branch names)</li>
       <li>Discord user ID (if you submit tasks via Discord)</li>
     </ul>
@@ -267,25 +266,13 @@
     <ul>
       <li>Process and execute tasks you submit</li>
       <li>Send you status notifications about your tasks</li>
-      <li>Enforce access controls via the allowed-sender list</li>
+      <li>Enforce access controls for authorized users</li>
     </ul>
-
-    <h2>SMS Communications</h2>
-    <p>If you have provided your phone number and are authorized to use Backflow, we may send you SMS messages relating to tasks you have submitted (for example, status updates when a task starts, completes, fails, or is cancelled).</p>
-    <ul>
-      <li><strong>Opt-in:</strong> You are added to the service only after the system operator receives your explicit consent and registers your phone number on the internal allow-list. You initiate the messaging relationship by texting in.</li>
-      <li><strong>Opt-out:</strong> You may opt out at any time by replying STOP to any message. You will receive a one-time confirmation that you have been unsubscribed from Backflow task notifications and will not be sent further messages.</li>
-      <li><strong>Help:</strong> Reply HELP for assistance, or contact <a href="mailto:privacy@bbell.dev">privacy@bbell.dev</a>.</li>
-      <li><strong>Message frequency:</strong> Varies depending on how often you submit tasks. Typical volume is 1&ndash;10 messages per day.</li>
-      <li><strong>Message and data rates may apply.</strong></li>
-      <li>Carriers are not liable for delayed or undelivered messages.</li>
-    </ul>
-    <p>We do not share your phone number with third parties for marketing purposes.</p>
 
     <h2>Third-Party Services</h2>
     <p>We use the following third-party services to operate Backflow:</p>
     <ul>
-      <li><strong>Twilio</strong> &mdash; SMS message delivery, subject to <a href="https://www.twilio.com/en-us/legal/privacy" target="_blank" rel="noopener">Twilio's Privacy Policy</a>.</li>
+      <li><strong>Discord</strong> &mdash; Slash commands and task lifecycle notifications.</li>
       <li><strong>GitHub</strong> &mdash; Source code hosting and pull request management.</li>
     </ul>
 

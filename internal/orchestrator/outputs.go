@@ -2,8 +2,9 @@ package orchestrator
 
 import "context"
 
-// Writer persists agent output and task metadata for a completed task and
-// returns a URL under which the API serves the bytes back to callers.
+// Writer persists the agent output log and the final task metadata snapshot
+// for a completed task.
 type Writer interface {
-	Save(ctx context.Context, taskID string, logBytes []byte, metadata any) (string, error)
+	SaveLog(ctx context.Context, taskID string, logBytes []byte) (string, error)
+	SaveMetadata(ctx context.Context, taskID string, metadata any) error
 }

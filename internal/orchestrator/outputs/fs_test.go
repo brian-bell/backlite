@@ -9,6 +9,16 @@ import (
 	"testing"
 )
 
+func saveArtifacts(t *testing.T, w *FSWriter, taskID string, logBytes []byte, metadata any) {
+	t.Helper()
+	if _, err := w.SaveLog(context.Background(), taskID, logBytes); err != nil {
+		t.Fatalf("SaveLog returned error: %v", err)
+	}
+	if err := w.SaveMetadata(context.Background(), taskID, metadata); err != nil {
+		t.Fatalf("SaveMetadata returned error: %v", err)
+	}
+}
+
 func TestFSWriter_Save_CreatesDirectory(t *testing.T) {
 	root := t.TempDir()
 
@@ -16,9 +26,7 @@ func TestFSWriter_Save_CreatesDirectory(t *testing.T) {
 	// create the per-task directory on demand.
 	w := New(filepath.Join(root, "fresh"))
 
-	if _, err := w.Save(context.Background(), "bf_abc123", []byte("hello"), map[string]string{"id": "bf_abc123"}); err != nil {
-		t.Fatalf("Save returned error: %v", err)
-	}
+	saveArtifacts(t, w, "bf_abc123", []byte("hello"), map[string]string{"id": "bf_abc123"})
 
 	dir := filepath.Join(root, "fresh", "tasks", "bf_abc123")
 	info, err := os.Stat(dir)
@@ -40,9 +48,7 @@ func TestFSWriter_Save_WritesBothFiles(t *testing.T) {
 		"status": "completed",
 	}
 
-	if _, err := w.Save(context.Background(), "bf_meta1", logContent, meta); err != nil {
-		t.Fatalf("Save returned error: %v", err)
-	}
+	saveArtifacts(t, w, "bf_meta1", logContent, meta)
 
 	logPath := filepath.Join(root, "tasks", "bf_meta1", "container_output.log")
 	jsonPath := filepath.Join(root, "tasks", "bf_meta1", "task.json")
@@ -75,9 +81,7 @@ func TestFSWriter_Save_Atomic(t *testing.T) {
 	root := t.TempDir()
 	w := New(root)
 
-	if _, err := w.Save(context.Background(), "bf_atomic", []byte("payload"), map[string]string{"k": "v"}); err != nil {
-		t.Fatalf("Save returned error: %v", err)
-	}
+	saveArtifacts(t, w, "bf_atomic", []byte("payload"), map[string]string{"k": "v"})
 
 	dir := filepath.Join(root, "tasks", "bf_atomic")
 	entries, err := os.ReadDir(dir)
@@ -105,12 +109,8 @@ func TestFSWriter_Save_Overwrites(t *testing.T) {
 	root := t.TempDir()
 	w := New(root)
 
-	if _, err := w.Save(context.Background(), "bf_over", []byte("first"), map[string]string{"v": "1"}); err != nil {
-		t.Fatalf("Save #1 returned error: %v", err)
-	}
-	if _, err := w.Save(context.Background(), "bf_over", []byte("second"), map[string]string{"v": "2"}); err != nil {
-		t.Fatalf("Save #2 returned error: %v", err)
-	}
+	saveArtifacts(t, w, "bf_over", []byte("first"), map[string]string{"v": "1"})
+	saveArtifacts(t, w, "bf_over", []byte("second"), map[string]string{"v": "2"})
 
 	gotLog, err := os.ReadFile(filepath.Join(root, "tasks", "bf_over", "container_output.log"))
 	if err != nil {
@@ -133,16 +133,16 @@ func TestFSWriter_Save_Overwrites(t *testing.T) {
 	}
 }
 
-func TestFSWriter_Save_ReturnsURL(t *testing.T) {
+func TestFSWriter_SaveLog_ReturnsURL(t *testing.T) {
 	root := t.TempDir()
 	w := New(root)
 
-	url, err := w.Save(context.Background(), "bf_url123", []byte("x"), map[string]string{"id": "bf_url123"})
+	url, err := w.SaveLog(context.Background(), "bf_url123", []byte("x"))
 	if err != nil {
-		t.Fatalf("Save returned error: %v", err)
+		t.Fatalf("SaveLog returned error: %v", err)
 	}
 	want := "/api/v1/tasks/bf_url123/output"
 	if url != want {
-		t.Errorf("Save url = %q, want %q", url, want)
+		t.Errorf("SaveLog url = %q, want %q", url, want)
 	}
 }

@@ -25,10 +25,9 @@ func New(root string) *FSWriter {
 	return &FSWriter{Root: root}
 }
 
-// Save writes the log bytes and JSON-marshaled metadata for taskID and
-// returns the API-relative URL that serves the log (task.json is served
-// through a sibling endpoint).
-func (w *FSWriter) Save(_ context.Context, taskID string, logBytes []byte, metadata any) (string, error) {
+// SaveLog writes the raw agent log for taskID and returns the API-relative URL
+// that serves it back to callers.
+func (w *FSWriter) SaveLog(_ context.Context, taskID string, logBytes []byte) (string, error) {
 	dir := filepath.Join(w.Root, "tasks", taskID)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("outputs: mkdir task dir: %w", err)
@@ -38,15 +37,25 @@ func (w *FSWriter) Save(_ context.Context, taskID string, logBytes []byte, metad
 		return "", err
 	}
 
-	data, err := json.MarshalIndent(metadata, "", "  ")
-	if err != nil {
-		return "", fmt.Errorf("outputs: marshal metadata: %w", err)
-	}
-	if err := writeAtomic(filepath.Join(dir, "task.json"), data); err != nil {
-		return "", err
+	return "/api/v1/tasks/" + taskID + "/output", nil
+}
+
+// SaveMetadata writes the JSON task metadata snapshot (task.json) for taskID.
+func (w *FSWriter) SaveMetadata(_ context.Context, taskID string, metadata any) error {
+	dir := filepath.Join(w.Root, "tasks", taskID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("outputs: mkdir task dir: %w", err)
 	}
 
-	return "/api/v1/tasks/" + taskID + "/output", nil
+	data, err := json.MarshalIndent(metadata, "", "  ")
+	if err != nil {
+		return fmt.Errorf("outputs: marshal metadata: %w", err)
+	}
+	if err := writeAtomic(filepath.Join(dir, "task.json"), data); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func writeAtomic(finalPath string, data []byte) error {

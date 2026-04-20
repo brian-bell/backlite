@@ -29,6 +29,7 @@ type Orchestrator struct {
 	scaler   Scaler
 	spot     SpotChecker
 	s3       S3Client
+	outputs  Writer
 	embedder embeddings.Embedder
 
 	mu              sync.Mutex
@@ -37,7 +38,7 @@ type Orchestrator struct {
 	inspectFailures map[string]int // task ID -> consecutive inspect failure count
 }
 
-func New(s store.Store, cfg *config.Config, bus *notify.EventBus, runner Runner, scaler Scaler, spot SpotChecker, s3 S3Client, embedder embeddings.Embedder) *Orchestrator {
+func New(s store.Store, cfg *config.Config, bus *notify.EventBus, runner Runner, scaler Scaler, spot SpotChecker, s3 S3Client, outputs Writer, embedder embeddings.Embedder) *Orchestrator {
 	o := &Orchestrator{
 		store:           s,
 		config:          cfg,
@@ -46,6 +47,7 @@ func New(s store.Store, cfg *config.Config, bus *notify.EventBus, runner Runner,
 		scaler:          scaler,
 		spot:            spot,
 		s3:              s3,
+		outputs:         outputs,
 		embedder:        embedder,
 		stopCh:          make(chan struct{}),
 		inspectFailures: make(map[string]int),

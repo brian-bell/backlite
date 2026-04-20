@@ -213,7 +213,7 @@ func (s *PostgresStore) RequeueTask(ctx context.Context, id string, reason strin
 	now := time.Now().UTC()
 	_, err := s.q.Exec(ctx,
 		`UPDATE tasks SET status=$1, instance_id='', container_id='', started_at=NULL,
-		 retry_count=retry_count+1, ready_for_retry=false, error=$2, updated_at=$3 WHERE id=$4`,
+		 retry_count=retry_count+1, ready_for_retry=false, error=$2, output_url='', updated_at=$3 WHERE id=$4`,
 		models.TaskStatusPending, "re-queued: "+reason+" at "+now.Format(time.RFC3339),
 		now, id,
 	)
@@ -254,7 +254,7 @@ func (s *PostgresStore) RetryTask(ctx context.Context, id string, maxRetries int
 	tag, err := s.q.Exec(ctx,
 		`UPDATE tasks SET status=$1, instance_id='', container_id='', started_at=NULL,
 		 completed_at=NULL, retry_count=retry_count+1, user_retry_count=user_retry_count+1,
-		 ready_for_retry=false, error=$2, updated_at=$3
+		 ready_for_retry=false, error=$2, output_url='', updated_at=$3
 		 WHERE id=$4 AND ready_for_retry=true AND user_retry_count < $5`,
 		models.TaskStatusPending,
 		"re-queued: user_retry at "+now.Format(time.RFC3339),

@@ -648,6 +648,10 @@ func TestPG_RequeueTask(t *testing.T) {
 	ctx := context.Background()
 	task := pgTestTask(t, s)
 
+	if _, err := s.q.Exec(ctx, "UPDATE tasks SET output_url=$1 WHERE id=$2", "/api/v1/tasks/"+task.ID+"/output", task.ID); err != nil {
+		t.Fatalf("seed output_url: %v", err)
+	}
+
 	s.AssignTask(ctx, task.ID, "i-abc123")
 	s.StartTask(ctx, task.ID, "container-abc")
 
@@ -673,6 +677,9 @@ func TestPG_RequeueTask(t *testing.T) {
 	}
 	if got.Error == "" {
 		t.Error("Error should contain the reason")
+	}
+	if got.OutputURL != "" {
+		t.Errorf("OutputURL should be cleared, got %q", got.OutputURL)
 	}
 }
 

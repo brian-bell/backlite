@@ -97,6 +97,33 @@ func TestLoad_SMSOutboundEnabled_DefaultTrue(t *testing.T) {
 	}
 }
 
+func TestLoad_DataDir_Default(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "test-key")
+	t.Setenv("BACKFLOW_DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+	if cfg.DataDir != "./data" {
+		t.Errorf("DataDir = %q, want %q (default)", cfg.DataDir, "./data")
+	}
+}
+
+func TestLoad_DataDir_Set(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "test-key")
+	t.Setenv("BACKFLOW_DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	t.Setenv("BACKFLOW_DATA_DIR", "/var/lib/backflow")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+	if cfg.DataDir != "/var/lib/backflow" {
+		t.Errorf("DataDir = %q, want %q", cfg.DataDir, "/var/lib/backflow")
+	}
+}
+
 func TestLoad_LogFile_DefaultEmpty(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "test-key")
 	t.Setenv("BACKFLOW_DATABASE_URL", "postgres://user:pass@localhost:5432/db")

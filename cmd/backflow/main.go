@@ -25,6 +25,7 @@ import (
 	orchdocker "github.com/backflow-labs/backflow/internal/orchestrator/docker"
 	orchec2 "github.com/backflow-labs/backflow/internal/orchestrator/ec2"
 	orchfargate "github.com/backflow-labs/backflow/internal/orchestrator/fargate"
+	"github.com/backflow-labs/backflow/internal/orchestrator/outputs"
 	orchs3 "github.com/backflow-labs/backflow/internal/orchestrator/s3"
 	"github.com/backflow-labs/backflow/internal/store"
 )
@@ -151,7 +152,10 @@ func main() {
 		embedder = embeddings.NewOpenAIEmbedder(cfg.OpenAIAPIKey, "", nil)
 	}
 
-	orch := orchestrator.New(db, cfg, bus, runner, scaler, spot, s3Uploader, embedder)
+	fsOutputs := outputs.New(cfg.DataDir)
+	log.Info().Str("data_dir", cfg.DataDir).Msg("filesystem output writer enabled")
+
+	orch := orchestrator.New(db, cfg, bus, runner, scaler, spot, s3Uploader, fsOutputs, embedder)
 
 	router := api.NewServer(db, cfg, orch.Docker(), bus)
 

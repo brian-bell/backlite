@@ -72,6 +72,8 @@ Two goroutines: chi REST API on `:8080` + polling orchestrator (5s default). Thr
 - `DELETE /tasks/{id}` — Cancel task (sets status to `cancelled`)
 - `POST /tasks/{id}/retry` — Retry a failed/interrupted/cancelled task (atomic, gated by `ready_for_retry` and user retry cap)
 - `GET /tasks/{id}/logs` — Stream container logs
+- `GET /tasks/{id}/output` — Return the agent's stdout log (`container_output.log`) persisted to `BACKFLOW_DATA_DIR` after the container exits
+- `GET /tasks/{id}/output.json` — Return the JSON task metadata snapshot (`task.json`) persisted alongside the output log
 - `POST /webhooks/sms/inbound` — Twilio inbound SMS webhook
 
 ### Key modules (`internal/`)
@@ -142,6 +144,15 @@ Reading-mode env vars:
 - `SUPABASE_URL` / `SUPABASE_ANON_KEY` — Passed to reader containers for PostgREST similarity search (see `docs/supabase-setup.md`)
 
 The `tasks` table carries a `force` boolean column. The API input for force is not wired yet (tracked separately) — today `task.Force` is set by the orchestrator only when explicitly populated through other creation paths.
+
+## Output storage
+
+When a task's container exits and `save_agent_output` is enabled, the orchestrator writes two files under `{BACKFLOW_DATA_DIR}/tasks/{id}/`:
+
+- `container_output.log` — raw agent stdout, served by `GET /tasks/{id}/output`
+- `task.json` — JSON snapshot of the task row, served by `GET /tasks/{id}/output.json`
+
+Writes are atomic (`*.tmp` sibling + `os.Rename`), so readers never observe a half-written file. `BACKFLOW_DATA_DIR` defaults to `./data`; see config for current defaults. The `BACKFLOW_S3_BUCKET` path is still used in parallel for the `task_metadata.json` upload (removal tracked by issue #5).
 
 ## Harnesses
 

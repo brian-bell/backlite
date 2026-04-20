@@ -5,7 +5,7 @@
        docker-fake-agent-build test-fake-agent test-blackbox test-schema test-soak \
        db-pending db-provisioning db-running db-completed db-failed db-interrupted db-cancelled db-recovering \
        setup-aws deps tunnel cloudflared-setup test-docker-status-writer test-reader-status-writer \
-       test-reader-scripts copy-env overwrite-env deploy-site
+       test-reader-scripts copy-env overwrite-env
 
 BINARY := backflow
 PKG := github.com/backflow-labs/backflow
@@ -171,14 +171,10 @@ setup-aws:
 tunnel:
 	@$(ENV); \
 	echo "Starting cloudflared tunnel → $$BACKFLOW_DOMAIN → http://localhost:8080"; \
-	echo "Discord interactions endpoint: https://$$BACKFLOW_DOMAIN/webhooks/discord"; \
 	cloudflared tunnel run $$BACKFLOW_TUNNEL_NAME
 
 cloudflared-setup:
 	@$(ENV); bash scripts/cloudflared-setup.sh
-
-deploy-site:
-	npx wrangler pages deploy site --project-name=backflow-site --commit-dirty=true
 
 restore-env:
 	cp ~/dev/etc/backflow/.env .env

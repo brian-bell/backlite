@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +13,7 @@ import (
 	"github.com/backflow-labs/backflow/internal/config"
 	"github.com/backflow-labs/backflow/internal/models"
 	"github.com/backflow-labs/backflow/internal/notify"
+	"github.com/backflow-labs/backflow/internal/orchestrator/outputs"
 )
 
 func TestMonitorCancelled_DecrementsRunning(t *testing.T) {
@@ -402,7 +405,7 @@ func TestHandleCompletion_PropagatesInferredFields(t *testing.T) {
 		StartedAt:   &now,
 	})
 
-	bus, _ := newTestBus()
+	bus, n := newTestBus()
 	o := newTestOrchestrator(s, bus)
 	o.running = 1
 
@@ -429,6 +432,17 @@ func TestHandleCompletion_PropagatesInferredFields(t *testing.T) {
 	}
 	if task.TaskMode != "code" {
 		t.Errorf("TaskMode = %q, want %q", task.TaskMode, "code")
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if len(n.events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(n.events))
+	}
+	if n.events[0].RepoURL != "https://github.com/test/repo" {
+		t.Errorf("event RepoURL = %q, want %q", n.events[0].RepoURL, "https://github.com/test/repo")
+	}
+	if n.events[0].TaskMode != "code" {
+		t.Errorf("event TaskMode = %q, want %q", n.events[0].TaskMode, "code")
 	}
 }
 
@@ -1223,6 +1237,139 @@ func TestMonitorRunning_Completed(t *testing.T) {
 	}
 }
 
+func TestMonitorRunning_Completed_PersistsFinalOutputMetadata(t *testing.T) {
+	s := newMockStore()
+	now := time.Now().UTC()
+
+	s.CreateInstance(context.Background(), &models.Instance{
+		InstanceID:        "local",
+		Status:            models.InstanceStatusRunning,
+		MaxContainers:     4,
+		RunningContainers: 1,
+	})
+	s.CreateTask(context.Background(), &models.Task{
+		ID:              "bf_done_meta",
+		Status:          models.TaskStatusRunning,
+		RepoURL:         "https://github.com/test/repo",
+		Prompt:          "finish me",
+		SaveAgentOutput: true,
+		InstanceID:      "local",
+		ContainerID:     "cont1",
+		StartedAt:       &now,
+		CreatedAt:       now,
+	})
+
+	bus, _ := newTestBus()
+	root := t.TempDir()
+	mock := &mockDockerManager{
+		inspectResults: map[string]ContainerStatus{
+			"local/cont1": {
+				Done:         true,
+				Complete:     true,
+				ExitCode:     0,
+				PRURL:        "https://github.com/test/repo/pull/42",
+				RepoURL:      "https://github.com/test/repo",
+				TargetBranch: "main",
+				TaskMode:     "code",
+			},
+		},
+		agentOutput: "agent log bytes",
+	}
+	o := newTestOrchestrator(s, bus, withDocker(mock), withOutputs(outputs.New(root)))
+	o.running = 1
+
+	o.monitorRunning(context.Background())
+	bus.Close()
+
+	data, err := os.ReadFile(filepath.Join(root, "tasks", "bf_done_meta", "task.json"))
+	if err != nil {
+		t.Fatalf("read task.json: %v", err)
+	}
+
+	var meta taskMetadata
+	if err := json.Unmarshal(data, &meta); err != nil {
+		t.Fatalf("unmarshal task.json: %v (body: %s)", err, string(data))
+	}
+	if meta.Status != models.TaskStatusCompleted {
+		t.Errorf("status = %q, want %q", meta.Status, models.TaskStatusCompleted)
+	}
+	if meta.PRURL != "https://github.com/test/repo/pull/42" {
+		t.Errorf("PRURL = %q, want PR URL", meta.PRURL)
+	}
+	if meta.OutputURL != "/api/v1/tasks/bf_done_meta/output" {
+		t.Errorf("OutputURL = %q, want output endpoint", meta.OutputURL)
+	}
+	if meta.CompletedAt == nil {
+		t.Error("CompletedAt should be set")
+	}
+}
+
+func TestMonitorRunning_Completed_UploadsFinalTaskMetadata(t *testing.T) {
+	s := newMockStore()
+	now := time.Now().UTC()
+
+	s.CreateInstance(context.Background(), &models.Instance{
+		InstanceID:        "local",
+		Status:            models.InstanceStatusRunning,
+		MaxContainers:     4,
+		RunningContainers: 1,
+	})
+	s.CreateTask(context.Background(), &models.Task{
+		ID:              "bf_done_s3_meta",
+		Status:          models.TaskStatusRunning,
+		RepoURL:         "https://github.com/test/repo",
+		Prompt:          "finish me",
+		SaveAgentOutput: true,
+		InstanceID:      "local",
+		ContainerID:     "cont1",
+		StartedAt:       &now,
+		CreatedAt:       now,
+	})
+
+	bus, _ := newTestBus()
+	writer := &mockWriter{}
+	mockS3 := &mockS3Client{}
+	mock := &mockDockerManager{
+		inspectResults: map[string]ContainerStatus{
+			"local/cont1": {
+				Done:         true,
+				Complete:     true,
+				ExitCode:     0,
+				PRURL:        "https://github.com/test/repo/pull/84",
+				RepoURL:      "https://github.com/test/repo",
+				TargetBranch: "main",
+				TaskMode:     "code",
+			},
+		},
+		agentOutput: "agent log bytes",
+	}
+	o := newTestOrchestrator(s, bus, withDocker(mock), withOutputs(writer), withS3(mockS3))
+	o.running = 1
+
+	o.monitorRunning(context.Background())
+	bus.Close()
+
+	if len(mockS3.uploads) != 1 {
+		t.Fatalf("expected 1 S3 upload, got %d", len(mockS3.uploads))
+	}
+	var meta taskMetadata
+	if err := json.Unmarshal(mockS3.uploads[0].data, &meta); err != nil {
+		t.Fatalf("unmarshal uploaded JSON: %v (body: %s)", err, string(mockS3.uploads[0].data))
+	}
+	if meta.Status != models.TaskStatusCompleted {
+		t.Errorf("status = %q, want %q", meta.Status, models.TaskStatusCompleted)
+	}
+	if meta.PRURL != "https://github.com/test/repo/pull/84" {
+		t.Errorf("PRURL = %q, want PR URL", meta.PRURL)
+	}
+	if meta.OutputURL != "/api/v1/tasks/bf_done_s3_meta/output" {
+		t.Errorf("OutputURL = %q, want output endpoint", meta.OutputURL)
+	}
+	if meta.CompletedAt == nil {
+		t.Error("CompletedAt should be set")
+	}
+}
+
 func TestMonitorRunning_CompletedFromStatusFile(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
@@ -1926,5 +2073,105 @@ func TestKillTask_StopContainerError(t *testing.T) {
 	types := notifier.eventTypes()
 	if len(types) != 1 || types[0] != notify.EventTaskFailed {
 		t.Errorf("expected [task.failed], got %v", types)
+	}
+}
+
+// --- saveAgentOutput (filesystem writer) ---
+
+func TestSaveAgentOutput_WritesViaWriter(t *testing.T) {
+	s := newMockStore()
+	now := time.Now().UTC()
+
+	s.CreateTask(context.Background(), &models.Task{
+		ID:              "bf_fs_out",
+		Status:          models.TaskStatusRunning,
+		SaveAgentOutput: true,
+		InstanceID:      "local",
+		ContainerID:     "cont1",
+		StartedAt:       &now,
+		CreatedAt:       now,
+	})
+
+	bus, _ := newTestBus()
+	defer bus.Close()
+	writer := &mockWriter{}
+	docker := &mockDockerManager{agentOutput: "agent log bytes"}
+	o := newTestOrchestrator(s, bus, withDocker(docker), withOutputs(writer))
+
+	task, _ := s.GetTask(context.Background(), "bf_fs_out")
+	o.saveAgentOutput(context.Background(), task)
+
+	if len(writer.logSaves) != 1 {
+		t.Fatalf("expected 1 writer.SaveLog call, got %d", len(writer.logSaves))
+	}
+	save := writer.logSaves[0]
+	if save.taskID != "bf_fs_out" {
+		t.Errorf("taskID = %q, want %q", save.taskID, "bf_fs_out")
+	}
+	if string(save.log) != "agent log bytes" {
+		t.Errorf("log = %q, want %q", string(save.log), "agent log bytes")
+	}
+	if len(writer.metadataSaves) != 0 {
+		t.Fatalf("expected 0 writer.SaveMetadata calls, got %d", len(writer.metadataSaves))
+	}
+
+	if task.OutputURL != "/api/v1/tasks/bf_fs_out/output" {
+		t.Errorf("task.OutputURL = %q, want %q", task.OutputURL, "/api/v1/tasks/bf_fs_out/output")
+	}
+}
+
+func TestSaveAgentOutput_NilWriter(t *testing.T) {
+	s := newMockStore()
+	now := time.Now().UTC()
+
+	s.CreateTask(context.Background(), &models.Task{
+		ID:              "bf_fs_nil",
+		Status:          models.TaskStatusRunning,
+		SaveAgentOutput: true,
+		InstanceID:      "local",
+		ContainerID:     "cont1",
+		StartedAt:       &now,
+	})
+
+	bus, _ := newTestBus()
+	defer bus.Close()
+	// No outputs writer configured — should be a silent no-op.
+	o := newTestOrchestrator(s, bus)
+
+	task, _ := s.GetTask(context.Background(), "bf_fs_nil")
+	o.saveAgentOutput(context.Background(), task)
+
+	if task.OutputURL != "" {
+		t.Errorf("task.OutputURL = %q, want empty when writer is nil", task.OutputURL)
+	}
+}
+
+func TestSaveAgentOutput_GateOffWhenSaveDisabled(t *testing.T) {
+	s := newMockStore()
+	now := time.Now().UTC()
+
+	s.CreateTask(context.Background(), &models.Task{
+		ID:              "bf_fs_gate",
+		Status:          models.TaskStatusRunning,
+		SaveAgentOutput: false, // gated off
+		InstanceID:      "local",
+		ContainerID:     "cont1",
+		StartedAt:       &now,
+	})
+
+	bus, _ := newTestBus()
+	defer bus.Close()
+	writer := &mockWriter{}
+	docker := &mockDockerManager{agentOutput: "never written"}
+	o := newTestOrchestrator(s, bus, withDocker(docker), withOutputs(writer))
+
+	task, _ := s.GetTask(context.Background(), "bf_fs_gate")
+	o.saveAgentOutput(context.Background(), task)
+
+	if len(writer.logSaves) != 0 {
+		t.Errorf("expected 0 SaveLog calls (SaveAgentOutput=false), got %d", len(writer.logSaves))
+	}
+	if task.OutputURL != "" {
+		t.Errorf("task.OutputURL = %q, want empty when save gated off", task.OutputURL)
 	}
 }

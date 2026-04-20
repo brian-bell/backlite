@@ -10,8 +10,8 @@ import (
 )
 
 // CancelTask validates the task is in a cancellable state, cancels it in the store,
-// and emits a task.cancelled event. This is the shared implementation used by both
-// the REST API handler and the Discord interaction handler.
+// and emits a task.cancelled event. This is the shared implementation used by the
+// REST API handler.
 func CancelTask(ctx context.Context, taskID string, s store.Store, bus notify.Emitter) error {
 	task, err := s.GetTask(ctx, taskID)
 	if err != nil {

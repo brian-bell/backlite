@@ -321,26 +321,6 @@ func (s *mockStore) ResetRunningContainers(_ context.Context, id string) error {
 	return nil
 }
 
-func (s *mockStore) UpsertDiscordInstall(_ context.Context, _ *models.DiscordInstall) error {
-	return nil
-}
-
-func (s *mockStore) GetDiscordInstall(_ context.Context, _ string) (*models.DiscordInstall, error) {
-	return nil, store.ErrNotFound
-}
-
-func (s *mockStore) DeleteDiscordInstall(_ context.Context, _ string) error {
-	return nil
-}
-
-func (s *mockStore) UpsertDiscordTaskThread(_ context.Context, _ *models.DiscordTaskThread) error {
-	return nil
-}
-
-func (s *mockStore) GetDiscordTaskThread(_ context.Context, _ string) (*models.DiscordTaskThread, error) {
-	return nil, store.ErrNotFound
-}
-
 func (s *mockStore) WithTx(_ context.Context, fn func(store.Store) error) error {
 	return fn(s)
 }
@@ -412,6 +392,10 @@ type mockDockerManager struct {
 
 	// Error injection for StopContainer.
 	stopContainerErr error
+
+	// GetAgentOutput behavior.
+	agentOutput    string
+	agentOutputErr error
 }
 
 func (m *mockDockerManager) RunAgent(ctx context.Context, instance *models.Instance, task *models.Task) (string, error) {
@@ -447,7 +431,44 @@ func (m *mockDockerManager) GetLogs(_ context.Context, _, _ string, _ int) (stri
 }
 
 func (m *mockDockerManager) GetAgentOutput(_ context.Context, _, _ string) (string, error) {
-	return "", fmt.Errorf("not implemented")
+	if m.agentOutputErr != nil {
+		return "", m.agentOutputErr
+	}
+	return m.agentOutput, nil
+}
+
+// --- Mock filesystem writer ---
+
+type mockWriter struct {
+	logSaves      []mockWriterLogSave
+	metadataSaves []mockWriterMetadataSave
+	err           error
+}
+
+type mockWriterLogSave struct {
+	taskID string
+	log    []byte
+}
+
+type mockWriterMetadataSave struct {
+	taskID   string
+	metadata any
+}
+
+func (m *mockWriter) SaveLog(_ context.Context, taskID string, logBytes []byte) (string, error) {
+	if m.err != nil {
+		return "", m.err
+	}
+	m.logSaves = append(m.logSaves, mockWriterLogSave{taskID: taskID, log: logBytes})
+	return "/api/v1/tasks/" + taskID + "/output", nil
+}
+
+func (m *mockWriter) SaveMetadata(_ context.Context, taskID string, metadata any) error {
+	if m.err != nil {
+		return m.err
+	}
+	m.metadataSaves = append(m.metadataSaves, mockWriterMetadataSave{taskID: taskID, metadata: metadata})
+	return nil
 }
 
 // --- Mock S3 client ---
@@ -521,6 +542,10 @@ func withDocker(d Runner) func(*Orchestrator) {
 
 func withS3(s S3Client) func(*Orchestrator) {
 	return func(o *Orchestrator) { o.s3 = s }
+}
+
+func withOutputs(w Writer) func(*Orchestrator) {
+	return func(o *Orchestrator) { o.outputs = w }
 }
 
 func withEmbedder(e embeddings.Embedder) func(*Orchestrator) {

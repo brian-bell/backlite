@@ -61,15 +61,6 @@ type Store interface {
 	UpdateInstanceDetails(ctx context.Context, id string, privateIP, az string) error
 	ResetRunningContainers(ctx context.Context, id string) error
 
-	// Discord installs
-	UpsertDiscordInstall(ctx context.Context, install *models.DiscordInstall) error
-	GetDiscordInstall(ctx context.Context, guildID string) (*models.DiscordInstall, error)
-	DeleteDiscordInstall(ctx context.Context, guildID string) error
-
-	// Discord task threads
-	UpsertDiscordTaskThread(ctx context.Context, thread *models.DiscordTaskThread) error
-	GetDiscordTaskThread(ctx context.Context, taskID string) (*models.DiscordTaskThread, error)
-
 	// API keys
 	HasAPIKeys(ctx context.Context) (bool, error)
 	GetAPIKeyByHash(ctx context.Context, keyHash string) (*models.APIKey, error)

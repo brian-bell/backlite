@@ -8,3 +8,7 @@ Ledger of cross-PR tradeoffs. Each entry: decision → consequence for downstrea
 - **`GetReadingByURL` added to `Store`.** Selects all columns except `embedding`. The embedding vector is expensive to transport; if a future caller needs it, fetch by id or add a targeted accessor.
 - **Completion path uses `UpsertReading` unconditionally, and `CreateReading` is removed from the `Store` interface entirely.** The dispatch-time guard covers non-forced duplicates; the only remaining completion-time write paths are `Force=true` (overwrite by design) and the rare concurrent-dispatch race where two read tasks pass their lookup before either writes (for which "upsert" is the benign outcome). The unique index on `readings.url` remains as a crash-rather-than-corrupt backstop.
 - **API still lacks a `force` wire field.** The Discord `/backflow read` command already accepts `force` (default false). REST callers cannot set `Force` until the create endpoint is extended.
+
+## Completion artifact ordering
+
+- **Output logs and metadata snapshots are written in two steps.** The orchestrator now persists `container_output.log` first to obtain `output_url`, then completes the task in Postgres, reloads the finished row, and only then writes `task.json` / `task_metadata.json` and emits completion-side metadata. This avoids stale "running" snapshots at `/output.json` and in S3, at the cost of splitting the writer interface into separate log and metadata calls.

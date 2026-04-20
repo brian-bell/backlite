@@ -468,22 +468,35 @@ func (m *mockDockerManager) GetAgentOutput(_ context.Context, _, _ string) (stri
 // --- Mock filesystem writer ---
 
 type mockWriter struct {
-	saves []mockWriterSave
-	err   error
+	logSaves      []mockWriterLogSave
+	metadataSaves []mockWriterMetadataSave
+	err           error
 }
 
-type mockWriterSave struct {
+type mockWriterLogSave struct {
+	taskID string
+	log    []byte
+}
+
+type mockWriterMetadataSave struct {
 	taskID   string
-	log      []byte
 	metadata any
 }
 
-func (m *mockWriter) Save(_ context.Context, taskID string, logBytes []byte, metadata any) (string, error) {
+func (m *mockWriter) SaveLog(_ context.Context, taskID string, logBytes []byte) (string, error) {
 	if m.err != nil {
 		return "", m.err
 	}
-	m.saves = append(m.saves, mockWriterSave{taskID: taskID, log: logBytes, metadata: metadata})
+	m.logSaves = append(m.logSaves, mockWriterLogSave{taskID: taskID, log: logBytes})
 	return "/api/v1/tasks/" + taskID + "/output", nil
+}
+
+func (m *mockWriter) SaveMetadata(_ context.Context, taskID string, metadata any) error {
+	if m.err != nil {
+		return m.err
+	}
+	m.metadataSaves = append(m.metadataSaves, mockWriterMetadataSave{taskID: taskID, metadata: metadata})
+	return nil
 }
 
 // --- Mock S3 client ---

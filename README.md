@@ -41,9 +41,9 @@ make test-fake-agent    # Unit tests for the fake agent image
 make test-schema        # Schemathesis fuzz tests against OpenAPI spec
 ```
 
-### Local Tunnel (for webhooks)
+### Local Tunnel (for inbound SMS)
 
-To receive inbound webhooks (Discord interactions, Twilio SMS) during local development, expose your server with a [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps) named tunnel:
+To receive inbound Twilio SMS webhooks during local development, expose your server with a [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps) named tunnel:
 
 ```bash
 brew install cloudflared
@@ -52,7 +52,7 @@ make cloudflared-setup   # One-time: create tunnel, DNS route, and config
 make tunnel              # Start the tunnel
 ```
 
-This routes `https://$BACKFLOW_DOMAIN` to `localhost:8080`. Set the domain as the Discord Interactions Endpoint URL and Twilio webhook URL. Discord task lifecycle notifications will then land in the configured channel and per-task thread. See [docs/discord-setup.md](docs/discord-setup.md) and [docs/sms-setup.md](docs/sms-setup.md) for full configuration.
+This routes `https://$BACKFLOW_DOMAIN` to `localhost:8080`. Set the domain as the Twilio webhook URL. See [docs/sms-setup.md](docs/sms-setup.md) for full configuration.
 
 ## Submitting Tasks
 
@@ -136,7 +136,6 @@ curl -X POST http://localhost:8080/api/v1/tasks \
 | `GET` | `/api/v1/tasks/{id}/logs` | Container logs (`?tail=100`) |
 | `GET` | `/api/v1/health` | Health check |
 | `GET` | `/debug/stats` | Operational stats (PID, uptime, running tasks, pool metrics) |
-| `POST` | `/webhooks/discord` | Discord interaction endpoint (signature-verified) |
 | `POST` | `/webhooks/sms/inbound` | Twilio inbound SMS webhook |
 
 ### Task Request Fields
@@ -280,7 +279,7 @@ claude --agent acceptance-lead "Review PR #42"
 ### Review an existing feature
 
 ```bash
-claude --agent acceptance-lead "Review the discord feature"
+claude --agent acceptance-lead "Review the sms feature"
 claude --agent acceptance-lead "Review the fargate feature"
 claude --agent acceptance-lead "Review the notifications feature"
 ```
@@ -383,20 +382,6 @@ Defaults are set in `internal/config/config.go` and can be overridden via env va
 | `BACKFLOW_WEBHOOK_EVENTS` | all | Comma-separated event filter |
 
 Events: `task.created`, `task.running`, `task.completed`, `task.failed`, `task.needs_input`, `task.interrupted`, `task.recovering`, `task.cancelled`, `task.retry`
-
-### Discord
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `BACKFLOW_DISCORD_APP_ID` | | Discord application ID (enables integration when set) |
-| `BACKFLOW_DISCORD_PUBLIC_KEY` | | Ed25519 public key for interaction verification |
-| `BACKFLOW_DISCORD_BOT_TOKEN` | | Bot token for API calls |
-| `BACKFLOW_DISCORD_GUILD_ID` | | Target server ID |
-| `BACKFLOW_DISCORD_CHANNEL_ID` | | Target channel ID |
-| `BACKFLOW_DISCORD_ALLOWED_ROLES` | | Comma-separated role IDs for mutation authorization |
-| `BACKFLOW_DISCORD_EVENTS` | all | Comma-separated event filter |
-
-See [docs/discord-setup.md](docs/discord-setup.md) for full setup instructions.
 
 ### SMS (Twilio)
 

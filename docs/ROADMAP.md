@@ -2,7 +2,7 @@
 
 ## Context
 
-Backflow is a self-hosted Go service that runs AI coding agents (Claude Code, Codex) in ephemeral containers. It supports three operating modes (EC2 spot, local Docker, ECS Fargate), three task modes (`code`, `review`, `read`), Discord and SMS interfaces, cost tracking, and a fake-agent test harness for end-to-end testing.
+Backflow is a self-hosted Go service that runs AI coding agents (Claude Code, Codex) in ephemeral containers. It supports three operating modes (EC2 spot, local Docker, ECS Fargate), three task modes (`code`, `review`, `read`), API and SMS interfaces, cost tracking, and a fake-agent test harness for end-to-end testing.
 
 This roadmap reframes Backflow around its actual user: a solo developer who wants Backflow to (a) be useful daily, and (b) serve as a strong portfolio/showcase project. Earlier drafts targeted "engineering leads at 10-200 person companies" with multi-tenancy, SSO, and a paid tier — work that doesn't match the user, the audience, or the time budget. That framing has been retired.
 
@@ -10,7 +10,7 @@ This roadmap reframes Backflow around its actual user: a solo developer who want
 
 ## Product Identity
 
-**One-line description:** A self-hostable agent runner that ships PRs, reviews PRs, and reads URLs into a personal knowledge base — controlled from your terminal, your Discord, or your phone.
+**One-line description:** A self-hostable agent runner that ships PRs, reviews PRs, and reads URLs into a personal knowledge base — controlled from your terminal or your phone.
 
 **Primary user:** The author. Daily-use test: does this save >15 min/day? Do I open it without forcing myself?
 
@@ -27,7 +27,7 @@ Open source. Self-host. If managed hosting becomes interesting later, that's a f
 ### Black-Box Test Harness, Soak Testing, OpenAPI Spec ✅
 See #99, #153, #154, #156, #157. Black-box harness in `test/blackbox/` with parameterized fake agent, 7 outcome tests, programmable webhook listener, soak test, `/debug/stats`, `max_runtime_sec`, OpenAPI spec, Schemathesis fuzz testing.
 
-### Discord Retry Race Fix ✅
+### Retry Flow Fix ✅
 See #161. Atomic `RetryTask`, `POST /tasks/{id}/retry`, `task.retry` event, configurable retry cap, black-box coverage.
 
 ### API Authentication ✅
@@ -75,9 +75,9 @@ Lives inside the site (item #1) as a second top-level surface alongside the dash
 **Files:** site (item #1); new endpoints under `internal/api/handlers.go` for `/api/v1/readings` (list, get); `internal/store/postgres.go` for query helpers (`ListReadings`, `SearchReadings`).
 
 #### 2.2 Daily Digest
-Once-a-day Discord/SMS message with newly-read items + "you might want to revisit X" suggestions based on novelty scores and connection density. No new UI.
+Once-a-day SMS digest with newly-read items + "you might want to revisit X" suggestions based on novelty scores and connection density. No new UI.
 
-**Files:** new `internal/orchestrator/digest.go` goroutine alongside the poll loop; uses existing `notify.EventBus` or sends directly via `DiscordNotifier` / `MessagingNotifier`.
+**Files:** new `internal/orchestrator/digest.go` goroutine alongside the poll loop; uses existing `notify.EventBus` or sends directly via `MessagingNotifier`.
 
 **Why this matters:** the "SMS a URL → TLDR back → connections to prior reads" loop has no comparable open-source product. Code-agent runners are commodity; chat-native personal-knowledge agents are not. This is the differentiator both for daily use (you'll actually return to past readings) and for portfolio narrative (the genuinely-unique thing in this codebase).
 
@@ -115,7 +115,7 @@ The following items from prior roadmap drafts are explicitly NOT on the active p
 
 | Dropped item | Reason |
 |--------------|--------|
-| 1.3 Slack Notifier | You live in Discord; Slack is "team" thinking |
+| 1.3 Slack Notifier | SMS already covers the away-from-keyboard use case; Slack is "team" thinking |
 | 1.4 Rate Limiting | Reframe later as a budget circuit breaker if a runaway-spend incident actually happens |
 | 2.1 Human-in-the-Loop Input Gate | Cut at user direction; `task.needs_input` event remains as-is but no response pathway will be built |
 | 2.3 Scheduling | Cron + curl covers it; no recurring jobs needed today |
@@ -154,7 +154,7 @@ Estimated total: **6-10 weeks** of focused evening/weekend work.
 - `internal/store/store.go` — Store interface; reading list/search helpers extend it
 - `internal/orchestrator/monitor.go` — `handleReadingCompletion` already exists; digest goroutine is a sibling
 - `internal/orchestrator/orchestrator.go` — Site auth and demo-data switch will likely touch startup wiring
-- `internal/notify/` — `DiscordNotifier`, `MessagingNotifier` for the daily digest delivery
+- `internal/notify/` — `MessagingNotifier` for the daily digest delivery
 - `cmd/backflow/main.go` — New goroutines (digest) start here
 - `docker/reader/` — Reader image; reading-mode investments may extend the script
 - `site/` — New top-level directory for the public site (item #1)

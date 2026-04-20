@@ -76,19 +76,6 @@ func TestAPIAuth_AllowsValidBearerToken(t *testing.T) {
 	}
 }
 
-func TestDiscordWebhookRoute_Removed(t *testing.T) {
-	cfg := &config.Config{}
-	router := NewServer(&mockStore{}, cfg, noopLogFetcher{}, noopEmitter{})
-
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/discord", strings.NewReader(""))
-	rr := httptest.NewRecorder()
-	router.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusNotFound {
-		t.Fatalf("POST /webhooks/discord: got status %d, want %d", rr.Code, http.StatusNotFound)
-	}
-}
-
 func TestAPIAuth_KeepsRootHealthPublic(t *testing.T) {
 	cfg := &config.Config{APIKey: "test-secret"}
 	router := NewServer(&mockStore{}, cfg, noopLogFetcher{}, noopEmitter{})

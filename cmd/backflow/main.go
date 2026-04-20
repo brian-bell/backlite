@@ -60,6 +60,32 @@ func setupLogger(logFile string) (zerolog.Logger, io.Closer, error) {
 	return logger, f, nil
 }
 
+// buildHTTPHandler wires the HTTP routes exposed by the server binary.
+// Keeping this separate from main lets tests exercise the same routing
+// composition that production uses.
+func buildHTTPHandler(cfg *config.Config, db store.Store, poolStatter debug.PoolStatter, logs api.LogFetcher, bus notify.Emitter, messenger messaging.Messenger, runningFn func() int, startedAt time.Time) http.Handler {
+	if runningFn == nil {
+		runningFn = func() int { return 0 }
+	}
+
+	router := api.NewServer(db, cfg, logs, bus)
+
+	// Debug stats endpoint (outside /api/v1/; auth is applied explicitly here).
+	router.With(api.AuthMiddleware(db, cfg.APIKey)).Get("/debug/stats", debug.StatsHandler(runningFn, poolStatter, startedAt).ServeHTTP)
+
+	// Mount SMS inbound webhook only when both provider and auth token are configured.
+	// The auth token is required for Twilio signature validation — without it the
+	// endpoint would accept unauthenticated requests.
+	if cfg.SMSProvider != "" && cfg.TwilioAuthToken != "" {
+		router.Post("/webhooks/sms/inbound", messaging.InboundHandler(db, cfg, messenger))
+		log.Info().Msg("SMS inbound webhook mounted at /webhooks/sms/inbound")
+	} else if cfg.SMSProvider != "" {
+		log.Warn().Msg("SMS inbound webhook NOT mounted: TWILIO_AUTH_TOKEN is required")
+	}
+
+	return router
+}
+
 func main() {
 	startedAt := time.Now()
 
@@ -156,25 +182,11 @@ func main() {
 	log.Info().Str("data_dir", cfg.DataDir).Msg("filesystem output writer enabled")
 
 	orch := orchestrator.New(db, cfg, bus, runner, scaler, spot, s3Uploader, fsOutputs, embedder)
-
-	router := api.NewServer(db, cfg, orch.Docker(), bus)
-
-	// Debug stats endpoint (outside /api/v1/; auth is applied explicitly here).
-	router.With(api.AuthMiddleware(db, cfg.APIKey)).Get("/debug/stats", debug.StatsHandler(orch.Running, db, startedAt).ServeHTTP)
-
-	// Mount SMS inbound webhook only when both provider and auth token are configured.
-	// The auth token is required for Twilio signature validation — without it the
-	// endpoint would accept unauthenticated requests.
-	if cfg.SMSProvider != "" && cfg.TwilioAuthToken != "" {
-		router.Post("/webhooks/sms/inbound", messaging.InboundHandler(db, cfg, messenger))
-		log.Info().Msg("SMS inbound webhook mounted at /webhooks/sms/inbound")
-	} else if cfg.SMSProvider != "" {
-		log.Warn().Msg("SMS inbound webhook NOT mounted: TWILIO_AUTH_TOKEN is required")
-	}
+	handler := buildHTTPHandler(cfg, db, db, orch.Docker(), bus, messenger, orch.Running, startedAt)
 
 	srv := &http.Server{
 		Addr:         cfg.ListenAddr,
-		Handler:      router,
+		Handler:      handler,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  60 * time.Second,

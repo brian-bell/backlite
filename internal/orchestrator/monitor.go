@@ -79,6 +79,7 @@ func (o *Orchestrator) monitorRunning(ctx context.Context) {
 		if status.Done {
 			o.saveAgentOutput(ctx, task)
 			o.handleCompletion(ctx, task, status)
+			o.saveOutputMetadata(ctx, task)
 			o.saveTaskMetadata(ctx, task)
 		}
 	}
@@ -159,6 +160,9 @@ func (o *Orchestrator) handleCompletion(ctx context.Context, task *models.Task, 
 
 	if err := o.store.CompleteTask(ctx, task.ID, result); err != nil {
 		log.Error().Err(err).Str("task_id", task.ID).Msg("handleCompletion: failed to complete task in store")
+		applyTaskResult(task, result, now)
+	} else {
+		o.refreshCompletedTask(ctx, task, result, now)
 	}
 	o.releaseSlot(ctx, task)
 
@@ -177,6 +181,35 @@ func (o *Orchestrator) handleCompletion(ctx context.Context, task *models.Task, 
 	}
 
 	log.Info().Str("task_id", task.ID).Str("status", string(result.Status)).Msg("task completed")
+}
+
+func (o *Orchestrator) refreshCompletedTask(ctx context.Context, task *models.Task, result store.TaskResult, completedAt time.Time) {
+	storedTask, err := o.store.GetTask(ctx, task.ID)
+	if err != nil {
+		log.Warn().Err(err).Str("task_id", task.ID).Msg("handleCompletion: failed to reload completed task")
+		applyTaskResult(task, result, completedAt)
+		return
+	}
+	*task = *storedTask
+}
+
+func applyTaskResult(task *models.Task, result store.TaskResult, completedAt time.Time) {
+	task.Status = result.Status
+	task.Error = result.Error
+	task.PRURL = result.PRURL
+	task.OutputURL = result.OutputURL
+	task.CostUSD = result.CostUSD
+	task.ElapsedTimeSec = result.ElapsedTimeSec
+	if result.RepoURL != "" {
+		task.RepoURL = result.RepoURL
+	}
+	if result.TargetBranch != "" {
+		task.TargetBranch = result.TargetBranch
+	}
+	if result.TaskMode != "" {
+		task.TaskMode = result.TaskMode
+	}
+	task.CompletedAt = &completedAt
 }
 
 // handleReadingCompletion embeds the agent's final TL;DR and writes the reading
@@ -261,8 +294,8 @@ func agentStatusFromContainer(s ContainerStatus) AgentStatus {
 }
 
 // saveAgentOutput extracts the agent's output log from the container and
-// writes it — alongside a task metadata snapshot — via the configured Writer
-// if the task has save_agent_output enabled.
+// writes it via the configured Writer if the task has save_agent_output
+// enabled.
 func (o *Orchestrator) saveAgentOutput(ctx context.Context, task *models.Task) {
 	if !task.SaveAgentOutput || o.outputs == nil {
 		return
@@ -274,7 +307,7 @@ func (o *Orchestrator) saveAgentOutput(ctx context.Context, task *models.Task) {
 		return
 	}
 
-	url, err := o.outputs.Save(ctx, task.ID, []byte(data), taskMetadataFrom(task))
+	url, err := o.outputs.SaveLog(ctx, task.ID, []byte(data))
 	if err != nil {
 		log.Warn().Err(err).Str("task_id", task.ID).Msg("failed to save agent output")
 		return
@@ -282,6 +315,21 @@ func (o *Orchestrator) saveAgentOutput(ctx context.Context, task *models.Task) {
 
 	task.OutputURL = url
 	log.Debug().Str("task_id", task.ID).Str("url", url).Msg("saved agent output")
+}
+
+// saveOutputMetadata writes the final task metadata snapshot (task.json)
+// alongside the already-persisted agent log.
+func (o *Orchestrator) saveOutputMetadata(ctx context.Context, task *models.Task) {
+	if !task.SaveAgentOutput || o.outputs == nil {
+		return
+	}
+
+	if err := o.outputs.SaveMetadata(ctx, task.ID, taskMetadataFrom(task)); err != nil {
+		log.Warn().Err(err).Str("task_id", task.ID).Msg("failed to save output metadata")
+		return
+	}
+
+	log.Debug().Str("task_id", task.ID).Msg("saved output metadata")
 }
 
 // taskMetadata is the subset of task fields written to S3 after completion.

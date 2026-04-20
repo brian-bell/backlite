@@ -84,17 +84,6 @@ func (m *mockStore) ResetRunningContainers(context.Context, string) error { retu
 func (m *mockStore) CreateAllowedSender(context.Context, *models.AllowedSender) error {
 	return nil
 }
-func (m *mockStore) UpsertDiscordInstall(context.Context, *models.DiscordInstall) error { return nil }
-func (m *mockStore) GetDiscordInstall(context.Context, string) (*models.DiscordInstall, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) DeleteDiscordInstall(context.Context, string) error { return nil }
-func (m *mockStore) UpsertDiscordTaskThread(context.Context, *models.DiscordTaskThread) error {
-	return nil
-}
-func (m *mockStore) GetDiscordTaskThread(context.Context, string) (*models.DiscordTaskThread, error) {
-	return nil, store.ErrNotFound
-}
 func (m *mockStore) UpsertReading(context.Context, *models.Reading) error { return nil }
 func (m *mockStore) GetReadingByURL(context.Context, string) (*models.Reading, error) {
 	return nil, store.ErrNotFound

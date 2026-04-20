@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
@@ -14,6 +17,12 @@ import (
 	"github.com/backflow-labs/backflow/internal/notify"
 	"github.com/backflow-labs/backflow/internal/store"
 )
+
+// taskIDPattern matches Backflow task IDs: `bf_` prefix + 26-char ULID body.
+// Mirrors the OpenAPI schema pattern. Used to reject malformed IDs before
+// they reach code paths (like filesystem joins) where an unsafe value could
+// be harmful.
+var taskIDPattern = regexp.MustCompile(`^bf_[0-9A-Z]{26}$`)
 
 // LogFetcher retrieves container logs for a running task.
 type LogFetcher interface {
@@ -187,6 +196,53 @@ func (h *Handlers) RetryTask(w http.ResponseWriter, r *http.Request) {
 	}
 	task.RedactReplyChannel()
 	writeJSON(w, http.StatusOK, task)
+}
+
+func (h *Handlers) GetTaskOutput(w http.ResponseWriter, r *http.Request) {
+	h.serveOutputFile(w, r, "container_output.log", "text/plain; charset=utf-8")
+}
+
+func (h *Handlers) GetTaskOutputJSON(w http.ResponseWriter, r *http.Request) {
+	h.serveOutputFile(w, r, "task.json", "application/json")
+}
+
+// serveOutputFile streams a single file from {DataDir}/tasks/{id}/{name}.
+// Returns 400 when the task ID is malformed and 404 when the task does not
+// exist, the current attempt is not terminal yet, or the file is missing.
+func (h *Handlers) serveOutputFile(w http.ResponseWriter, r *http.Request, name, contentType string) {
+	id := chi.URLParam(r, "id")
+	if !taskIDPattern.MatchString(id) {
+		writeError(w, http.StatusBadRequest, "invalid task id")
+		return
+	}
+
+	task, err := h.store.GetTask(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "output not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get task")
+		return
+	}
+	if !task.Status.IsTerminal() || task.OutputURL == "" {
+		writeError(w, http.StatusNotFound, "output not found")
+		return
+	}
+
+	path := filepath.Join(h.config.DataDir, "tasks", id, name)
+
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			writeError(w, http.StatusNotFound, "output not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to access output file")
+		return
+	}
+
+	w.Header().Set("Content-Type", contentType)
+	http.ServeFile(w, r, path)
 }
 
 func (h *Handlers) HealthCheck(w http.ResponseWriter, r *http.Request) {

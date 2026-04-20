@@ -26,11 +26,11 @@ Stores agent tasks submitted via the REST API.
 | `max_turns` | `INTEGER` | `0` | Maximum agent conversation turns. 0 = unlimited. |
 | `create_pr` | `BOOLEAN` | `false` | Whether to create a pull request on completion. |
 | `self_review` | `BOOLEAN` | `false` | Whether the agent self-reviews before finishing. |
-| `save_agent_output` | `BOOLEAN` | `true` | Whether to upload agent output to S3. |
+| `save_agent_output` | `BOOLEAN` | `true` | Whether to persist agent output for the `/output` and `/output.json` endpoints. |
 | `pr_title` | `TEXT` | `''` | Pull request title (if `create_pr` is set). |
 | `pr_body` | `TEXT` | `''` | Pull request body/description. |
 | `pr_url` | `TEXT` | `''` | URL of the created PR (populated after completion). |
-| `output_url` | `TEXT` | `''` | S3 URL of the uploaded agent output. |
+| `output_url` | `TEXT` | `''` | API-relative URL of the persisted agent output log. |
 | `allowed_tools` | `JSONB` | `'[]'` | JSON array of allowed Claude Code tool names. |
 | `claude_md` | `TEXT` | `''` | Custom CLAUDE.md content injected into the agent container. |
 | `env_vars` | `JSONB` | `'{}'` | JSON object of environment variables passed to the container. |
@@ -135,7 +135,7 @@ Structured output of completed `task_mode=read` tasks. Populated by the orchestr
 - Schema `reader` — exposes a narrow view and RPC via Supabase PostgREST. Intended as the only schema in the Supabase Data API → Exposed schemas list.
 - View `reader.readings` (`security_invoker = true`) projecting only `id, url, title, tldr`.
 - Function `reader.match_readings(query_embedding vector(1536), match_count int)` returning `(id, title, tldr, url, similarity)` ordered by cosine similarity, executable by `anon`.
-- RLS is also enabled on `tasks`, `instances`, `allowed_senders`, `discord_installs`, `discord_task_threads`, and `api_keys` as deny-all for non-owner roles.
+- RLS is also enabled on `tasks`, `instances`, `allowed_senders`, `api_keys`, and the legacy `discord_installs` / `discord_task_threads` tables as deny-all for non-owner roles.
 
 See [supabase-setup.md](supabase-setup.md) for how the reader container authenticates to PostgREST and why there is intentionally no `SUPABASE_READER_KEY`.
 
@@ -164,9 +164,9 @@ pending → running → draining → terminated
                   → terminated
 ```
 
-### `discord_installs`
+### `discord_installs` (legacy)
 
-Stores Discord bot installation state per guild. Seeded from config at startup; survives restarts.
+Legacy installation state retained from the removed Discord integration. The current runtime no longer seeds or updates this table.
 
 | Column | Type | Default | Description |
 |--------|------|---------|-------------|
@@ -177,9 +177,9 @@ Stores Discord bot installation state per guild. Seeded from config at startup; 
 | `installed_at` | `TIMESTAMPTZ` | `now()` | When the install record was first created. |
 | `updated_at` | `TIMESTAMPTZ` | `now()` | Last config update. |
 
-### `discord_task_threads`
+### `discord_task_threads` (legacy)
 
-Stores the Discord root message and thread IDs for each task so lifecycle updates can continue in the same thread after restarts.
+Legacy thread mapping retained from the removed Discord integration. The current runtime no longer writes this table.
 
 | Column | Type | Default | Description |
 |--------|------|---------|-------------|

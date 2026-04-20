@@ -17,7 +17,6 @@ import (
 	"github.com/backflow-labs/backflow/internal/api"
 	"github.com/backflow-labs/backflow/internal/config"
 	"github.com/backflow-labs/backflow/internal/debug"
-	"github.com/backflow-labs/backflow/internal/discord"
 	"github.com/backflow-labs/backflow/internal/embeddings"
 	"github.com/backflow-labs/backflow/internal/messaging"
 	"github.com/backflow-labs/backflow/internal/models"
@@ -26,6 +25,7 @@ import (
 	orchdocker "github.com/backflow-labs/backflow/internal/orchestrator/docker"
 	orchec2 "github.com/backflow-labs/backflow/internal/orchestrator/ec2"
 	orchfargate "github.com/backflow-labs/backflow/internal/orchestrator/fargate"
+	"github.com/backflow-labs/backflow/internal/orchestrator/outputs"
 	orchs3 "github.com/backflow-labs/backflow/internal/orchestrator/s3"
 	"github.com/backflow-labs/backflow/internal/store"
 )
@@ -58,6 +58,32 @@ func setupLogger(logFile string) (zerolog.Logger, io.Closer, error) {
 	multi := io.MultiWriter(consoleWriter, f)
 	logger := zerolog.New(multi).With().Timestamp().Caller().Logger()
 	return logger, f, nil
+}
+
+// buildHTTPHandler wires the HTTP routes exposed by the server binary.
+// Keeping this separate from main lets tests exercise the same routing
+// composition that production uses.
+func buildHTTPHandler(cfg *config.Config, db store.Store, poolStatter debug.PoolStatter, logs api.LogFetcher, bus notify.Emitter, messenger messaging.Messenger, runningFn func() int, startedAt time.Time) http.Handler {
+	if runningFn == nil {
+		runningFn = func() int { return 0 }
+	}
+
+	router := api.NewServer(db, cfg, logs, bus)
+
+	// Debug stats endpoint (outside /api/v1/; auth is applied explicitly here).
+	router.With(api.AuthMiddleware(db, cfg.APIKey)).Get("/debug/stats", debug.StatsHandler(runningFn, poolStatter, startedAt).ServeHTTP)
+
+	// Mount SMS inbound webhook only when both provider and auth token are configured.
+	// The auth token is required for Twilio signature validation — without it the
+	// endpoint would accept unauthenticated requests.
+	if cfg.SMSProvider != "" && cfg.TwilioAuthToken != "" {
+		router.Post("/webhooks/sms/inbound", messaging.InboundHandler(db, cfg, messenger))
+		log.Info().Msg("SMS inbound webhook mounted at /webhooks/sms/inbound")
+	} else if cfg.SMSProvider != "" {
+		log.Warn().Msg("SMS inbound webhook NOT mounted: TWILIO_AUTH_TOKEN is required")
+	}
+
+	return router
 }
 
 func main() {
@@ -152,67 +178,15 @@ func main() {
 		embedder = embeddings.NewOpenAIEmbedder(cfg.OpenAIAPIKey, "", nil)
 	}
 
-	orch := orchestrator.New(db, cfg, bus, runner, scaler, spot, s3Uploader, embedder)
+	fsOutputs := outputs.New(cfg.DataDir)
+	log.Info().Str("data_dir", cfg.DataDir).Msg("filesystem output writer enabled")
 
-	router := api.NewServer(db, cfg, orch.Docker(), bus)
-
-	// Debug stats endpoint (outside /api/v1/; auth is applied explicitly here).
-	router.With(api.AuthMiddleware(db, cfg.APIKey)).Get("/debug/stats", debug.StatsHandler(orch.Running, db, startedAt).ServeHTTP)
-
-	// Mount SMS inbound webhook only when both provider and auth token are configured.
-	// The auth token is required for Twilio signature validation — without it the
-	// endpoint would accept unauthenticated requests.
-	if cfg.SMSProvider != "" && cfg.TwilioAuthToken != "" {
-		router.Post("/webhooks/sms/inbound", messaging.InboundHandler(db, cfg, messenger))
-		log.Info().Msg("SMS inbound webhook mounted at /webhooks/sms/inbound")
-	} else if cfg.SMSProvider != "" {
-		log.Warn().Msg("SMS inbound webhook NOT mounted: TWILIO_AUTH_TOKEN is required")
-	}
-
-	// Discord integration
-	if cfg.DiscordEnabled() {
-		pubKey, err := discord.ParsePublicKey(cfg.DiscordPublicKey)
-		if err != nil {
-			log.Fatal().Err(err).Msg("invalid BACKFLOW_DISCORD_PUBLIC_KEY")
-		}
-		router.Post("/webhooks/discord", discord.InteractionHandler(pubKey, db, discord.HandlerActions{
-			CreateTask: discord.CreateTaskFunc(func(ctx context.Context, req *models.CreateTaskRequest) (*models.Task, error) {
-				return api.NewTask(ctx, req, db, cfg, bus)
-			}),
-			CancelTask: discord.CancelTaskFunc(func(taskID string) error {
-				return api.CancelTask(context.Background(), taskID, db, bus)
-			}),
-			RetryTask: discord.RetryTaskFunc(func(taskID string) error {
-				return api.RetryTask(context.Background(), taskID, db, cfg.MaxUserRetries)
-			}),
-			AllowedRoles: cfg.DiscordAllowedRoles,
-			CommandName:  cfg.DiscordCommandName,
-		}))
-
-		now := time.Now().UTC()
-		install := &models.DiscordInstall{
-			GuildID:      cfg.DiscordGuildID,
-			AppID:        cfg.DiscordAppID,
-			ChannelID:    cfg.DiscordChannelID,
-			AllowedRoles: cfg.DiscordAllowedRoles,
-			InstalledAt:  now,
-			UpdatedAt:    now,
-		}
-		if err := db.UpsertDiscordInstall(context.Background(), install); err != nil {
-			log.Fatal().Err(err).Msg("failed to persist discord install state")
-		}
-
-		if err := discord.RegisterCommands("", cfg.DiscordAppID, cfg.DiscordBotToken, cfg.DiscordCommandName); err != nil {
-			log.Error().Err(err).Msg("failed to register discord slash commands")
-		}
-
-		bus.Subscribe(notify.NewDiscordNotifier(discord.NewClient(cfg.DiscordBotToken), db, cfg.DiscordChannelID, cfg.DiscordEvents))
-		log.Info().Str("guild_id", cfg.DiscordGuildID).Msg("discord integration enabled")
-	}
+	orch := orchestrator.New(db, cfg, bus, runner, scaler, spot, s3Uploader, fsOutputs, embedder)
+	handler := buildHTTPHandler(cfg, db, db, orch.Docker(), bus, messenger, orch.Running, startedAt)
 
 	srv := &http.Server{
 		Addr:         cfg.ListenAddr,
-		Handler:      router,
+		Handler:      handler,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  60 * time.Second,

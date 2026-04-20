@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
@@ -16,6 +17,12 @@ import (
 	"github.com/backflow-labs/backflow/internal/notify"
 	"github.com/backflow-labs/backflow/internal/store"
 )
+
+// taskIDPattern matches Backflow task IDs: `bf_` prefix + 26-char ULID body.
+// Mirrors the OpenAPI schema pattern. Used to reject malformed IDs before
+// they reach code paths (like filesystem joins) where an unsafe value could
+// be harmful.
+var taskIDPattern = regexp.MustCompile(`^bf_[0-9A-Z]{26}$`)
 
 // LogFetcher retrieves container logs for a running task.
 type LogFetcher interface {
@@ -200,10 +207,15 @@ func (h *Handlers) GetTaskOutputJSON(w http.ResponseWriter, r *http.Request) {
 }
 
 // serveOutputFile streams a single file from {DataDir}/tasks/{id}/{name}.
-// Returns 404 when the file is missing (the task directory may not have been
-// populated yet, or the task may not exist).
+// Returns 400 when the task ID is malformed, 404 when the file is missing
+// (the task directory may not have been populated yet, or the task may not
+// exist).
 func (h *Handlers) serveOutputFile(w http.ResponseWriter, r *http.Request, name, contentType string) {
 	id := chi.URLParam(r, "id")
+	if !taskIDPattern.MatchString(id) {
+		writeError(w, http.StatusBadRequest, "invalid task id")
+		return
+	}
 	path := filepath.Join(h.config.DataDir, "tasks", id, name)
 
 	if _, err := os.Stat(path); err != nil {

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -130,12 +131,52 @@ func TestGetTaskOutput_404_WhenFileMissing(t *testing.T) {
 	srv, _ := outputTestServer(t)
 
 	// Valid-looking task ID, but no file on disk.
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks/bf_01HX000000000000000000MISSG/output", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks/bf_01HX00000000000000000MISSG/output", nil)
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 (body: %s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGetTaskOutput_400_RejectsMalformedTaskID(t *testing.T) {
+	srv, dataDir := outputTestServer(t)
+
+	// Seed a file outside the per-task tree. If the handler allowed traversal,
+	// a crafted ID could stat this file and succeed.
+	outside := filepath.Join(dataDir, "secrets.txt")
+	if err := os.WriteFile(outside, []byte("top-secret"), 0o644); err != nil {
+		t.Fatalf("seed outside file: %v", err)
+	}
+
+	// Each of these IDs fails the ^bf_[0-9A-Z]{26}$ pattern and must be
+	// rejected with 400 before any filesystem access happens.
+	bad := []string{
+		"..",
+		"../secrets",
+		"bf_..",
+		"bf_01HX0000000000000000000MISS", // wrong length
+		"bf_01HX00000000000000000miss!",  // bad chars
+		"bf_01HX00000000000000000MISSG/../secrets",
+	}
+
+	for _, id := range bad {
+		t.Run(id, func(t *testing.T) {
+			// URL-escape to keep chi's router happy; the handler still sees the
+			// decoded id via chi.URLParam.
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks/"+url.PathEscape(id)+"/output", nil)
+			rec := httptest.NewRecorder()
+			srv.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusBadRequest && rec.Code != http.StatusNotFound {
+				t.Fatalf("status = %d for id %q, want 400 or 404 (body: %s)", rec.Code, id, rec.Body.String())
+			}
+			// In no case should the response body contain the seeded file's bytes.
+			if bytes.Contains(rec.Body.Bytes(), []byte("top-secret")) {
+				t.Fatalf("response leaked seeded file bytes for id %q: %s", id, rec.Body.String())
+			}
+		})
 	}
 }
 
@@ -159,7 +200,7 @@ func TestGetTaskOutput_401_WhenBearerMissing(t *testing.T) {
 	}
 	srv := NewServer(s, cfg, noopLogFetcher{}, noopEmitter{})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks/bf_01HX000000000000000000DEADX/output", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks/bf_01HX00000000000000000DEADX/output", nil)
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 

@@ -406,6 +406,109 @@ paths:
       security:
         - BearerAuth: [tasks:read]
 
+  /api/v1/tasks/{id}/output:
+    get:
+      operationId: getTaskOutput
+      summary: Get persisted agent output log
+      description: >
+        Returns the agent's stdout log (container_output.log) written by the
+        orchestrator to the configured data directory after the task's
+        container exits. Returns 404 if the task has not finished, if
+        save_agent_output was disabled, or if the file has not yet been
+        written.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Task ID (bf_-prefixed ULID)
+          schema:
+            type: string
+            pattern: "^bf_[0-9A-Z]{26}$"
+      responses:
+        "200":
+          description: Agent output log
+          content:
+            text/plain:
+              schema:
+                type: string
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: API key lacks required scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Output not found (task missing, still running, or output gated off)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+      security:
+        - BearerAuth: [tasks:read]
+
+  /api/v1/tasks/{id}/output.json:
+    get:
+      operationId: getTaskOutputJSON
+      summary: Get persisted task metadata snapshot
+      description: >
+        Returns the JSON task metadata snapshot (task.json) written to the
+        configured data directory alongside the agent output log after the
+        task's container exits.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Task ID (bf_-prefixed ULID)
+          schema:
+            type: string
+            pattern: "^bf_[0-9A-Z]{26}$"
+      responses:
+        "200":
+          description: Task metadata snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: API key lacks required scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Output not found (task missing, still running, or output gated off)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+      security:
+        - BearerAuth: [tasks:read]
+
 components:
   securitySchemes:
     BearerAuth:

@@ -61,10 +61,6 @@ type Store interface {
 	UpdateInstanceDetails(ctx context.Context, id string, privateIP, az string) error
 	ResetRunningContainers(ctx context.Context, id string) error
 
-	// Allowed senders
-	GetAllowedSender(ctx context.Context, channelType, address string) (*models.AllowedSender, error)
-	CreateAllowedSender(ctx context.Context, sender *models.AllowedSender) error
-
 	// API keys
 	HasAPIKeys(ctx context.Context) (bool, error)
 	GetAPIKeyByHash(ctx context.Context, keyHash string) (*models.APIKey, error)

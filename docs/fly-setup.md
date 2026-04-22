@@ -66,7 +66,7 @@ curl https://backflow.fly.dev/api/v1/tasks          # 403 (API restricted)
 
 ## API access restriction
 
-`BACKFLOW_RESTRICT_API=true` is set in `fly.toml`'s `[env]`. This blocks all `/api/v1/*` endpoints with a 403. Webhook paths (`/webhooks/sms/inbound`) and the root `/health` are unaffected.
+`BACKFLOW_RESTRICT_API=true` is set in `fly.toml`'s `[env]`. This blocks all `/api/v1/*` endpoints with a 403. The root `/health` endpoint is unaffected.
 
 ## Configuration
 

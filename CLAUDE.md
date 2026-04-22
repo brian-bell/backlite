@@ -30,9 +30,6 @@ make test-docker-status-writer   # Agent-container status writer test
 make docker-fake-agent-build  # Build fake agent image for testing
 make deps               # go mod tidy
 make clean              # Remove bin/ directory
-make cloudflared-setup  # Create cloudflared tunnel, DNS route, and config (one-time)
-make tunnel             # Start cloudflared tunnel → $BACKFLOW_DOMAIN → localhost:8080
-make deploy-site        # Deploy site/ to Cloudflare Pages (backflow-site) via wrangler
 make db-running         # Show running tasks (also: db-pending, db-completed, db-failed, etc.)
 make docker-agent-build       # Buildx multi-platform agent image (amd64+arm64)
 make docker-agent-build-local # Single-architecture agent build
@@ -66,26 +63,24 @@ Two goroutines: chi REST API on `:8080` + polling orchestrator (5s default). Thr
 - `GET /health` — Health check (root-level, always accessible; used by Fly.io)
 - `GET /debug/stats` — Operational stats: PID, uptime, running tasks, pool metrics (outside `/api/v1/`, bearer-auth protected when API keys are configured)
 - `GET /api/v1/health` — Health check (under API prefix; bearer-auth protected when API keys are configured; blocked when `BACKFLOW_RESTRICT_API=true`)
-- `POST /tasks` — Create task
-- `GET /tasks` — List tasks (query params: `status`, `limit`, `offset`)
-- `GET /tasks/{id}` — Get task
-- `DELETE /tasks/{id}` — Cancel task (sets status to `cancelled`)
-- `POST /tasks/{id}/retry` — Retry a failed/interrupted/cancelled task (atomic, gated by `ready_for_retry` and user retry cap)
-- `GET /tasks/{id}/logs` — Stream container logs
-- `GET /tasks/{id}/output` — Return the agent's stdout log (`container_output.log`) persisted to `BACKFLOW_DATA_DIR` after the container exits
-- `GET /tasks/{id}/output.json` — Return the JSON task metadata snapshot (`task.json`) persisted alongside the output log
-- `POST /webhooks/sms/inbound` — Twilio inbound SMS webhook
+- `POST /api/v1/tasks` — Create task
+- `GET /api/v1/tasks` — List tasks (query params: `status`, `limit`, `offset`)
+- `GET /api/v1/tasks/{id}` — Get task
+- `DELETE /api/v1/tasks/{id}` — Cancel task (sets status to `cancelled`)
+- `POST /api/v1/tasks/{id}/retry` — Retry a failed/interrupted/cancelled task (atomic, gated by `ready_for_retry` and user retry cap)
+- `GET /api/v1/tasks/{id}/logs` — Stream container logs
+- `GET /api/v1/tasks/{id}/output` — Return the agent's stdout log (`container_output.log`) persisted to `BACKFLOW_DATA_DIR` after the container exits
+- `GET /api/v1/tasks/{id}/output.json` — Return the JSON task metadata snapshot (`task.json`) persisted alongside the output log
 
 ### Key modules (`internal/`)
 
 - **api/** — chi router, handlers, JSON responses, `LogFetcher` interface, `NewTask` shared task-creation helper, `CancelTask` and `RetryTask` shared action helpers
 - **orchestrator/** — Poll loop (`orchestrator.go`), dispatch (`dispatch.go`), monitoring (`monitor.go`, including `handleReadingCompletion` for read-mode tasks), recovery (`recovery.go`), local mode (`local.go`). Subpackages: `docker/` (Docker container management via SSM or local exec), `ec2/` (EC2 lifecycle, auto-scaler, spot interruption handler), `fargate/` (ECS/Fargate runner, CloudWatch log parsing), `s3/` (agent output upload)
 - **store/** — `Store` interface + PostgreSQL (`pgxpool`, goose migrations). Includes `UpsertReading` / `GetReadingByURL` for the `readings` table.
-- **models/** — `Task`, `Instance`, `AllowedSender`, and `Reading` (+ `Connection`) structs with status enums. `Task.AgentImage` records which Docker image the orchestrator used (read tasks get `ReaderImage`, others get the default agent image). `FindFirstURL` / `InferReviewMode` auto-detect review mode when a prompt's first URL is a GitHub PR URL.
+- **models/** — `Task`, `Instance`, and `Reading` (+ `Connection`) structs with status enums. `Task.AgentImage` records which Docker image the orchestrator used (read tasks get `ReaderImage`, others get the default agent image). `FindFirstURL` / `InferReviewMode` auto-detect review mode when a prompt's first URL is a GitHub PR URL.
 - **embeddings/** — Thin `Embedder` interface (`Embed(ctx, text) ([]float32, error)`) with an `OpenAIEmbedder` HTTP client (no SDK). Used by the orchestrator to embed a reading's final TL;DR before writing the `readings` row.
 - **config/** — Env-var config (`BACKFLOW_*` prefix), three modes (`ec2`/`local`/`fargate`). `RestrictAPI` blocks all `/api/v1/*` endpoints when `BACKFLOW_RESTRICT_API=true` (used in Fly.io deployment). `BACKFLOW_API_KEY` enables single-token API auth; otherwise `api_keys` in Postgres can back authenticated API/debug requests. `TaskDefaults(taskMode)` returns resolved defaults — for `read` mode it swaps in `ReaderImage` plus the `BACKFLOW_DEFAULT_READ_MAX_*` caps. `Apply(task, overrides)` fills zero-value fields using `*bool` overrides (nil = use default, non-nil = use pointed value)
-- **notify/** — `Notifier` interface, `WebhookNotifier` (HTTP POST, 3 retries, event filtering), `NoopNotifier`, `EventBus` (async fan-out delivery via buffered channel), `NewEvent` constructor with `EventOption` functional options (including `WithReading` for read-mode completion events), `MessagingNotifier` (SMS via Twilio for reply channels). `Event` carries `TaskMode` plus optional reading fields (`TLDR`, `NoveltyVerdict`, `Tags`, `Connections`) populated only for read-task completion events.
-- **messaging/** — `Messenger` interface, `TwilioMessenger` (outbound SMS), inbound SMS webhook handler, message parsing
+- **notify/** — `Notifier` interface, `WebhookNotifier` (HTTP POST, 3 retries, event filtering), `NoopNotifier`, `EventBus` (async fan-out delivery via buffered channel), `NewEvent` constructor with `EventOption` functional options (including `WithReading` for read-mode completion events). `Event` carries `TaskMode` plus optional reading fields (`TLDR`, `NoveltyVerdict`, `Tags`, `Connections`) populated only for read-task completion events.
 - **debug/** — `/debug/stats` handler: PID, uptime, running task count, pgxpool metrics
 
 ### Fake agent (`test/blackbox/fake-agent/`)
@@ -143,14 +138,14 @@ Reading-mode env vars:
 - `OPENAI_API_KEY` — Required for the orchestrator's embeddings client (and for the reader container's `read-embed.sh`)
 - `SUPABASE_URL` / `SUPABASE_ANON_KEY` — Passed to reader containers for PostgREST similarity search (see `docs/supabase-setup.md`)
 
-The `tasks` table carries a `force` boolean column. The API input for force is not wired yet (tracked separately) — today `task.Force` is set by the orchestrator only when explicitly populated through other creation paths.
+The `tasks` table carries a `force` boolean column. REST callers can set `force` on `POST /api/v1/tasks`; `Force=true` bypasses the dispatch-time duplicate check and allows an existing reading row to be overwritten on completion.
 
 ## Output storage
 
 When a task's container exits and `save_agent_output` is enabled, the orchestrator writes two files under `{BACKFLOW_DATA_DIR}/tasks/{id}/`:
 
-- `container_output.log` — raw agent stdout, served by `GET /tasks/{id}/output`
-- `task.json` — JSON snapshot of the task row, served by `GET /tasks/{id}/output.json`
+- `container_output.log` — raw agent stdout, served by `GET /api/v1/tasks/{id}/output`
+- `task.json` — JSON snapshot of the task row, served by `GET /api/v1/tasks/{id}/output.json`
 
 Writes are atomic (`*.tmp` sibling + `os.Rename`), so readers never observe a half-written file. `BACKFLOW_DATA_DIR` defaults to `./data`; see config for current defaults. The `BACKFLOW_S3_BUCKET` path is still used in parallel for the `task_metadata.json` upload (removal tracked by issue #5).
 
@@ -168,7 +163,7 @@ PR comments include actual cost for `claude_code` (extracted from `total_cost_us
 - `BACKFLOW_API_KEY` — Optional single bearer token for API and debug access in small deployments
 - `api_keys` — Postgres-backed bearer tokens with named scopes (`tasks:read`, `tasks:write`, `health:read`, `stats:read`) and optional expiration
 
-When API keys are configured, bearer auth applies to `/api/v1/*` and `/debug/stats`. Root `/health` and webhook endpoints remain public.
+When API keys are configured, bearer auth applies to `/api/v1/*` and `/debug/stats`. Root `/health` remains public.
 
 ## Fargate mode
 
@@ -200,7 +195,7 @@ ECS prerequisites:
 
 ## Fly.io deployment
 
-Production app: `backflow` (`fly.toml`). Auto-deploys on push to main via `.github/workflows/ci.yml`. `BACKFLOW_RESTRICT_API=true` blocks all `/api/v1/*` endpoints; webhook paths and `/health` are unaffected.
+Production app: `backflow` (`fly.toml`). Auto-deploys on push to main via `.github/workflows/ci.yml`. `BACKFLOW_RESTRICT_API=true` blocks all `/api/v1/*` endpoints; root `/health` is unaffected.
 
 AWS credentials for ECS/S3/CloudWatch are provided via the `backflow-fly` IAM user (created by `make setup-aws`). See `docs/fly-setup.md` for deployment steps.
 
@@ -240,9 +235,7 @@ Create new migrations in `migrations/` with the next numeric prefix, `-- +goose 
 ## Documentation
 
 Additional docs in `docs/`:
-- `ROADMAP.md` — Product roadmap with phased implementation plan
 - `schema.md` — Database schema (tables, columns, indexes, status lifecycles)
-- `sms-setup.md` — Twilio SMS setup and allowed sender configuration
 - `sizing.md` — EC2 instance sizing and container density guide
 - `setup-ci.md` — GitHub Actions CI/CD setup for agent image builds
 - `fly-setup.md` — Fly.io deployment setup and configuration

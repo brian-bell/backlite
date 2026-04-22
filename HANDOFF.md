@@ -16,3 +16,11 @@ Ledger of cross-PR tradeoffs. Each entry: decision → consequence for downstrea
 ## Retry output gating
 
 - **`/output` and `/output.json` are gated by current-attempt state, not raw file presence.** The API now looks up the task row and only serves persisted artifacts when the task is terminal and `output_url` is still set for the current attempt. `RetryTask` and `RequeueTask` clear `output_url` when they start a new attempt so stale files under `{data_dir}/tasks/{id}/` cannot leak through the API while a retried/requeued attempt is pending, running, or later terminates without producing fresh output. The filesystem path remains per-task rather than per-attempt; if future work needs historical-attempt artifact access, it will need explicit versioning instead of reusing the current endpoints.
+
+## SMS removal docs cleanup
+
+- **Operator docs were updated in the SMS-removal slice, but legacy schema/history references remain until the schema-drop slice.** `.env.example` and Fly secret sync now reflect that SMS/Twilio support is gone. `docs/schema.md`, migrations, and historical review notes still mention `reply_channel` / `allowed_senders` because those database artifacts remain in place until the later migration that drops them; clean those references up when the schema actually changes.
+
+## Static site removal
+
+- **The repo no longer ships the old static Pages site.** `site/` and the `make deploy-site` target were removed while resolving the SMS/Discord cleanup branch against `main`. If public marketing or legal pages are needed again, recreate them intentionally instead of assuming a Pages deploy still exists.

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/backflow-labs/backflow/internal/config"
-	"github.com/backflow-labs/backflow/internal/messaging"
 	"github.com/backflow-labs/backflow/internal/notify"
 	"github.com/backflow-labs/backflow/internal/store"
 )
@@ -80,17 +79,13 @@ type noopEmitter struct{}
 
 func (noopEmitter) Emit(notify.Event) {}
 
-func TestBuildHTTPHandler_WebhookMounting(t *testing.T) {
+func TestBuildHTTPHandler_NoWebhookRoutes(t *testing.T) {
 	handler := buildHTTPHandler(
-		&config.Config{
-			SMSProvider:     "twilio",
-			TwilioAuthToken: "test-token",
-		},
+		&config.Config{},
 		testStore{},
 		nil,
 		noopLogFetcher{},
 		noopEmitter{},
-		messaging.NoopMessenger{},
 		func() int { return 0 },
 		time.Unix(0, 0),
 	)
@@ -107,12 +102,6 @@ func TestBuildHTTPHandler_WebhookMounting(t *testing.T) {
 			path:   "/webhooks/discord",
 			want:   http.StatusNotFound,
 		},
-		{
-			name:   "sms webhook is mounted by main wiring",
-			method: http.MethodPost,
-			path:   "/webhooks/sms/inbound",
-			want:   http.StatusForbidden,
-		},
 	}
 
 	for _, tc := range tests {
@@ -125,26 +114,5 @@ func TestBuildHTTPHandler_WebhookMounting(t *testing.T) {
 				t.Fatalf("%s %s: got status %d, want %d", tc.method, tc.path, rr.Code, tc.want)
 			}
 		})
-	}
-}
-
-func TestBuildHTTPHandler_SMSWebhookRequiresAuthToken(t *testing.T) {
-	handler := buildHTTPHandler(
-		&config.Config{SMSProvider: "twilio"},
-		testStore{},
-		nil,
-		noopLogFetcher{},
-		noopEmitter{},
-		messaging.NoopMessenger{},
-		func() int { return 0 },
-		time.Unix(0, 0),
-	)
-
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/sms/inbound", nil)
-	rr := httptest.NewRecorder()
-	handler.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusNotFound {
-		t.Fatalf("POST /webhooks/sms/inbound without Twilio auth token: got status %d, want %d", rr.Code, http.StatusNotFound)
 	}
 }

@@ -87,14 +87,6 @@ type Config struct {
 	WebhookURL    string
 	WebhookEvents []string
 
-	// SMS / Messaging
-	SMSProvider        string
-	TwilioAccountSID   string
-	TwilioAuthToken    string
-	SMSFromNumber      string
-	SMSEvents          []string
-	SMSOutboundEnabled bool
-
 	// S3 (task data: agent output, offloaded config for large prompts)
 	S3Bucket string
 
@@ -183,12 +175,6 @@ func Load() (*Config, error) {
 	c.DefaultSelfReview = envBool("BACKFLOW_DEFAULT_SELF_REVIEW", false)
 	c.DefaultSaveOutput = envBool("BACKFLOW_DEFAULT_SAVE_AGENT_OUTPUT", true)
 
-	c.SMSProvider = envOr("BACKFLOW_SMS_PROVIDER", "")
-	c.TwilioAccountSID = os.Getenv("TWILIO_ACCOUNT_SID")
-	c.TwilioAuthToken = os.Getenv("TWILIO_AUTH_TOKEN")
-	c.SMSFromNumber = os.Getenv("BACKFLOW_SMS_FROM_NUMBER")
-	c.SMSEvents = envCSVOrDefault("BACKFLOW_SMS_EVENTS", []string{"task.completed", "task.failed"})
-	c.SMSOutboundEnabled = envOr("BACKFLOW_SMS_OUTBOUND_ENABLED", "true") == "true"
 	c.WebhookEvents = envCSV("BACKFLOW_WEBHOOK_EVENTS")
 
 	if c.Mode != ModeEC2 && c.Mode != ModeLocal && c.Mode != ModeFargate {
@@ -230,17 +216,6 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("BACKFLOW_ECS_SUBNETS is required when BACKFLOW_MODE=%s", ModeFargate)
 		case c.CloudWatchLogGroup == "":
 			return nil, fmt.Errorf("BACKFLOW_CLOUDWATCH_LOG_GROUP is required when BACKFLOW_MODE=%s", ModeFargate)
-		}
-	}
-
-	if c.SMSProvider != "" {
-		switch c.SMSProvider {
-		case "twilio":
-			if c.TwilioAccountSID == "" || c.TwilioAuthToken == "" || c.SMSFromNumber == "" {
-				return nil, fmt.Errorf("TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and BACKFLOW_SMS_FROM_NUMBER are required when BACKFLOW_SMS_PROVIDER=twilio")
-			}
-		default:
-			return nil, fmt.Errorf("invalid BACKFLOW_SMS_PROVIDER: %q (must be %q)", c.SMSProvider, "twilio")
 		}
 	}
 
@@ -316,14 +291,6 @@ func envCSV(key string) []string {
 		if part != "" {
 			values = append(values, part)
 		}
-	}
-	return values
-}
-
-func envCSVOrDefault(key string, fallback []string) []string {
-	values := envCSV(key)
-	if values == nil {
-		return fallback
 	}
 	return values
 }

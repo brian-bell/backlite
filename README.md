@@ -25,7 +25,6 @@ make build          # Compile to bin/backflow
 make run            # Build + run (auto-sources .env, refreshes AWS creds if needed)
 make test           # Run all tests (no cache)
 make lint           # go vet
-make tunnel         # Start cloudflared tunnel → $BACKFLOW_DOMAIN → localhost:8080
 make deps           # go mod tidy
 make clean          # Remove bin/
 ```
@@ -40,19 +39,6 @@ make test-soak          # Resource leak detector (10 min; truncates tasks DB wit
 make test-fake-agent    # Unit tests for the fake agent image
 make test-schema        # Schemathesis fuzz tests against OpenAPI spec
 ```
-
-### Local Tunnel (for inbound SMS)
-
-To receive inbound Twilio SMS webhooks during local development, expose your server with a [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps) named tunnel:
-
-```bash
-brew install cloudflared
-# Set BACKFLOW_TUNNEL_NAME and BACKFLOW_DOMAIN in .env
-make cloudflared-setup   # One-time: create tunnel, DNS route, and config
-make tunnel              # Start the tunnel
-```
-
-This routes `https://$BACKFLOW_DOMAIN` to `localhost:8080`. Set the domain as the Twilio webhook URL. See [docs/sms-setup.md](docs/sms-setup.md) for full configuration.
 
 ## Submitting Tasks
 
@@ -134,9 +120,10 @@ curl -X POST http://localhost:8080/api/v1/tasks \
 | `DELETE` | `/api/v1/tasks/{id}` | Cancel a task |
 | `POST` | `/api/v1/tasks/{id}/retry` | Retry a failed/cancelled/interrupted task |
 | `GET` | `/api/v1/tasks/{id}/logs` | Container logs (`?tail=100`) |
+| `GET` | `/api/v1/tasks/{id}/output` | Persisted agent stdout log |
+| `GET` | `/api/v1/tasks/{id}/output.json` | Persisted task metadata snapshot |
 | `GET` | `/api/v1/health` | Health check |
 | `GET` | `/debug/stats` | Operational stats (PID, uptime, running tasks, pool metrics) |
-| `POST` | `/webhooks/sms/inbound` | Twilio inbound SMS webhook |
 
 ### Task Request Fields
 
@@ -241,63 +228,6 @@ BACKFLOW_CLOUDWATCH_LOG_GROUP=/ecs/backflow
 
 Prerequisites: ECS cluster with Fargate capacity providers, task definition with `awslogs` log driver, subnets with egress, IAM roles for image pull + log delivery.
 
-## Code Review Agents
-
-This project includes Claude Code agent definitions (`.claude/agents/`) for automated code review.
-
-### Full team review
-
-```bash
-claude --agent review-lead
-```
-
-Spawns a coordinated team of 4 specialized reviewers (structure, errors, style, security) that examine all non-test Go files and produce a prioritized cleanup report.
-
-### Individual reviewers
-
-Run a single reviewer for a focused analysis:
-
-```bash
-claude --agent structure-reviewer   # Architecture, duplication, dead code
-claude --agent error-reviewer       # Error handling, resource management
-claude --agent style-reviewer       # Go idioms, naming, simplification
-claude --agent security-reviewer    # Injection, auth, secrets, input validation
-```
-
-All agents are read-only — they suggest changes but never modify files. Test files are excluded from review.
-
-## Feature Acceptance Agents
-
-A separate agent team evaluates features from a product perspective — not code quality, but whether a feature is complete, safe, maintainable, and documented. All reviewers evaluate against `docs/ROADMAP.md` as the north star for product direction.
-
-### Review a PR
-
-```bash
-claude --agent acceptance-lead "Review PR #42"
-```
-
-### Review an existing feature
-
-```bash
-claude --agent acceptance-lead "Review the sms feature"
-claude --agent acceptance-lead "Review the fargate feature"
-claude --agent acceptance-lead "Review the notifications feature"
-```
-
-The lead spawns 5 specialist reviewers in parallel:
-
-| Reviewer | Focus |
-|----------|-------|
-| `product-reviewer` | Roadmap alignment, persona fit, competitive positioning, cross-mode completeness |
-| `acceptance-security-reviewer` | Attack surface, auth boundaries, credential handling, threat model |
-| `quality-reviewer` | Test coverage, edge cases, status transitions, graceful degradation |
-| `maintainability-reviewer` | Pattern consistency, config model, observability, complexity budget |
-| `documentation-reviewer` | CLAUDE.md accuracy, config docs, schema docs, discoverability |
-
-The consolidated report ends with a verdict: **ACCEPT**, **ACCEPT WITH CONDITIONS**, or **REQUEST CHANGES**.
-
-All agents are read-only — they analyze and report but never modify files or post PR comments.
-
 ## Configuration
 
 All config via environment variables or `.env` file. See `.env.example` for the full list.
@@ -382,16 +312,3 @@ Defaults are set in `internal/config/config.go` and can be overridden via env va
 | `BACKFLOW_WEBHOOK_EVENTS` | all | Comma-separated event filter |
 
 Events: `task.created`, `task.running`, `task.completed`, `task.failed`, `task.needs_input`, `task.interrupted`, `task.recovering`, `task.cancelled`, `task.retry`
-
-### SMS (Twilio)
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `BACKFLOW_SMS_PROVIDER` | | Set to `twilio` to enable SMS |
-| `TWILIO_ACCOUNT_SID` | | Twilio Account SID (required when provider is `twilio`) |
-| `TWILIO_AUTH_TOKEN` | | Twilio Auth Token (required when provider is `twilio`) |
-| `BACKFLOW_SMS_FROM_NUMBER` | | Twilio phone number in E.164 format (required when provider is `twilio`) |
-| `BACKFLOW_SMS_EVENTS` | `task.completed,task.failed` | Comma-separated events that trigger outbound SMS |
-| `BACKFLOW_SMS_OUTBOUND_ENABLED` | `true` | Set to `false` to disable outbound SMS while keeping inbound |
-
-See [docs/sms-setup.md](docs/sms-setup.md) for full setup instructions including allowed sender registration and A2P 10DLC compliance.

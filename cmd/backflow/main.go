@@ -18,7 +18,6 @@ import (
 	"github.com/backflow-labs/backflow/internal/config"
 	"github.com/backflow-labs/backflow/internal/debug"
 	"github.com/backflow-labs/backflow/internal/embeddings"
-	"github.com/backflow-labs/backflow/internal/messaging"
 	"github.com/backflow-labs/backflow/internal/models"
 	"github.com/backflow-labs/backflow/internal/notify"
 	"github.com/backflow-labs/backflow/internal/orchestrator"
@@ -63,7 +62,7 @@ func setupLogger(logFile string) (zerolog.Logger, io.Closer, error) {
 // buildHTTPHandler wires the HTTP routes exposed by the server binary.
 // Keeping this separate from main lets tests exercise the same routing
 // composition that production uses.
-func buildHTTPHandler(cfg *config.Config, db store.Store, poolStatter debug.PoolStatter, logs api.LogFetcher, bus notify.Emitter, messenger messaging.Messenger, runningFn func() int, startedAt time.Time) http.Handler {
+func buildHTTPHandler(cfg *config.Config, db store.Store, poolStatter debug.PoolStatter, logs api.LogFetcher, bus notify.Emitter, runningFn func() int, startedAt time.Time) http.Handler {
 	if runningFn == nil {
 		runningFn = func() int { return 0 }
 	}
@@ -72,16 +71,6 @@ func buildHTTPHandler(cfg *config.Config, db store.Store, poolStatter debug.Pool
 
 	// Debug stats endpoint (outside /api/v1/; auth is applied explicitly here).
 	router.With(api.AuthMiddleware(db, cfg.APIKey)).Get("/debug/stats", debug.StatsHandler(runningFn, poolStatter, startedAt).ServeHTTP)
-
-	// Mount SMS inbound webhook only when both provider and auth token are configured.
-	// The auth token is required for Twilio signature validation — without it the
-	// endpoint would accept unauthenticated requests.
-	if cfg.SMSProvider != "" && cfg.TwilioAuthToken != "" {
-		router.Post("/webhooks/sms/inbound", messaging.InboundHandler(db, cfg, messenger))
-		log.Info().Msg("SMS inbound webhook mounted at /webhooks/sms/inbound")
-	} else if cfg.SMSProvider != "" {
-		log.Warn().Msg("SMS inbound webhook NOT mounted: TWILIO_AUTH_TOKEN is required")
-	}
 
 	return router
 }
@@ -130,20 +119,6 @@ func main() {
 		log.Info().Str("url", cfg.WebhookURL).Msg("webhook notifications enabled")
 	}
 
-	// Initialize messaging
-	var messenger messaging.Messenger
-	switch cfg.SMSProvider {
-	case "twilio":
-		messenger = messaging.NewTwilioMessenger(cfg.TwilioAccountSID, cfg.TwilioAuthToken, cfg.SMSFromNumber)
-		log.Info().Str("from", cfg.SMSFromNumber).Msg("twilio SMS messaging enabled")
-	default:
-		messenger = messaging.NoopMessenger{}
-	}
-
-	if cfg.SMSProvider != "" && cfg.SMSOutboundEnabled {
-		bus.Subscribe(notify.NewMessagingNotifier(messenger, cfg.SMSEvents))
-	}
-
 	// Declare as the interface type so a nil *Uploader stays a nil interface
 	// (avoids the nil-pointer-in-non-nil-interface trap in saveTaskMetadata).
 	var s3Uploader orchestrator.S3Client
@@ -182,7 +157,7 @@ func main() {
 	log.Info().Str("data_dir", cfg.DataDir).Msg("filesystem output writer enabled")
 
 	orch := orchestrator.New(db, cfg, bus, runner, scaler, spot, s3Uploader, fsOutputs, embedder)
-	handler := buildHTTPHandler(cfg, db, db, orch.Docker(), bus, messenger, orch.Running, startedAt)
+	handler := buildHTTPHandler(cfg, db, db, orch.Docker(), bus, orch.Running, startedAt)
 
 	srv := &http.Server{
 		Addr:         cfg.ListenAddr,

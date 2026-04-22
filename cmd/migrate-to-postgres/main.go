@@ -54,9 +54,6 @@ func migrate(ctx context.Context, sqliteDB *sql.DB, pgPool *pgxpool.Pool) error 
 	if err := migrateInstances(ctx, sqliteDB, pgPool); err != nil {
 		return fmt.Errorf("instances: %w", err)
 	}
-	if err := migrateSenders(ctx, sqliteDB, pgPool); err != nil {
-		return fmt.Errorf("allowed_senders: %w", err)
-	}
 	return nil
 }
 
@@ -249,51 +246,6 @@ func migrateInstances(ctx context.Context, sqliteDB *sql.DB, pgPool *pgxpool.Poo
 	}
 
 	log.Printf("instances: migrated %d rows", count)
-	return nil
-}
-
-func migrateSenders(ctx context.Context, sqliteDB *sql.DB, pgPool *pgxpool.Pool) error {
-	rows, err := sqliteDB.QueryContext(ctx, `SELECT
-		channel_type, address, enabled, created_at
-	FROM allowed_senders`)
-	if err != nil {
-		return fmt.Errorf("query sqlite: %w", err)
-	}
-	defer rows.Close()
-
-	var count int
-	for rows.Next() {
-		var (
-			channelType, address string
-			enabled              int
-			createdAtStr         string
-		)
-
-		if err := rows.Scan(&channelType, &address, &enabled, &createdAtStr); err != nil {
-			return fmt.Errorf("scan row: %w", err)
-		}
-
-		createdAt, err := parseTimestamp(createdAtStr)
-		if err != nil {
-			return fmt.Errorf("parse created_at for %s/%s: %w", channelType, address, err)
-		}
-
-		_, err = pgPool.Exec(ctx, `INSERT INTO allowed_senders (
-			channel_type, address, enabled, created_at
-		) VALUES ($1, $2, $3, $4)
-		ON CONFLICT DO NOTHING`,
-			channelType, address, enabled == 1, createdAt,
-		)
-		if err != nil {
-			return fmt.Errorf("insert allowed_sender %s/%s: %w", channelType, address, err)
-		}
-		count++
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate rows: %w", err)
-	}
-
-	log.Printf("allowed_senders: migrated %d rows", count)
 	return nil
 }
 

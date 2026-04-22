@@ -119,7 +119,7 @@ func testPostgresStore(t *testing.T) *PostgresStore {
 	s := &PostgresStore{pool: pool, q: pool}
 
 	// Clean slate for test isolation.
-	if _, err := s.pool.Exec(ctx, "TRUNCATE tasks, instances, allowed_senders, api_keys, discord_installs, discord_task_threads CASCADE"); err != nil {
+	if _, err := s.pool.Exec(ctx, "TRUNCATE tasks, instances, api_keys CASCADE"); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 	return s

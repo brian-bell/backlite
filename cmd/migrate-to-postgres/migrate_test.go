@@ -117,13 +117,6 @@ func newTestSQLiteDB(t *testing.T) *sql.DB {
 			updated_at         TEXT NOT NULL
 		);
 
-		CREATE TABLE allowed_senders (
-			channel_type TEXT NOT NULL,
-			address      TEXT NOT NULL,
-			enabled      INTEGER NOT NULL DEFAULT 1,
-			created_at   TEXT NOT NULL,
-			PRIMARY KEY (channel_type, address)
-		);
 	`)
 	if err != nil {
 		t.Fatalf("create sqlite schema: %v", err)
@@ -141,7 +134,7 @@ func newTestPgPool(t *testing.T) *pgxpool.Pool {
 	}
 	t.Cleanup(func() { pool.Close() })
 
-	if _, err := pool.Exec(ctx, "TRUNCATE tasks, instances, allowed_senders, api_keys CASCADE"); err != nil {
+	if _, err := pool.Exec(ctx, "TRUNCATE tasks, instances, api_keys CASCADE"); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 	return pool
@@ -353,55 +346,6 @@ func TestMigrate_Instances(t *testing.T) {
 	}
 }
 
-func TestMigrate_Senders(t *testing.T) {
-	ctx := context.Background()
-	sqliteDB := newTestSQLiteDB(t)
-	pgPool := newTestPgPool(t)
-
-	createdAt := "2025-03-10T12:00:00Z"
-
-	_, err := sqliteDB.Exec(`INSERT INTO allowed_senders (
-		channel_type, address, enabled, created_at
-	) VALUES ('sms', '+15551234567', 1, ?)`,
-		createdAt)
-	if err != nil {
-		t.Fatalf("seed sqlite allowed_sender: %v", err)
-	}
-
-	if err := migrate(ctx, sqliteDB, pgPool); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-
-	var (
-		channelType, address string
-		enabled              bool
-		pgCreatedAt          time.Time
-	)
-	err = pgPool.QueryRow(ctx, `SELECT
-		channel_type, address, enabled, created_at
-	FROM allowed_senders WHERE channel_type = 'sms' AND address = '+15551234567'`).Scan(
-		&channelType, &address, &enabled, &pgCreatedAt,
-	)
-	if err != nil {
-		t.Fatalf("query postgres: %v", err)
-	}
-
-	if channelType != "sms" {
-		t.Errorf("channel_type = %q", channelType)
-	}
-	if address != "+15551234567" {
-		t.Errorf("address = %q", address)
-	}
-	if !enabled {
-		t.Error("enabled should be true (was 1)")
-	}
-
-	wantCreated, _ := time.Parse(time.RFC3339, createdAt)
-	if !pgCreatedAt.Equal(wantCreated) {
-		t.Errorf("created_at = %v, want %v", pgCreatedAt, wantCreated)
-	}
-}
-
 func TestMigrate_Idempotent(t *testing.T) {
 	ctx := context.Background()
 	sqliteDB := newTestSQLiteDB(t)
@@ -420,12 +364,6 @@ func TestMigrate_Idempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed instance: %v", err)
 	}
-	_, err = sqliteDB.Exec(`INSERT INTO allowed_senders (
-		channel_type, address, created_at
-	) VALUES ('sms', '+10000000000', '2025-01-01T00:00:00Z')`)
-	if err != nil {
-		t.Fatalf("seed sender: %v", err)
-	}
 
 	// First run.
 	if err := migrate(ctx, sqliteDB, pgPool); err != nil {
@@ -438,7 +376,7 @@ func TestMigrate_Idempotent(t *testing.T) {
 	}
 
 	// Verify exactly one row per table.
-	for _, table := range []string{"tasks", "instances", "allowed_senders"} {
+	for _, table := range []string{"tasks", "instances"} {
 		var count int
 		err := pgPool.QueryRow(ctx, "SELECT count(*) FROM "+table).Scan(&count)
 		if err != nil {

@@ -78,7 +78,7 @@ func testServer(t *testing.T) http.Handler {
 	ctx := context.Background()
 
 	// Clean slate for test isolation.
-	if _, err := truncatePool.Exec(ctx, "TRUNCATE tasks, instances, allowed_senders, api_keys CASCADE"); err != nil {
+	if _, err := truncatePool.Exec(ctx, "TRUNCATE tasks, instances, api_keys CASCADE"); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 
@@ -109,7 +109,7 @@ func testServerWithEmitter(t *testing.T) (http.Handler, store.Store, *capturingE
 	t.Helper()
 	ctx := context.Background()
 
-	if _, err := truncatePool.Exec(ctx, "TRUNCATE tasks, instances, allowed_senders, api_keys CASCADE"); err != nil {
+	if _, err := truncatePool.Exec(ctx, "TRUNCATE tasks, instances, api_keys CASCADE"); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 
@@ -324,7 +324,7 @@ func TestCreateReviewTask(t *testing.T) {
 
 func TestCreateReadTask_ViaPOSTTasks(t *testing.T) {
 	ctx := context.Background()
-	if _, err := truncatePool.Exec(ctx, "TRUNCATE tasks, instances, allowed_senders, api_keys CASCADE"); err != nil {
+	if _, err := truncatePool.Exec(ctx, "TRUNCATE tasks, instances, api_keys CASCADE"); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 	_, thisFile, _, _ := runtime.Caller(0)
@@ -419,7 +419,7 @@ func TestDeleteTask(t *testing.T) {
 func TestNewTask_Integration(t *testing.T) {
 	ctx := context.Background()
 
-	if _, err := truncatePool.Exec(ctx, "TRUNCATE tasks, instances, allowed_senders, api_keys CASCADE"); err != nil {
+	if _, err := truncatePool.Exec(ctx, "TRUNCATE tasks, instances, api_keys CASCADE"); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 

@@ -236,7 +236,7 @@ func TestAPIHealthAccessible(t *testing.T) {
 func TestRestrictAPIEnvVar_NoLongerBlocksAPI(t *testing.T) {
 	t.Setenv("BACKFLOW_RESTRICT_API", "true")
 	t.Setenv("ANTHROPIC_API_KEY", "test-key")
-	t.Setenv("BACKFLOW_DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	t.Setenv("BACKFLOW_DATABASE_PATH", "/tmp/backflow-test.db")
 
 	cfg, err := config.Load()
 	if err != nil {

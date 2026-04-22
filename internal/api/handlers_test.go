@@ -1,95 +1,39 @@
-//go:build !nocontainers
-
 package api
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"log"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
-	"runtime"
+	"strings"
 	"testing"
-	"time"
 
 	"github.com/backflow-labs/backflow/internal/config"
 	"github.com/backflow-labs/backflow/internal/models"
 	"github.com/backflow-labs/backflow/internal/notify"
 	"github.com/backflow-labs/backflow/internal/store"
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-var (
-	sharedConnStr string
-	truncatePool  *pgxpool.Pool
-)
-
-func TestMain(m *testing.M) {
-	ctx := context.Background()
-
-	pgContainer, err := postgres.Run(ctx, "pgvector/pgvector:pg16",
-		postgres.WithDatabase("backflow_test"),
-		postgres.WithUsername("test"),
-		postgres.WithPassword("test"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(30*time.Second),
-		),
-	)
+func newTestStore(t *testing.T) *store.SQLiteStore {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), strings.ReplaceAll(t.Name(), "/", "-")+"-test.db")
+	s, err := store.NewSQLite(context.Background(), dbPath, filepath.Join("..", "..", "migrations"))
 	if err != nil {
-		log.Fatalf("start postgres container: %v", err)
+		t.Fatalf("NewSQLite: %v", err)
 	}
-
-	sharedConnStr, err = pgContainer.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		log.Fatalf("get connection string: %v", err)
-	}
-
-	// Run migrations once.
-	_, thisFile, _, _ := runtime.Caller(0)
-	migrationsDir := filepath.Join(filepath.Dir(thisFile), "..", "..", "migrations")
-	s, err := store.NewPostgres(ctx, sharedConnStr, migrationsDir)
-	if err != nil {
-		log.Fatalf("NewPostgres: %v", err)
-	}
-	s.Close()
-
-	truncatePool, err = pgxpool.New(ctx, sharedConnStr)
-	if err != nil {
-		log.Fatalf("truncate pool: %v", err)
-	}
-
-	code := m.Run()
-
-	truncatePool.Close()
-	pgContainer.Terminate(ctx)
-	os.Exit(code)
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	})
+	return s
 }
 
 func testServer(t *testing.T) http.Handler {
 	t.Helper()
-	ctx := context.Background()
-
-	// Clean slate for test isolation.
-	if _, err := truncatePool.Exec(ctx, "TRUNCATE tasks, instances, allowed_senders, api_keys CASCADE"); err != nil {
-		t.Fatalf("truncate: %v", err)
-	}
-
-	_, thisFile, _, _ := runtime.Caller(0)
-	migrationsDir := filepath.Join(filepath.Dir(thisFile), "..", "..", "migrations")
-
-	s, err := store.NewPostgres(ctx, sharedConnStr, migrationsDir)
-	if err != nil {
-		t.Fatalf("NewPostgres: %v", err)
-	}
-	t.Cleanup(func() { s.Close() })
+	s := newTestStore(t)
 
 	cfg := &config.Config{
 		AnthropicAPIKey:    "sk-test",
@@ -107,20 +51,7 @@ func testServer(t *testing.T) http.Handler {
 
 func testServerWithEmitter(t *testing.T) (http.Handler, store.Store, *capturingEmitter) {
 	t.Helper()
-	ctx := context.Background()
-
-	if _, err := truncatePool.Exec(ctx, "TRUNCATE tasks, instances, allowed_senders, api_keys CASCADE"); err != nil {
-		t.Fatalf("truncate: %v", err)
-	}
-
-	_, thisFile, _, _ := runtime.Caller(0)
-	migrationsDir := filepath.Join(filepath.Dir(thisFile), "..", "..", "migrations")
-
-	s, err := store.NewPostgres(ctx, sharedConnStr, migrationsDir)
-	if err != nil {
-		t.Fatalf("NewPostgres: %v", err)
-	}
-	t.Cleanup(func() { s.Close() })
+	s := newTestStore(t)
 
 	cfg := &config.Config{
 		AnthropicAPIKey:    "sk-test",
@@ -323,17 +254,7 @@ func TestCreateReviewTask(t *testing.T) {
 }
 
 func TestCreateReadTask_ViaPOSTTasks(t *testing.T) {
-	ctx := context.Background()
-	if _, err := truncatePool.Exec(ctx, "TRUNCATE tasks, instances, allowed_senders, api_keys CASCADE"); err != nil {
-		t.Fatalf("truncate: %v", err)
-	}
-	_, thisFile, _, _ := runtime.Caller(0)
-	migrationsDir := filepath.Join(filepath.Dir(thisFile), "..", "..", "migrations")
-	s, err := store.NewPostgres(ctx, sharedConnStr, migrationsDir)
-	if err != nil {
-		t.Fatalf("NewPostgres: %v", err)
-	}
-	t.Cleanup(func() { s.Close() })
+	s := newTestStore(t)
 
 	cfg := &config.Config{
 		AnthropicAPIKey:       "sk-test",
@@ -418,18 +339,7 @@ func TestDeleteTask(t *testing.T) {
 
 func TestNewTask_Integration(t *testing.T) {
 	ctx := context.Background()
-
-	if _, err := truncatePool.Exec(ctx, "TRUNCATE tasks, instances, allowed_senders, api_keys CASCADE"); err != nil {
-		t.Fatalf("truncate: %v", err)
-	}
-
-	_, thisFile, _, _ := runtime.Caller(0)
-	migrationsDir := filepath.Join(filepath.Dir(thisFile), "..", "..", "migrations")
-	s, err := store.NewPostgres(ctx, sharedConnStr, migrationsDir)
-	if err != nil {
-		t.Fatalf("NewPostgres: %v", err)
-	}
-	t.Cleanup(func() { s.Close() })
+	s := newTestStore(t)
 
 	cfg := &config.Config{
 		AnthropicAPIKey:    "sk-test",

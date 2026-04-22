@@ -2,6 +2,12 @@
 
 Ledger of cross-PR tradeoffs. Each entry: decision → consequence for downstream work.
 
+## SQLite migration
+
+- **Persistence now uses a local SQLite file, not Postgres/Supabase.** The server opens `BACKFLOW_DATABASE_PATH`, runs SQLite-compatible goose migrations, and keeps DB-backed tests on temporary `-test.db` files. Anything that still assumes `BACKFLOW_DATABASE_URL`, `pgx`, or Postgres-native SQL needs to be updated rather than worked around.
+- **Reader duplicate/similarity helpers now call Backflow's own API, not Supabase PostgREST.** Read-mode containers receive `BACKFLOW_API_BASE_URL` (plus `BACKFLOW_API_KEY` when configured) and hit `/api/v1/readings/lookup` and `/api/v1/readings/similar`. If a deployment can't use the default host-gateway URL, set `BACKFLOW_INTERNAL_API_BASE_URL` explicitly.
+- **Embedding similarity moved from DB-native vector search to application-side ranking.** Readings store embeddings as JSON text in SQLite and `FindSimilarReadings` computes cosine similarity in Go. This keeps the migration simple and local-first, but very large reading corpora may eventually want an explicit ANN/indexed replacement instead of in-process ranking.
+
 ## Duplicate-URL handling for read-mode tasks
 
 - **Duplicate check runs at dispatch, not completion.** Before the orchestrator launches a reader container for a `task_mode=read` task, it calls `store.GetReadingByURL(ctx, task.Prompt)`. If the URL already exists and `task.Force` is false, the task is marked `failed` with `"reading already exists for url ... (id=...); resubmit with force=true to overwrite"` and `task.failed` is emitted — no container, no embedding call, no spend. `Force=true` bypasses the check and dispatches normally, with `UpsertReading` overwriting the existing row on completion. The orchestrator is the source of truth for duplicate detection; the in-container `read-lookup.sh` remains as a best-effort agent hint but is advisory.

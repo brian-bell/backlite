@@ -1,5 +1,5 @@
 -- +goose Up
-ALTER TABLE allowed_senders DROP COLUMN IF EXISTS default_repo;
+SELECT 1;
 
 -- +goose Down
-ALTER TABLE allowed_senders ADD COLUMN default_repo TEXT NOT NULL DEFAULT '';
+SELECT 1;

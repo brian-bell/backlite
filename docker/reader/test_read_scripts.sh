@@ -49,25 +49,15 @@ expect_stderr_contains() {
 
 # --- read-lookup.sh ---
 (
-    unset SUPABASE_URL SUPABASE_ANON_KEY
-    expect_stderr_contains "read-lookup missing env" "SUPABASE_URL" \
+    unset BACKFLOW_API_BASE_URL BACKFLOW_API_KEY
+    expect_stderr_contains "read-lookup missing env" "BACKFLOW_API_BASE_URL" \
         "$DIR/read-lookup.sh" "https://example.com"
     expect_exit_nonzero "read-lookup missing env" \
         "$DIR/read-lookup.sh" "https://example.com"
 )
 
 (
-    export SUPABASE_URL=https://example.supabase.co
-    unset SUPABASE_ANON_KEY
-    expect_stderr_contains "read-lookup missing anon key" "SUPABASE_ANON_KEY" \
-        "$DIR/read-lookup.sh" "https://example.com"
-    expect_exit_nonzero "read-lookup missing anon key" \
-        "$DIR/read-lookup.sh" "https://example.com"
-)
-
-(
-    export SUPABASE_URL=https://example.supabase.co
-    export SUPABASE_ANON_KEY=dummy
+    export BACKFLOW_API_BASE_URL=http://host.docker.internal:8080
     expect_stderr_contains "read-lookup missing url arg" "URL" \
         "$DIR/read-lookup.sh"
     expect_exit_nonzero "read-lookup missing url arg" \
@@ -76,7 +66,7 @@ expect_stderr_contains() {
 
 # --- read-similar.sh ---
 (
-    unset OPENAI_API_KEY SUPABASE_URL SUPABASE_ANON_KEY
+    unset OPENAI_API_KEY BACKFLOW_API_BASE_URL BACKFLOW_API_KEY
     expect_stderr_contains "read-similar missing env" "OPENAI_API_KEY" \
         "$DIR/read-similar.sh" "hello"
     expect_exit_nonzero "read-similar missing env" \
@@ -85,27 +75,16 @@ expect_stderr_contains() {
 
 (
     export OPENAI_API_KEY=dummy
-    unset SUPABASE_URL SUPABASE_ANON_KEY
-    expect_stderr_contains "read-similar missing supabase" "SUPABASE_URL" \
+    unset BACKFLOW_API_BASE_URL BACKFLOW_API_KEY
+    expect_stderr_contains "read-similar missing api base url" "BACKFLOW_API_BASE_URL" \
         "$DIR/read-similar.sh" "hello"
-    expect_exit_nonzero "read-similar missing supabase" \
-        "$DIR/read-similar.sh" "hello"
-)
-
-(
-    export OPENAI_API_KEY=dummy
-    export SUPABASE_URL=https://example.supabase.co
-    unset SUPABASE_ANON_KEY
-    expect_stderr_contains "read-similar missing anon key" "SUPABASE_ANON_KEY" \
-        "$DIR/read-similar.sh" "hello"
-    expect_exit_nonzero "read-similar missing anon key" \
+    expect_exit_nonzero "read-similar missing api base url" \
         "$DIR/read-similar.sh" "hello"
 )
 
 (
     export OPENAI_API_KEY=dummy
-    export SUPABASE_URL=https://example.supabase.co
-    export SUPABASE_ANON_KEY=dummy
+    export BACKFLOW_API_BASE_URL=http://host.docker.internal:8080
     expect_stderr_contains "read-similar empty input" "empty" \
         bash -c "printf '' | '$DIR/read-similar.sh'"
     expect_exit_nonzero "read-similar empty input" \

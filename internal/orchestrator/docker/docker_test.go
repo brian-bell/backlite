@@ -256,54 +256,43 @@ func TestBuildRunCommand_CustomImage(t *testing.T) {
 	}
 }
 
-func TestBuildEnvFlags_ReadModeIncludesSupabase(t *testing.T) {
+func TestBuildEnvFlags_ReadModeIncludesInternalAPIBaseURL(t *testing.T) {
 	cfg := &config.Config{
-		SupabaseURL:     "https://test.supabase.co",
-		SupabaseAnonKey: "sb_publishable_test",
+		ListenAddr: ":8080",
 	}
 	dm := NewManager(cfg)
 	task := &models.Task{ID: "bf_01ABC", TaskMode: models.TaskModeRead}
 
 	joined := strings.Join(dm.buildEnvFlags(task), " ")
 
-	if !strings.Contains(joined, "-e SUPABASE_URL='https://test.supabase.co'") {
-		t.Errorf("flags should include SUPABASE_URL, got: %s", joined)
-	}
-	if !strings.Contains(joined, "-e SUPABASE_ANON_KEY='sb_publishable_test'") {
-		t.Errorf("flags should include SUPABASE_ANON_KEY, got: %s", joined)
+	if !strings.Contains(joined, "-e BACKFLOW_API_BASE_URL='http://host.docker.internal:8080'") {
+		t.Errorf("flags should include BACKFLOW_API_BASE_URL, got: %s", joined)
 	}
 }
 
-func TestBuildEnvFlags_NonReadModeOmitsSupabase(t *testing.T) {
+func TestBuildEnvFlags_NonReadModeOmitsInternalAPIBaseURL(t *testing.T) {
 	cfg := &config.Config{
-		SupabaseURL:     "https://test.supabase.co",
-		SupabaseAnonKey: "sb_publishable_test",
+		InternalAPIBaseURL: "http://host.docker.internal:8080",
 	}
 	dm := NewManager(cfg)
 	task := &models.Task{ID: "bf_01ABC", TaskMode: models.TaskModeCode}
 
 	joined := strings.Join(dm.buildEnvFlags(task), " ")
 
-	if strings.Contains(joined, "SUPABASE_URL") {
-		t.Errorf("flags should not include SUPABASE_URL for non-read mode, got: %s", joined)
-	}
-	if strings.Contains(joined, "SUPABASE_ANON_KEY") {
-		t.Errorf("flags should not include SUPABASE_ANON_KEY for non-read mode, got: %s", joined)
+	if strings.Contains(joined, "BACKFLOW_API_BASE_URL") {
+		t.Errorf("flags should not include BACKFLOW_API_BASE_URL for non-read mode, got: %s", joined)
 	}
 }
 
-func TestBuildEnvFlags_ReadModeMissingSupabaseConfig(t *testing.T) {
-	cfg := &config.Config{}
+func TestBuildEnvFlags_ReadModeFallsBackToHostGatewayURL(t *testing.T) {
+	cfg := &config.Config{ListenAddr: ":9090"}
 	dm := NewManager(cfg)
 	task := &models.Task{ID: "bf_01ABC", TaskMode: models.TaskModeRead}
 
 	joined := strings.Join(dm.buildEnvFlags(task), " ")
 
-	if strings.Contains(joined, "SUPABASE_URL") {
-		t.Errorf("flags should omit SUPABASE_URL when cfg is empty, got: %s", joined)
-	}
-	if strings.Contains(joined, "SUPABASE_ANON_KEY") {
-		t.Errorf("flags should omit SUPABASE_ANON_KEY when cfg is empty, got: %s", joined)
+	if !strings.Contains(joined, "BACKFLOW_API_BASE_URL") {
+		t.Errorf("flags should include BACKFLOW_API_BASE_URL when cfg is empty, got: %s", joined)
 	}
 }
 
@@ -370,6 +359,26 @@ func TestBuildSecretEnvPairs(t *testing.T) {
 	for missing := range want {
 		t.Errorf("missing secret pair: %s", missing)
 	}
+}
+
+func TestBuildSecretEnvPairs_IncludesBackflowAPIKey(t *testing.T) {
+	cfg := &config.Config{APIKey: "internal-secret"}
+	dm := NewManager(cfg)
+
+	pairs := dm.buildSecretEnvPairs(&models.Task{ID: "bf_01ABC"})
+
+	if !contains(pairs, "BACKFLOW_API_KEY=internal-secret") {
+		t.Fatalf("expected BACKFLOW_API_KEY in secret env pairs, got %v", pairs)
+	}
+}
+
+func contains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestBuildSecretEnvPairs_NoSecrets(t *testing.T) {

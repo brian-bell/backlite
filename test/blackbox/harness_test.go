@@ -5,6 +5,7 @@ package blackbox_test
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"fmt"
 	"net"
 	"net/http"
@@ -17,10 +18,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
+	_ "modernc.org/sqlite"
+
+	"github.com/backflow-labs/backflow/internal/store"
 )
 
 // Shared state initialized by TestMain and used by all tests.
@@ -29,8 +29,8 @@ var (
 	backflowBinaryPath string
 	client             *BackflowClient
 	listener           *WebhookListener
-	dbPool             *pgxpool.Pool
-	dbConnStr          string
+	dbPool             *sql.DB
+	dbPath             string
 	backflowCmd        *exec.Cmd
 	stderrBuf          *syncBuffer
 	repoRoot           string
@@ -90,33 +90,26 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	// --- Step 3: Start Postgres via testcontainers ---
-	fmt.Println("==> Starting Postgres testcontainer...")
-	pgContainer, err := postgres.Run(ctx, "pgvector/pgvector:pg16",
-		postgres.WithDatabase("backflow_blackbox"),
-		postgres.WithUsername("test"),
-		postgres.WithPassword("test"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(30*time.Second),
-		),
-	)
+	// --- Step 3: Create and migrate the SQLite test DB ---
+	dbPath = filepath.Join(repoRoot, "test", "blackbox", "backflow-blackbox-test.db")
+	_ = os.Remove(dbPath)
+	bootstrapStore, err := store.NewSQLite(ctx, dbPath, filepath.Join(repoRoot, "migrations"))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "start postgres container: %v\n", err)
+		fmt.Fprintf(os.Stderr, "create sqlite store: %v\n", err)
+		os.Exit(1)
+	}
+	if err := bootstrapStore.Close(); err != nil {
+		fmt.Fprintf(os.Stderr, "close bootstrap store: %v\n", err)
 		os.Exit(1)
 	}
 
-	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
+	dbPool, err = sql.Open("sqlite", dbPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "get connection string: %v\n", err)
+		fmt.Fprintf(os.Stderr, "open sqlite db: %v\n", err)
 		os.Exit(1)
 	}
-	dbConnStr = connStr
-
-	dbPool, err = pgxpool.New(ctx, connStr)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "create db pool: %v\n", err)
+	if _, err := dbPool.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
+		fmt.Fprintf(os.Stderr, "enable foreign keys: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -140,7 +133,7 @@ func TestMain(m *testing.M) {
 	backflowCmd.Dir = repoRoot
 	backflowCmd.Stdout = os.Stdout
 	backflowCmd.Stderr = stderrBuf
-	backflowCmd.Env = buildSubprocessEnv(port, connStr, listener.URL())
+	backflowCmd.Env = buildSubprocessEnv(port, dbPath, listener.URL())
 
 	if err := backflowCmd.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "start backflow subprocess: %v\n", err)
@@ -180,7 +173,7 @@ func TestMain(m *testing.M) {
 
 	listener.Close()
 	dbPool.Close()
-	pgContainer.Terminate(ctx)
+	_ = os.Remove(dbPath)
 
 	// Clean up test binary.
 	os.Remove(binaryPath)
@@ -190,12 +183,12 @@ func TestMain(m *testing.M) {
 
 // buildSubprocessEnv constructs a clean environment for the Backflow subprocess,
 // avoiding interference from inherited env vars (e.g., BACKFLOW_DISCORD_APP_ID).
-func buildSubprocessEnv(port int, connStr, webhookURL string) []string {
+func buildSubprocessEnv(port int, dbPath, webhookURL string) []string {
 	env := []string{
 		"BACKFLOW_POLL_INTERVAL_SEC=1",
 		"BACKFLOW_AGENT_IMAGE=backflow-fake-agent:test",
 		fmt.Sprintf("BACKFLOW_LISTEN_ADDR=:%d", port),
-		fmt.Sprintf("BACKFLOW_DATABASE_URL=%s", connStr),
+		fmt.Sprintf("BACKFLOW_DATABASE_PATH=%s", dbPath),
 		fmt.Sprintf("BACKFLOW_WEBHOOK_URL=%s", webhookURL),
 		"ANTHROPIC_API_KEY=sk-test-fake",
 		"BACKFLOW_CONTAINER_CPUS=1",
@@ -272,19 +265,25 @@ func resetBetweenTests(t *testing.T) {
 	// Truncate all tables. This removes any state from previous tests.
 	// NOTE: Keep this list in sync with migrations — add new tables here when
 	// new migrations introduce them.
-	_, err := dbPool.Exec(ctx,
-		"TRUNCATE tasks, instances, allowed_senders, api_keys, discord_installs, discord_task_threads CASCADE")
+	_, err := dbPool.ExecContext(ctx, `
+		DELETE FROM readings;
+		DELETE FROM api_keys;
+		DELETE FROM discord_task_threads;
+		DELETE FROM discord_installs;
+		DELETE FROM allowed_senders;
+		DELETE FROM instances;
+		DELETE FROM tasks;`)
 	if err != nil {
 		t.Fatalf("truncate tables: %v", err)
 	}
 
 	// Re-create the synthetic local instance. The orchestrator's initInstance()
 	// only runs at startup, so after truncation we must re-insert it manually.
-	_, err = dbPool.Exec(ctx, `
+	_, err = dbPool.ExecContext(ctx, `
 		INSERT INTO instances (instance_id, instance_type, status, max_containers, running_containers, created_at, updated_at)
-		VALUES ('local', 'local', 'running', 1, 0, NOW(), NOW())
+		VALUES ('local', 'local', 'running', 1, 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 		ON CONFLICT (instance_id) DO UPDATE
-		SET status = 'running', running_containers = 0, updated_at = NOW()`)
+		SET status = 'running', running_containers = 0, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`)
 	if err != nil {
 		t.Fatalf("re-create local instance: %v", err)
 	}
@@ -319,7 +318,7 @@ func waitForOrchestratorIdle(t *testing.T, timeout time.Duration) {
 // orchestratorState returns the number of non-terminal tasks and the synthetic
 // local instance's running container count.
 func orchestratorState(ctx context.Context) (int, int, error) {
-	rows, err := dbPool.Query(ctx, "SELECT id, status FROM tasks ORDER BY created_at ASC")
+	rows, err := dbPool.QueryContext(ctx, "SELECT id, status FROM tasks ORDER BY created_at ASC")
 	if err != nil {
 		return 0, 0, err
 	}
@@ -340,7 +339,7 @@ func orchestratorState(ctx context.Context) (int, int, error) {
 	}
 
 	var runningContainers int
-	if err := dbPool.QueryRow(ctx, "SELECT running_containers FROM instances WHERE instance_id = 'local'").Scan(&runningContainers); err != nil {
+	if err := dbPool.QueryRowContext(ctx, "SELECT running_containers FROM instances WHERE instance_id = 'local'").Scan(&runningContainers); err != nil {
 		return 0, 0, err
 	}
 

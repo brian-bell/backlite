@@ -1,5 +1,3 @@
-//go:build !nocontainers
-
 package api
 
 import (
@@ -11,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/backflow-labs/backflow/internal/config"
@@ -21,22 +18,9 @@ import (
 
 // outputTestServer creates a server rooted at a temp DataDir and returns
 // both the handler and the data dir so tests can seed output files.
-func outputTestServer(t *testing.T) (http.Handler, *store.PostgresStore, string) {
+func outputTestServer(t *testing.T) (http.Handler, *store.SQLiteStore, string) {
 	t.Helper()
-	ctx := context.Background()
-
-	if _, err := truncatePool.Exec(ctx, "TRUNCATE tasks, instances, allowed_senders, api_keys CASCADE"); err != nil {
-		t.Fatalf("truncate: %v", err)
-	}
-
-	_, thisFile, _, _ := runtime.Caller(0)
-	migrationsDir := filepath.Join(filepath.Dir(thisFile), "..", "..", "migrations")
-
-	s, err := store.NewPostgres(ctx, sharedConnStr, migrationsDir)
-	if err != nil {
-		t.Fatalf("NewPostgres: %v", err)
-	}
-	t.Cleanup(func() { s.Close() })
+	s := newTestStore(t)
 
 	dataDir := t.TempDir()
 
@@ -197,17 +181,7 @@ func TestGetTaskOutput_400_RejectsMalformedTaskID(t *testing.T) {
 }
 
 func TestGetTaskOutput_401_WhenBearerMissing(t *testing.T) {
-	ctx := context.Background()
-	if _, err := truncatePool.Exec(ctx, "TRUNCATE tasks, instances, allowed_senders, api_keys CASCADE"); err != nil {
-		t.Fatalf("truncate: %v", err)
-	}
-	_, thisFile, _, _ := runtime.Caller(0)
-	migrationsDir := filepath.Join(filepath.Dir(thisFile), "..", "..", "migrations")
-	s, err := store.NewPostgres(ctx, sharedConnStr, migrationsDir)
-	if err != nil {
-		t.Fatalf("NewPostgres: %v", err)
-	}
-	t.Cleanup(func() { s.Close() })
+	s := newTestStore(t)
 
 	cfg := &config.Config{
 		AnthropicAPIKey: "sk-test",

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -13,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	_ "modernc.org/sqlite"
 )
 
 func main() {
@@ -23,7 +24,7 @@ func main() {
 		taskInterval = flag.Duration("task-interval", 3*time.Second, "interval between task submissions")
 		apiURL       = flag.String("api-url", "http://localhost:8080", "Backflow API base URL")
 		agentImage   = flag.String("agent-image", "backflow-fake-agent:test", "agent image name for container counting")
-		databaseURL  = flag.String("database-url", os.Getenv("BACKFLOW_DATABASE_URL"), "PostgreSQL connection string (default: $BACKFLOW_DATABASE_URL)")
+		databasePath = flag.String("database-path", os.Getenv("BACKFLOW_DATABASE_PATH"), "SQLite database path (default: $BACKFLOW_DATABASE_PATH)")
 		maxRetries   = flag.Int("max-retries", 2, "max user retries (must match server BACKFLOW_MAX_USER_RETRIES)")
 	)
 	flag.Parse()
@@ -38,10 +39,10 @@ func main() {
 	pruneStaleContainers(*agentImage)
 
 	// Truncate the tasks table so counts from previous runs don't pollute metrics.
-	if *databaseURL != "" {
-		truncateTasks(*databaseURL)
+	if *databasePath != "" {
+		truncateTasks(*databasePath)
 	} else {
-		fmt.Println("  [warn] no --database-url or BACKFLOW_DATABASE_URL; skipping task table truncation")
+		fmt.Println("  [warn] no --database-path or BACKFLOW_DATABASE_PATH; skipping task table truncation")
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
@@ -207,8 +208,8 @@ func main() {
 	// --- Post-test cleanup ---
 	fmt.Println("\n==> Cleaning up...")
 	pruneStaleContainers(*agentImage)
-	if *databaseURL != "" {
-		truncateTasks(*databaseURL)
+	if *databasePath != "" {
+		truncateTasks(*databasePath)
 	}
 
 	if report.Pass {
@@ -288,19 +289,26 @@ func measureRSS(pid int) int64 {
 	return val
 }
 
-// truncateTasks connects to PostgreSQL and truncates the tasks table.
-func truncateTasks(databaseURL string) {
+// truncateTasks connects to SQLite and truncates task-related tables.
+func truncateTasks(databasePath string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	pool, err := pgxpool.New(ctx, databaseURL)
+	db, err := sql.Open("sqlite", databasePath)
 	if err != nil {
 		fmt.Printf("  [warn] failed to connect to database: %v\n", err)
 		return
 	}
-	defer pool.Close()
+	defer db.Close()
 
-	if _, err := pool.Exec(ctx, "TRUNCATE tasks CASCADE"); err != nil {
+	if _, err := db.ExecContext(ctx, `
+		DELETE FROM readings;
+		DELETE FROM discord_task_threads;
+		DELETE FROM discord_installs;
+		DELETE FROM allowed_senders;
+		DELETE FROM api_keys;
+		DELETE FROM instances;
+		DELETE FROM tasks;`); err != nil {
 		fmt.Printf("  [warn] failed to truncate tasks: %v\n", err)
 		return
 	}

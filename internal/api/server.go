@@ -37,6 +37,9 @@ func NewServer(s store.Store, cfg *config.Config, logs LogFetcher, bus notify.Em
 			r.Get("/{id}/output", h.GetTaskOutput)
 			r.Get("/{id}/output.json", h.GetTaskOutputJSON)
 		})
+
+		r.Get("/readings/lookup", h.LookupReading)
+		r.Post("/readings/similar", h.FindSimilarReadings)
 	})
 
 	return r

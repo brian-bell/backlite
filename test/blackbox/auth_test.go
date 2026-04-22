@@ -70,18 +70,23 @@ func seedAPIKey(t *testing.T, token string, permissions []string, expiresAt *tim
 	}
 
 	ctx := context.Background()
-	_, err = dbPool.Exec(ctx, `
+	_, err = dbPool.ExecContext(ctx, `
 		INSERT INTO api_keys (key_hash, name, permissions, expires_at, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, NOW(), NOW())
+		VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 		ON CONFLICT (key_hash) DO UPDATE SET
-			name = EXCLUDED.name,
-			permissions = EXCLUDED.permissions,
-			expires_at = EXCLUDED.expires_at,
-			updated_at = EXCLUDED.updated_at`,
+			name = excluded.name,
+			permissions = excluded.permissions,
+			expires_at = excluded.expires_at,
+			updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
 		hex.EncodeToString(hash[:]),
 		"blackbox",
-		perms,
-		expiresAt,
+		string(perms),
+		func() any {
+			if expiresAt == nil {
+				return nil
+			}
+			return expiresAt.UTC().Format(time.RFC3339Nano)
+		}(),
 	)
 	if err != nil {
 		t.Fatalf("seed api key: %v", err)
@@ -102,7 +107,7 @@ func startAuthBackflow(t *testing.T, envToken, healthToken string) (string, func
 	cmd.Dir = repoRoot
 	cmd.Stdout = nil
 	cmd.Stderr = stderr
-	cmd.Env = buildSubprocessEnv(port, dbConnStr, listener.URL())
+	cmd.Env = buildSubprocessEnv(port, dbPath, listener.URL())
 	if envToken != "" {
 		cmd.Env = append(cmd.Env, "BACKFLOW_API_KEY="+envToken)
 	}

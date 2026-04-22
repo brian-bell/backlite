@@ -70,21 +70,6 @@ jobs:
   fuzz:
     runs-on: ubuntu-latest
 
-    services:
-      postgres:
-        image: pgvector/pgvector:pg16
-        env:
-          POSTGRES_DB: backflow
-          POSTGRES_USER: backflow
-          POSTGRES_PASSWORD: backflow
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -99,7 +84,9 @@ jobs:
         run: go install github.com/pressly/goose/v3/cmd/goose@latest
 
       - name: Run migrations
-        run: goose -dir migrations postgres "postgres://backflow:backflow@localhost:5432/backflow?sslmode=disable" up
+        run: |
+          rm -f /tmp/backflow-ci.db
+          goose -dir migrations sqlite3 /tmp/backflow-ci.db up
 
       - name: Build
         run: go build -trimpath -o bin/backflow ./cmd/backflow
@@ -109,8 +96,7 @@ jobs:
           ./bin/backflow &
           echo $! > /tmp/backflow.pid
         env:
-          BACKFLOW_DATABASE_URL: "postgres://backflow:backflow@localhost:5432/backflow?sslmode=disable"
-          BACKFLOW_MODE: local
+          BACKFLOW_DATABASE_PATH: /tmp/backflow-ci.db
           ANTHROPIC_API_KEY: sk-ant-fuzz-placeholder-not-real
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

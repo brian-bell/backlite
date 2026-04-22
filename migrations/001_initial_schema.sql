@@ -3,19 +3,17 @@
 CREATE TABLE tasks (
     id               TEXT PRIMARY KEY,
     status           TEXT NOT NULL DEFAULT 'pending',
-    task_mode        TEXT NOT NULL DEFAULT 'code',
+    task_mode        TEXT NOT NULL DEFAULT 'auto',
     harness          TEXT NOT NULL DEFAULT 'claude_code',
-    repo_url         TEXT NOT NULL,
+    repo_url         TEXT NOT NULL DEFAULT '',
     branch           TEXT NOT NULL DEFAULT '',
     target_branch    TEXT NOT NULL DEFAULT '',
-    review_pr_url    TEXT NOT NULL DEFAULT '',
-    review_pr_number INTEGER NOT NULL DEFAULT 0,
     prompt           TEXT NOT NULL,
     context          TEXT NOT NULL DEFAULT '',
     model            TEXT NOT NULL DEFAULT '',
     effort           TEXT NOT NULL DEFAULT '',
-    max_budget_usd   DOUBLE PRECISION NOT NULL DEFAULT 0,
-    max_runtime_min  INTEGER NOT NULL DEFAULT 0,
+    max_budget_usd   REAL NOT NULL DEFAULT 0,
+    max_runtime_sec  INTEGER NOT NULL DEFAULT 0,
     max_turns        INTEGER NOT NULL DEFAULT 0,
     create_pr        BOOLEAN NOT NULL DEFAULT false,
     self_review      BOOLEAN NOT NULL DEFAULT false,
@@ -24,20 +22,24 @@ CREATE TABLE tasks (
     pr_body          TEXT NOT NULL DEFAULT '',
     pr_url           TEXT NOT NULL DEFAULT '',
     output_url       TEXT NOT NULL DEFAULT '',
-    allowed_tools    JSONB NOT NULL DEFAULT '[]',
+    allowed_tools    TEXT NOT NULL DEFAULT '[]',
     claude_md        TEXT NOT NULL DEFAULT '',
-    env_vars         JSONB NOT NULL DEFAULT '{}',
+    env_vars         TEXT NOT NULL DEFAULT '{}',
     instance_id      TEXT NOT NULL DEFAULT '',
     container_id     TEXT NOT NULL DEFAULT '',
     retry_count      INTEGER NOT NULL DEFAULT 0,
-    cost_usd         DOUBLE PRECISION NOT NULL DEFAULT 0,
+    user_retry_count INTEGER NOT NULL DEFAULT 0,
+    cost_usd         REAL NOT NULL DEFAULT 0,
     elapsed_time_sec INTEGER NOT NULL DEFAULT 0,
     error            TEXT NOT NULL DEFAULT '',
+    ready_for_retry  BOOLEAN NOT NULL DEFAULT false,
     reply_channel    TEXT NOT NULL DEFAULT '',
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-    started_at       TIMESTAMPTZ,
-    completed_at     TIMESTAMPTZ
+    agent_image      TEXT NOT NULL DEFAULT '',
+    force            BOOLEAN NOT NULL DEFAULT false,
+    created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    started_at       TEXT,
+    completed_at     TEXT
 );
 
 CREATE INDEX idx_tasks_status ON tasks(status);
@@ -51,8 +53,8 @@ CREATE TABLE instances (
     status             TEXT NOT NULL DEFAULT 'pending',
     max_containers     INTEGER NOT NULL DEFAULT 4,
     running_containers INTEGER NOT NULL DEFAULT 0,
-    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
 CREATE INDEX idx_instances_status ON instances(status);
@@ -60,9 +62,8 @@ CREATE INDEX idx_instances_status ON instances(status);
 CREATE TABLE allowed_senders (
     channel_type TEXT NOT NULL,
     address      TEXT NOT NULL,
-    default_repo TEXT NOT NULL DEFAULT '',
     enabled      BOOLEAN NOT NULL DEFAULT true,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     PRIMARY KEY (channel_type, address)
 );
 

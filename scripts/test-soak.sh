@@ -11,7 +11,7 @@ Exercises cancel, retry, retry limits, and mixed failure modes.
 Requires: BACKFLOW_CONTAINERS_PER_INSTANCE >= 4 (multi-step scenarios
 need concurrent container slots). Set BACKFLOW_AGENT_IMAGE=backflow-fake-agent.
 
-WARNING: This will TRUNCATE the tasks table in your database.
+WARNING: This will DELETE task data from your SQLite database.
 
 Options:
   --short              Run a short soak test (10 minutes)
@@ -36,13 +36,12 @@ if [ -f .env ]; then
 fi
 
 cat <<'WARNING'
-WARNING: The soak test will TRUNCATE the tasks table in your database.
+WARNING: The soak test will DELETE task data from your SQLite database.
 All existing task records will be deleted.
 WARNING
 
-if [ -n "${BACKFLOW_DATABASE_URL:-}" ]; then
-    # Show just the host/db portion, not credentials.
-    echo "  Database: ${BACKFLOW_DATABASE_URL%%\?*}" | sed 's|://[^@]*@|://***@|'
+if [ -n "${BACKFLOW_DATABASE_PATH:-}" ]; then
+    echo "  Database: ${BACKFLOW_DATABASE_PATH}"
 fi
 echo ""
 

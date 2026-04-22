@@ -352,6 +352,10 @@ func (s *mockStore) GetReadingByURL(_ context.Context, url string) (*models.Read
 	return &cp, nil
 }
 
+func (s *mockStore) FindSimilarReadings(_ context.Context, _ []float32, _ int) ([]store.ReadingMatch, error) {
+	return []store.ReadingMatch{}, nil
+}
+
 func (s *mockStore) Close() error { return nil }
 
 // --- Mock notifier ---

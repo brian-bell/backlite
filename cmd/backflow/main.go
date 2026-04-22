@@ -96,7 +96,7 @@ func main() {
 		log.Info().Str("log_file", cfg.LogFile).Msg("logging to file")
 	}
 
-	db, err := store.NewPostgres(context.Background(), cfg.DatabaseURL, "migrations")
+	db, err := store.NewSQLite(context.Background(), cfg.DatabasePath, "migrations")
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to open database")
 	}

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run schemathesis fuzz tests against the OpenAPI spec locally.
-# Starts a temporary Postgres, builds and runs the server, then fuzzes.
+# Creates a temporary SQLite database, builds and runs the server, then fuzzes.
 set -euo pipefail
 
 usage() {
@@ -9,10 +9,8 @@ Usage: $(basename "$0") [options]
 
 Run schemathesis fuzz tests against the Backflow OpenAPI spec.
 
-Starts a temporary Postgres container, builds and runs the server, then fuzzes
+Creates a temporary SQLite database, builds and runs the server, then fuzzes
 all endpoints using schemathesis.
-
-Prerequisites: Docker daemon must be running.
 
 Environment variables:
   MAX_EXAMPLES   Number of test examples per phase (default: 20)
@@ -33,24 +31,16 @@ esac
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-PG_CONTAINER="backflow-schema-test-pg"
-PG_PORT=5433
-DB_URL="postgres://backflow:backflow@localhost:${PG_PORT}/backflow?sslmode=disable"
+DB_PATH="$ROOT_DIR/.cache/backflow-schema-test.db"
 SERVER_PID=""
 
 cleanup() {
     echo ""
     echo "Cleaning up..."
     [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null && wait "$SERVER_PID" 2>/dev/null || true
-    docker rm -f "$PG_CONTAINER" 2>/dev/null || true
+    rm -f "$DB_PATH"
 }
 trap cleanup EXIT
-
-# --- Check prerequisites ---
-if ! command -v docker &>/dev/null; then
-    echo "error: docker not found" >&2
-    exit 1
-fi
 
 GOOSE="go run github.com/pressly/goose/v3/cmd/goose@latest"
 
@@ -64,36 +54,15 @@ if ! command -v schemathesis &>/dev/null; then
 fi
 SCHEMATHESIS="${SCHEMATHESIS:-$(command -v schemathesis 2>/dev/null || echo "$VENV_DIR/bin/schemathesis")}"
 
-# --- Start Postgres ---
-echo "Starting temporary Postgres on port ${PG_PORT}..."
-docker rm -f "$PG_CONTAINER" 2>/dev/null || true
-docker run -d --name "$PG_CONTAINER" \
-    -e POSTGRES_DB=backflow \
-    -e POSTGRES_USER=backflow \
-    -e POSTGRES_PASSWORD=backflow \
-    -p "${PG_PORT}:5432" \
-    pgvector/pgvector:pg16 >/dev/null
-
-echo "Waiting for Postgres..."
-for i in $(seq 1 15); do
-    if docker exec "$PG_CONTAINER" pg_isready -U backflow -q 2>/dev/null; then
-        break
-    fi
-    sleep 1
-done
-docker exec "$PG_CONTAINER" pg_isready -U backflow -q || { echo "Postgres did not start"; exit 1; }
-
-# --- Migrate ---
 echo "Running migrations..."
-$GOOSE -dir "$ROOT_DIR/migrations" postgres "$DB_URL" up
+rm -f "$DB_PATH"
+$GOOSE -dir "$ROOT_DIR/migrations" sqlite3 "$DB_PATH" up
 
-# --- Build & start server ---
 echo "Building..."
 (cd "$ROOT_DIR" && go build -trimpath -o bin/backflow ./cmd/backflow)
 
 echo "Starting server..."
-BACKFLOW_DATABASE_URL="$DB_URL" \
-BACKFLOW_MODE=local \
+BACKFLOW_DATABASE_PATH="$DB_PATH" \
 ANTHROPIC_API_KEY=sk-ant-fuzz-placeholder-not-real \
     "$ROOT_DIR/bin/backflow" &
 SERVER_PID=$!
@@ -107,7 +76,6 @@ for i in $(seq 1 15); do
 done
 curl -sf http://localhost:8080/health >/dev/null || { echo "Server did not start"; exit 1; }
 
-# --- Fuzz ---
 echo "Running schemathesis..."
 $SCHEMATHESIS run "$ROOT_DIR/api/openapi.yaml" \
     --url http://localhost:8080 \

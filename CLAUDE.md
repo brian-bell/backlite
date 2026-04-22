@@ -49,7 +49,7 @@ Single test: `go test ./internal/store/ -run TestCreateTask -v`
 
 Two goroutines: chi REST API on `:8080` + polling orchestrator (5s default). The orchestrator runs agent containers directly on the local Docker host; there is no mode switch.
 
-**Flow:** Client → API → PostgreSQL → Orchestrator → local Docker → Webhooks.
+**Flow:** Client → API → SQLite → Orchestrator → local Docker → Webhooks.
 
 ### API endpoints
 
@@ -69,12 +69,12 @@ Two goroutines: chi REST API on `:8080` + polling orchestrator (5s default). The
 
 - **api/** — chi router, handlers, JSON responses, `LogFetcher` interface, `NewTask` shared task-creation helper, `CancelTask` and `RetryTask` shared action helpers
 - **orchestrator/** — Poll loop (`orchestrator.go`), dispatch (`dispatch.go`), monitoring (`monitor.go`, including `handleReadingCompletion` for read-mode tasks), recovery (`recovery.go`). Subpackages: `docker/` (local Docker container management), `outputs/` (filesystem writer for agent logs + task metadata).
-- **store/** — `Store` interface + PostgreSQL (`pgxpool`, goose migrations). Includes `UpsertReading` / `GetReadingByURL` for the `readings` table.
+- **store/** — `Store` interface + SQLite (`database/sql`, goose migrations). Includes `UpsertReading` / `GetReadingByURL` / `FindSimilarReadings` for the `readings` table.
 - **models/** — `Task`, `Instance`, and `Reading` (+ `Connection`) structs with status enums. `Task.AgentImage` records which Docker image the orchestrator used (read tasks get `ReaderImage`, others get the default agent image). `FindFirstURL` / `InferReviewMode` auto-detect review mode when a prompt's first URL is a GitHub PR URL.
 - **embeddings/** — Thin `Embedder` interface (`Embed(ctx, text) ([]float32, error)`) with an `OpenAIEmbedder` HTTP client (no SDK). Used by the orchestrator to embed a reading's final TL;DR before writing the `readings` row.
-- **config/** — Env-var config (`BACKFLOW_*` prefix). `BACKFLOW_API_KEY` enables single-token API auth; otherwise `api_keys` in Postgres can back authenticated API/debug requests. `TaskDefaults(taskMode)` returns resolved defaults — for `read` mode it swaps in `ReaderImage` plus the `BACKFLOW_DEFAULT_READ_MAX_*` caps. `Apply(task, overrides)` fills zero-value fields using `*bool` overrides (nil = use default, non-nil = use pointed value)
+- **config/** — Env-var config (`BACKFLOW_*` prefix). `BACKFLOW_API_KEY` enables single-token API auth; otherwise `api_keys` in SQLite can back authenticated API/debug requests. `TaskDefaults(taskMode)` returns resolved defaults — for `read` mode it swaps in `ReaderImage` plus the `BACKFLOW_DEFAULT_READ_MAX_*` caps. `Apply(task, overrides)` fills zero-value fields using `*bool` overrides (nil = use default, non-nil = use pointed value)
 - **notify/** — `Notifier` interface, `WebhookNotifier` (HTTP POST, 3 retries, event filtering), `NoopNotifier`, `EventBus` (async fan-out delivery via buffered channel), `NewEvent` constructor with `EventOption` functional options (including `WithReading` for read-mode completion events). `Event` carries `TaskMode` plus optional reading fields (`TLDR`, `NoveltyVerdict`, `Tags`, `Connections`) populated only for read-task completion events.
-- **debug/** — `/debug/stats` handler: PID, uptime, running task count, pgxpool metrics
+- **debug/** — `/debug/stats` handler: PID, uptime, running task count, database handle metrics
 
 ### Fake agent (`test/blackbox/fake-agent/`)
 
@@ -117,19 +117,17 @@ The reading agent image and reader-side shell scripts live in `docker/reader/`:
 
 - `reader-entrypoint.sh` — Image entrypoint: runs the harness, extracts JSON via `reader_helpers.sh`, writes `status.json` via `status_writer.sh`.
 - `read-embed.sh` — Embeds text via OpenAI `text-embedding-3-small`. Used by the agent to embed a draft TL;DR for similarity search.
-- `read-similar.sh` — Semantic similarity search: embeds input text, calls the `reader.match_readings` RPC via PostgREST.
-- `read-lookup.sh` — Exact-URL duplicate check via PostgREST.
+- `read-similar.sh` — Semantic similarity search: embeds input text, calls Backflow's `/api/v1/readings/similar` endpoint.
+- `read-lookup.sh` — Exact-URL duplicate check via Backflow's `/api/v1/readings/lookup` endpoint.
 - `reader_helpers.sh` — JSON extraction helpers (pulls the first JSON object from the agent transcript).
 - `status_writer.sh` — Shared helper for writing `status.json`.
-
-See `docs/supabase-setup.md` for the PostgREST-backed similarity-search path the agent uses during its session.
 
 Reading-mode env vars:
 
 - `BACKFLOW_READER_IMAGE` — Docker image for reading-mode containers
 - `BACKFLOW_DEFAULT_READ_MAX_BUDGET` / `BACKFLOW_DEFAULT_READ_MAX_RUNTIME_SEC` / `BACKFLOW_DEFAULT_READ_MAX_TURNS` — Tighter defaults applied by `TaskDefaults("read")`
 - `OPENAI_API_KEY` — Required for the orchestrator's embeddings client (and for the reader container's `read-embed.sh`)
-- `SUPABASE_URL` / `SUPABASE_ANON_KEY` — Passed to reader containers for PostgREST similarity search (see `docs/supabase-setup.md`)
+- `BACKFLOW_INTERNAL_API_BASE_URL` — Optional override for the Backflow API base URL used by reader containers; defaults to `http://host.docker.internal:<listen-port>`
 
 The `tasks` table carries a `force` boolean column. REST callers can set `force` on `POST /api/v1/tasks`; `Force=true` bypasses the dispatch-time duplicate check and allows an existing reading row to be overwritten on completion.
 
@@ -154,7 +152,7 @@ PR comments include actual cost for `claude_code` (extracted from `total_cost_us
 ## API auth
 
 - `BACKFLOW_API_KEY` — Optional single bearer token for API and debug access in small deployments
-- `api_keys` — Postgres-backed bearer tokens with named scopes (`tasks:read`, `tasks:write`, `health:read`, `stats:read`) and optional expiration
+- `api_keys` — SQLite-backed bearer tokens with named scopes (`tasks:read`, `tasks:write`, `health:read`, `stats:read`) and optional expiration
 
 When API keys are configured, bearer auth applies to `/api/v1/*` and `/debug/stats`. Root `/health` remains public.
 
@@ -168,7 +166,7 @@ Do not record default values for config or env vars in documentation. Defaults c
 
 ## Input validation
 
-Environment variable keys passed via the `env_vars` field must match POSIX naming rules (`^[A-Za-z_][A-Za-z0-9_]*$`) and must not override reserved system keys (e.g. `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`, `TASK_ID`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`). See `reservedEnvVarKeys` in `internal/models/task.go` for the full list. All user-supplied text fields are validated to reject null bytes (PostgreSQL text columns reject them).
+Environment variable keys passed via the `env_vars` field must match POSIX naming rules (`^[A-Za-z_][A-Za-z0-9_]*$`) and must not override reserved system keys (e.g. `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`, `TASK_ID`, `BACKFLOW_API_KEY`, `BACKFLOW_API_BASE_URL`). See `reservedEnvVarKeys` in `internal/models/task.go` for the full list.
 
 Secrets (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GITHUB_TOKEN`) are passed via `--env-file` rather than inline in the `docker run` command string so they stay out of process listings and `docker inspect`.
 
@@ -182,7 +180,7 @@ Secrets (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GITHUB_TOKEN`) are passed via `
 
 ## Database
 
-PostgreSQL via Supabase (session pooler). Tables: `tasks`, `instances`, `allowed_senders`, `api_keys`, `readings`. See `docs/schema.md` for the full column-level schema. Migrations are managed by [goose](https://github.com/pressly/goose) and live in `migrations/`. The store implementation is in `internal/store/postgres.go` using `pgxpool`. Set `BACKFLOW_DATABASE_URL` to the Supabase session pooler connection string.
+SQLite. Tables: `tasks`, `instances`, `allowed_senders`, `api_keys`, `readings`. See `docs/schema.md` for the full column-level schema. Migrations are managed by [goose](https://github.com/pressly/goose) and live in `migrations/`. The store implementation is in `internal/store/sqlite.go` using `database/sql`. Set `BACKFLOW_DATABASE_PATH` to the local database path.
 
 Migration workflow:
 
@@ -198,4 +196,3 @@ Create new migrations in `migrations/` with the next numeric prefix, `-- +goose 
 
 Additional docs in `docs/`:
 - `schema.md` — Database schema (tables, columns, indexes, status lifecycles)
-- `supabase-setup.md` — Supabase project setup, `readings` table, `reader` schema for PostgREST, and the publishable-key model used by the reader container

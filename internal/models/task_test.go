@@ -203,13 +203,13 @@ func TestCreateTaskRequestValidation(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "reserved env var key SUPABASE_URL",
-			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"SUPABASE_URL": "https://evil.supabase.co"}},
+			name:    "reserved env var key BACKFLOW_API_KEY",
+			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"BACKFLOW_API_KEY": "secret"}},
 			wantErr: true,
 		},
 		{
-			name:    "reserved env var key SUPABASE_ANON_KEY",
-			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"SUPABASE_ANON_KEY": "sb_publishable_attacker"}},
+			name:    "reserved env var key BACKFLOW_API_BASE_URL",
+			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"BACKFLOW_API_BASE_URL": "http://evil.internal"}},
 			wantErr: true,
 		},
 		{

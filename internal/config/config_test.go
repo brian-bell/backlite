@@ -6,25 +6,27 @@ import (
 	"time"
 )
 
-func TestLoad_MissingDatabaseURL(t *testing.T) {
-	// Set minimum env vars to pass earlier validations
+func setBaseEnv(t *testing.T) {
+	t.Helper()
 	t.Setenv("ANTHROPIC_API_KEY", "test-key")
-	t.Setenv("BACKFLOW_DATABASE_URL", "")
+	t.Setenv("BACKFLOW_DATABASE_PATH", "/tmp/backflow-test.db")
+}
 
-	_, err := Load()
-	if err == nil {
-		t.Fatal("expected error when BACKFLOW_DATABASE_URL is empty, got nil")
+func TestLoad_UsesDefaultDatabasePath(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "test-key")
+	t.Setenv("BACKFLOW_DATABASE_PATH", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
 	}
-
-	want := "BACKFLOW_DATABASE_URL"
-	if !strings.Contains(err.Error(), want) {
-		t.Errorf("error should mention %q, got: %s", want, err.Error())
+	if cfg.DatabasePath != "./backflow.db" {
+		t.Fatalf("DatabasePath = %q, want ./backflow.db", cfg.DatabasePath)
 	}
 }
 
 func TestLoad_DefaultModel(t *testing.T) {
-	t.Setenv("ANTHROPIC_API_KEY", "test-key")
-	t.Setenv("BACKFLOW_DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	setBaseEnv(t)
 
 	cfg, err := Load()
 	if err != nil {
@@ -40,8 +42,7 @@ func TestLoad_DefaultModel(t *testing.T) {
 }
 
 func TestLoad_APIKey(t *testing.T) {
-	t.Setenv("ANTHROPIC_API_KEY", "test-key")
-	t.Setenv("BACKFLOW_DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	setBaseEnv(t)
 	t.Setenv("BACKFLOW_API_KEY", "api-secret")
 
 	cfg, err := Load()
@@ -54,8 +55,7 @@ func TestLoad_APIKey(t *testing.T) {
 }
 
 func TestLoad_DataDir_Default(t *testing.T) {
-	t.Setenv("ANTHROPIC_API_KEY", "test-key")
-	t.Setenv("BACKFLOW_DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	setBaseEnv(t)
 
 	cfg, err := Load()
 	if err != nil {
@@ -67,8 +67,7 @@ func TestLoad_DataDir_Default(t *testing.T) {
 }
 
 func TestLoad_DataDir_Set(t *testing.T) {
-	t.Setenv("ANTHROPIC_API_KEY", "test-key")
-	t.Setenv("BACKFLOW_DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	setBaseEnv(t)
 	t.Setenv("BACKFLOW_DATA_DIR", "/var/lib/backflow")
 
 	cfg, err := Load()
@@ -81,8 +80,7 @@ func TestLoad_DataDir_Set(t *testing.T) {
 }
 
 func TestLoad_LogFile_DefaultEmpty(t *testing.T) {
-	t.Setenv("ANTHROPIC_API_KEY", "test-key")
-	t.Setenv("BACKFLOW_DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	setBaseEnv(t)
 
 	cfg, err := Load()
 	if err != nil {
@@ -94,8 +92,7 @@ func TestLoad_LogFile_DefaultEmpty(t *testing.T) {
 }
 
 func TestLoad_LogFile_Set(t *testing.T) {
-	t.Setenv("ANTHROPIC_API_KEY", "test-key")
-	t.Setenv("BACKFLOW_DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	setBaseEnv(t)
 	t.Setenv("BACKFLOW_LOG_FILE", "/tmp/backflow.log")
 
 	cfg, err := Load()
@@ -108,14 +105,12 @@ func TestLoad_LogFile_Set(t *testing.T) {
 }
 
 func TestLoad_ReaderConfig(t *testing.T) {
-	t.Setenv("ANTHROPIC_API_KEY", "test-key")
-	t.Setenv("BACKFLOW_DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	setBaseEnv(t)
 	t.Setenv("BACKFLOW_READER_IMAGE", "backflow-reader:v1")
 	t.Setenv("BACKFLOW_DEFAULT_READ_MAX_BUDGET", "0.5")
 	t.Setenv("BACKFLOW_DEFAULT_READ_MAX_RUNTIME_SEC", "300")
 	t.Setenv("BACKFLOW_DEFAULT_READ_MAX_TURNS", "20")
-	t.Setenv("SUPABASE_URL", "https://test.supabase.co")
-	t.Setenv("SUPABASE_ANON_KEY", "sb_publishable_test")
+	t.Setenv("BACKFLOW_INTERNAL_API_BASE_URL", "http://host.docker.internal:8080")
 
 	cfg, err := Load()
 	if err != nil {
@@ -133,17 +128,13 @@ func TestLoad_ReaderConfig(t *testing.T) {
 	if cfg.DefaultReadMaxTurns != 20 {
 		t.Errorf("DefaultReadMaxTurns = %d, want %d", cfg.DefaultReadMaxTurns, 20)
 	}
-	if cfg.SupabaseURL != "https://test.supabase.co" {
-		t.Errorf("SupabaseURL = %q, want %q", cfg.SupabaseURL, "https://test.supabase.co")
-	}
-	if cfg.SupabaseAnonKey != "sb_publishable_test" {
-		t.Errorf("SupabaseAnonKey = %q, want %q", cfg.SupabaseAnonKey, "sb_publishable_test")
+	if cfg.InternalAPIBaseURL != "http://host.docker.internal:8080" {
+		t.Errorf("InternalAPIBaseURL = %q", cfg.InternalAPIBaseURL)
 	}
 }
 
 func TestLoad_ReaderConfig_UnsetDefaults(t *testing.T) {
-	t.Setenv("ANTHROPIC_API_KEY", "test-key")
-	t.Setenv("BACKFLOW_DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	setBaseEnv(t)
 
 	cfg, err := Load()
 	if err != nil {
@@ -161,26 +152,18 @@ func TestLoad_ReaderConfig_UnsetDefaults(t *testing.T) {
 	if cfg.DefaultReadMaxTurns != 0 {
 		t.Errorf("DefaultReadMaxTurns = %d, want 0 when unset", cfg.DefaultReadMaxTurns)
 	}
-	if cfg.SupabaseURL != "" {
-		t.Errorf("SupabaseURL = %q, want empty when unset", cfg.SupabaseURL)
-	}
-	if cfg.SupabaseAnonKey != "" {
-		t.Errorf("SupabaseAnonKey = %q, want empty when unset", cfg.SupabaseAnonKey)
+	if cfg.InternalAPIBaseURL != "" {
+		t.Errorf("InternalAPIBaseURL = %q, want empty when unset", cfg.InternalAPIBaseURL)
 	}
 }
 
-// setReaderEnv populates every required read-mode env var. Individual
-// "missing X" tests unset one var after calling this helper.
 func setReaderEnv(t *testing.T) {
 	t.Helper()
-	t.Setenv("ANTHROPIC_API_KEY", "test-key")
-	t.Setenv("BACKFLOW_DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	setBaseEnv(t)
 	t.Setenv("BACKFLOW_READER_IMAGE", "backflow-reader:v1")
 	t.Setenv("BACKFLOW_DEFAULT_READ_MAX_BUDGET", "0.5")
 	t.Setenv("BACKFLOW_DEFAULT_READ_MAX_RUNTIME_SEC", "300")
 	t.Setenv("BACKFLOW_DEFAULT_READ_MAX_TURNS", "20")
-	t.Setenv("SUPABASE_URL", "https://test.supabase.co")
-	t.Setenv("SUPABASE_ANON_KEY", "sb_publishable_test")
 }
 
 func TestLoad_ReaderImage_RequiresReadMaxBudget(t *testing.T) {
@@ -218,32 +201,6 @@ func TestLoad_ReaderImage_RequiresReadMaxTurns(t *testing.T) {
 		t.Fatal("expected error when BACKFLOW_DEFAULT_READ_MAX_TURNS is unset with reader image")
 	}
 	if !strings.Contains(err.Error(), "BACKFLOW_DEFAULT_READ_MAX_TURNS") {
-		t.Errorf("error should name the missing env var, got: %v", err)
-	}
-}
-
-func TestLoad_ReaderImage_RequiresSupabaseURL(t *testing.T) {
-	setReaderEnv(t)
-	t.Setenv("SUPABASE_URL", "")
-
-	_, err := Load()
-	if err == nil {
-		t.Fatal("expected error when SUPABASE_URL is unset with reader image")
-	}
-	if !strings.Contains(err.Error(), "SUPABASE_URL") {
-		t.Errorf("error should name the missing env var, got: %v", err)
-	}
-}
-
-func TestLoad_ReaderImage_RequiresSupabaseAnonKey(t *testing.T) {
-	setReaderEnv(t)
-	t.Setenv("SUPABASE_ANON_KEY", "")
-
-	_, err := Load()
-	if err == nil {
-		t.Fatal("expected error when SUPABASE_ANON_KEY is unset with reader image")
-	}
-	if !strings.Contains(err.Error(), "SUPABASE_ANON_KEY") {
 		t.Errorf("error should name the missing env var, got: %v", err)
 	}
 }

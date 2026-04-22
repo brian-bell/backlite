@@ -1,5 +1,5 @@
 -- +goose Up
-ALTER TABLE tasks DROP COLUMN IF EXISTS review_pr_url;
+SELECT 1;
 
 -- +goose Down
-ALTER TABLE tasks ADD COLUMN review_pr_url TEXT NOT NULL DEFAULT '';
+SELECT 1;

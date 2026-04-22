@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 
@@ -100,6 +101,7 @@ func (m *Manager) GetLogs(ctx context.Context, instanceID, containerID string, t
 func (m *Manager) buildRunCommand(task *models.Task, envFilePath string) string {
 	envFlags := m.buildEnvFlags(task)
 	volumeFlags := m.buildVolumeFlags()
+	networkFlags := m.buildNetworkFlags(task)
 	envFileFlag := ""
 	if envFilePath != "" {
 		envFileFlag = "--env-file " + envFilePath
@@ -111,11 +113,12 @@ func (m *Manager) buildRunCommand(task *models.Task, envFilePath string) string 
 	}
 
 	return fmt.Sprintf(
-		"docker run -d --cpus=%d --memory=%dg %s %s %s %s",
+		"docker run -d --cpus=%d --memory=%dg %s %s %s %s %s",
 		m.config.ContainerCPUs,
 		m.config.ContainerMemGB,
 		envFileFlag,
 		volumeFlags,
+		networkFlags,
 		strings.Join(envFlags, " "),
 		image,
 	)
@@ -155,14 +158,7 @@ func (m *Manager) buildEnvFlags(task *models.Task) []string {
 	}
 
 	if task.TaskMode == models.TaskModeRead {
-		// SUPABASE_ANON_KEY is a low-privilege publishable JWT (RLS-scoped SELECT only),
-		// so it's passed via -e rather than --env-file.
-		if m.config.SupabaseURL != "" {
-			flags = append(flags, envFlag("SUPABASE_URL", shellEscape(m.config.SupabaseURL)))
-		}
-		if m.config.SupabaseAnonKey != "" {
-			flags = append(flags, envFlag("SUPABASE_ANON_KEY", shellEscape(m.config.SupabaseAnonKey)))
-		}
+		flags = append(flags, envFlag("BACKFLOW_API_BASE_URL", shellEscape(m.internalAPIBaseURL())))
 	}
 
 	for k, v := range task.EnvVars {
@@ -186,6 +182,9 @@ func (m *Manager) buildSecretEnvPairs(task *models.Task) []string {
 	}
 	if m.config.GitHubToken != "" {
 		pairs = append(pairs, "GITHUB_TOKEN="+m.config.GitHubToken)
+	}
+	if m.config.APIKey != "" {
+		pairs = append(pairs, "BACKFLOW_API_KEY="+m.config.APIKey)
 	}
 	return pairs
 }
@@ -216,6 +215,38 @@ func writeEnvFile(pairs []string) (string, error) {
 // Currently returns empty; reserved for future use.
 func (m *Manager) buildVolumeFlags() string {
 	return ""
+}
+
+func (m *Manager) buildNetworkFlags(task *models.Task) string {
+	if task.TaskMode != models.TaskModeRead {
+		return ""
+	}
+	return "--add-host host.docker.internal:host-gateway"
+}
+
+func (m *Manager) internalAPIBaseURL() string {
+	if m.config.InternalAPIBaseURL != "" {
+		return m.config.InternalAPIBaseURL
+	}
+	host, port := splitListenAddr(m.config.ListenAddr)
+	if host == "" || host == "0.0.0.0" || host == "::" || host == "localhost" || host == "127.0.0.1" {
+		host = "host.docker.internal"
+	}
+	return "http://" + net.JoinHostPort(host, port)
+}
+
+func splitListenAddr(addr string) (string, string) {
+	if addr == "" {
+		return "host.docker.internal", "8080"
+	}
+	if strings.HasPrefix(addr, ":") {
+		return "", strings.TrimPrefix(addr, ":")
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "host.docker.internal", "8080"
+	}
+	return host, port
 }
 
 // envFlag returns a single "-e KEY=VALUE" flag string.

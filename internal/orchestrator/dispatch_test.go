@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backflow-labs/backflow/internal/config"
 	"github.com/backflow-labs/backflow/internal/models"
 	"github.com/backflow-labs/backflow/internal/notify"
 )
@@ -137,60 +136,6 @@ func TestReleaseSlot_PreventsNegativeContainers(t *testing.T) {
 	if inst.RunningContainers != 0 {
 		t.Errorf("RunningContainers = %d, want 0 (should not go negative)", inst.RunningContainers)
 	}
-}
-
-func TestMarkInstanceTerminated(t *testing.T) {
-	s := newMockStore()
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:        "i-abc",
-		Status:            models.InstanceStatusRunning,
-		MaxContainers:     4,
-		RunningContainers: 2,
-	})
-
-	bus, _ := newTestBus()
-	defer bus.Close()
-	o := newTestOrchestrator(s, bus)
-
-	o.markInstanceTerminated(context.Background(), "i-abc")
-
-	inst, _ := s.GetInstance(context.Background(), "i-abc")
-	if inst.Status != models.InstanceStatusTerminated {
-		t.Errorf("status = %q, want terminated", inst.Status)
-	}
-	if inst.RunningContainers != 0 {
-		t.Errorf("RunningContainers = %d, want 0", inst.RunningContainers)
-	}
-}
-
-func TestMarkInstanceTerminated_AlreadyTerminated(t *testing.T) {
-	s := newMockStore()
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:        "i-abc",
-		Status:            models.InstanceStatusTerminated,
-		MaxContainers:     4,
-		RunningContainers: 0,
-	})
-
-	bus, _ := newTestBus()
-	defer bus.Close()
-	o := newTestOrchestrator(s, bus)
-
-	// Should be a no-op, not panic
-	o.markInstanceTerminated(context.Background(), "i-abc")
-
-	inst, _ := s.GetInstance(context.Background(), "i-abc")
-	if inst.Status != models.InstanceStatusTerminated {
-		t.Errorf("status = %q, want terminated", inst.Status)
-	}
-}
-
-func TestMarkInstanceTerminated_EmptyID(t *testing.T) {
-	bus, _ := newTestBus()
-	defer bus.Close()
-	o := newTestOrchestrator(newMockStore(), bus)
-	// Should not panic
-	o.markInstanceTerminated(context.Background(), "")
 }
 
 // --- dispatchPending tests ---
@@ -481,42 +426,6 @@ func TestDispatch_ReadTask_OrchestratorMissingReaderImage_Fails(t *testing.T) {
 	}
 	if got.Status == models.TaskStatusRunning {
 		t.Errorf("task should not be running, got %q", got.Status)
-	}
-}
-
-// TestDispatch_ReadTask_Fargate_MissingReaderTaskDefinition_Fails guards the
-// fargate-mode equivalent of the above check.
-func TestDispatch_ReadTask_Fargate_MissingReaderTaskDefinition_Fails(t *testing.T) {
-	s := newMockStore()
-	s.CreateInstance(context.Background(), newLocalInstance())
-	task := &models.Task{
-		ID:         "bf_read_fargate_no_reader_td",
-		Status:     models.TaskStatusPending,
-		TaskMode:   models.TaskModeRead,
-		Prompt:     "https://example.com/post",
-		AgentImage: "backflow-reader",
-	}
-	s.CreateTask(context.Background(), task)
-
-	bus, _ := newTestBus()
-	defer bus.Close()
-	mock := &mockDockerManager{
-		runAgentID:     "cont-should-not-run",
-		inspectResults: map[string]ContainerStatus{},
-	}
-	o := newTestOrchestrator(s, bus, withDocker(mock), withEmbedder(&mockEmbedder{}))
-	// Fargate mode with a reader image but no reader task definition.
-	o.config.Mode = config.ModeFargate
-	o.config.ReaderImage = "backflow-reader"
-	o.config.ECSReaderTaskDefinition = ""
-
-	task, _ = s.GetTask(context.Background(), "bf_read_fargate_no_reader_td")
-	err := o.dispatch(context.Background(), task)
-	if err == nil {
-		t.Fatal("expected error when fargate orchestrator lacks reader task definition")
-	}
-	if !strings.Contains(err.Error(), "BACKFLOW_ECS_READER_TASK_DEFINITION") {
-		t.Errorf("error = %q, want mention of BACKFLOW_ECS_READER_TASK_DEFINITION", err.Error())
 	}
 }
 

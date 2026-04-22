@@ -9,7 +9,6 @@ import (
 	"github.com/oklog/ulid/v2"
 	"github.com/rs/zerolog/log"
 
-	"github.com/backflow-labs/backflow/internal/config"
 	"github.com/backflow-labs/backflow/internal/models"
 	"github.com/backflow-labs/backflow/internal/notify"
 	"github.com/backflow-labs/backflow/internal/store"
@@ -80,7 +79,6 @@ func (o *Orchestrator) monitorRunning(ctx context.Context) {
 			o.saveAgentOutput(ctx, task)
 			o.handleCompletion(ctx, task, status)
 			o.saveOutputMetadata(ctx, task)
-			o.saveTaskMetadata(ctx, task)
 		}
 	}
 }
@@ -332,8 +330,8 @@ func (o *Orchestrator) saveOutputMetadata(ctx context.Context, task *models.Task
 	log.Debug().Str("task_id", task.ID).Msg("saved output metadata")
 }
 
-// taskMetadata is the subset of task fields written to S3 after completion.
-// It excludes potentially sensitive fields like EnvVars and ClaudeMD.
+// taskMetadata is the subset of task fields written to disk (task.json) after
+// completion. It excludes potentially sensitive fields like EnvVars and ClaudeMD.
 type taskMetadata struct {
 	ID            string            `json:"id"`
 	Status        models.TaskStatus `json:"status"`
@@ -358,30 +356,6 @@ type taskMetadata struct {
 	CreatedAt     time.Time         `json:"created_at"`
 	StartedAt     *time.Time        `json:"started_at,omitempty"`
 	CompletedAt   *time.Time        `json:"completed_at,omitempty"`
-}
-
-// saveTaskMetadata uploads a JSON summary of the completed task to S3,
-// stored alongside the agent output under tasks/{taskID}/task_metadata.json.
-func (o *Orchestrator) saveTaskMetadata(ctx context.Context, task *models.Task) {
-	if o.s3 == nil {
-		return
-	}
-
-	meta := taskMetadataFrom(task)
-	data, err := json.MarshalIndent(meta, "", "  ")
-	if err != nil {
-		log.Warn().Err(err).Str("task_id", task.ID).Msg("failed to marshal task metadata")
-		return
-	}
-
-	key := fmt.Sprintf("tasks/%s/task_metadata.json", task.ID)
-	_, err = o.s3.UploadJSON(ctx, key, data)
-	if err != nil {
-		log.Warn().Err(err).Str("task_id", task.ID).Msg("failed to upload task metadata to S3")
-		return
-	}
-
-	log.Debug().Str("task_id", task.ID).Msg("saved task metadata to S3")
 }
 
 // taskMetadataFrom projects a task row onto the external taskMetadata shape.
@@ -457,16 +431,11 @@ func (o *Orchestrator) killTask(ctx context.Context, task *models.Task, reason s
 }
 
 // requeueTask resets a running task back to pending so it will be dispatched
-// to a different instance. It also marks the old instance as terminated.
+// to a fresh container on the next tick.
 func (o *Orchestrator) requeueTask(ctx context.Context, task *models.Task, reason string) {
-	if task.InstanceID != "" && o.config.Mode == config.ModeEC2 {
-		o.markInstanceTerminated(ctx, task.InstanceID)
-	}
 	o.decrementRunning()
 
 	if err := o.store.RequeueTask(ctx, task.ID, reason); err != nil {
 		log.Error().Err(err).Str("task_id", task.ID).Msg("failed to re-queue task")
 	}
-
-	o.scaler.RequestScaleUp(ctx)
 }

@@ -6,25 +6,19 @@ set -euo pipefail
 #          launch template (EC2 mode), ECS cluster + agent and reader task
 #          definitions (Fargate mode), and GitHub Actions OIDC provider + CI
 #          deploy role
+#
+# Resource identifiers live in aws-resource-names.sh so teardown-aws.sh can
+# source the same names.
 
 # Disable the AWS CLI v2 pager so every aws call runs non-interactively.
 export AWS_PAGER=""
 
-REGION="${AWS_REGION:-us-east-1}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=aws-resource-names.sh
+. "$SCRIPT_DIR/aws-resource-names.sh"
+
 GITHUB_REPO="${BACKFLOW_GITHUB_REPO:-}"  # e.g. "org/repo"
-ECR_REPO="backflow-agent"
-READER_ECR_REPO="backflow-reader"
-CI_ROLE="backflow-ci-deploy"
-IAM_ROLE="backflow-ec2-role"
-SG_NAME="backflow-agent-sg"
-LT_NAME="backflow-agent-lt"
 INSTANCE_TYPE="${BACKFLOW_INSTANCE_TYPE:-m7g.xlarge}"
-ECS_CLUSTER="backflow"
-ECS_CONTAINER_NAME="backflow-agent"
-READER_TASK_FAMILY="backflow-reader"
-CW_LOG_GROUP="/ecs/backflow"
-ECS_EXECUTION_ROLE="backflow-ecs-execution-role"
-ECS_TASK_ROLE="backflow-ecs-task-role"
 
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 
@@ -172,7 +166,7 @@ CIEOF
 CIECREOF
 )
 
-    CI_POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/backflow-ci-ecr-push"
+    CI_POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/${CI_POLICY_NAME}"
     if aws iam get-policy --policy-arn "$CI_POLICY_ARN" 2>/dev/null; then
         echo "    CI ECR policy already exists, creating new version..."
         aws iam create-policy-version \
@@ -181,7 +175,7 @@ CIECREOF
             --set-as-default
     else
         aws iam create-policy \
-            --policy-name "backflow-ci-ecr-push" \
+            --policy-name "$CI_POLICY_NAME" \
             --policy-document "$CI_ECR_POLICY"
     fi
 
@@ -276,7 +270,7 @@ aws ec2 revoke-security-group-ingress \
 echo "    Security group: ${SG_ID}"
 
 # --- S3 Bucket (task data: agent output, offloaded config) ---
-S3_BUCKET="backflow-data-${ACCOUNT_ID}-${REGION}"
+S3_BUCKET="$(s3_bucket_name "$ACCOUNT_ID" "$REGION")"
 echo "==> Creating S3 bucket for task data..."
 if aws s3api head-bucket --bucket "$S3_BUCKET" --region "$REGION" 2>/dev/null; then
     echo "    S3 bucket already exists"
@@ -316,7 +310,7 @@ aws s3api put-bucket-lifecycle-configuration --bucket "$S3_BUCKET" \
 echo "    S3 bucket: ${S3_BUCKET} (lifecycle: 7-day expiration)"
 
 # Add S3 policy to IAM role
-S3_POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/backflow-s3-output"
+S3_POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/${S3_POLICY_NAME}"
 S3_POLICY=$(cat <<POLICYEOF
 {
   "Version": "2012-10-17",
@@ -349,7 +343,7 @@ if aws iam get-policy --policy-arn "$S3_POLICY_ARN" 2>/dev/null; then
         --set-as-default
 else
     aws iam create-policy \
-        --policy-name "backflow-s3-output" \
+        --policy-name "$S3_POLICY_NAME" \
         --policy-document "$S3_POLICY"
 fi
 
@@ -605,7 +599,6 @@ echo "    Reader task definition: ${READER_TASK_DEF_ARN}"
 # discoverable. Skipped unless BACKFLOW_PROVISION_FLY_USER=1.
 
 if [ "${BACKFLOW_PROVISION_FLY_USER:-0}" = "1" ]; then
-    FLY_USER="backflow-fly"
     echo "==> Creating IAM user for Fly.io deployment..."
     if aws iam get-user --user-name "$FLY_USER" &>/dev/null; then
         echo "    IAM user already exists, updating policy..."
@@ -673,7 +666,7 @@ FLYEOF
 
     aws iam put-user-policy \
         --user-name "$FLY_USER" \
-        --policy-name "${FLY_USER}-policy" \
+        --policy-name "$FLY_USER_POLICY" \
         --policy-document "$FLY_POLICY"
 
     echo "    IAM user: ${FLY_USER}"

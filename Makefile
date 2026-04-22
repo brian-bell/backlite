@@ -1,10 +1,10 @@
 .PHONY: build run test clean lint \
-       docker-agent-build docker-agent-build-local docker-agent-push docker-agent-deploy \
-       docker-reader-build docker-reader-build-local docker-reader-push docker-reader-deploy \
-       docker-server-build docker-server-build-local docker-server-deploy \
+       docker-agent-build docker-agent-build-local \
+       docker-reader-build docker-reader-build-local \
+       docker-server-build docker-server-build-local \
        docker-fake-agent-build test-fake-agent test-blackbox test-schema test-soak \
        db-pending db-provisioning db-running db-completed db-failed db-interrupted db-cancelled db-recovering \
-       setup-aws deps test-docker-status-writer test-reader-status-writer \
+       teardown-aws deps test-docker-status-writer test-reader-status-writer \
        test-reader-scripts
 
 BINARY := backflow
@@ -23,10 +23,6 @@ build:
 run: build
 	@set -e; \
 	if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
-	if command -v aws >/dev/null 2>&1 && ! aws sts get-caller-identity >/dev/null 2>&1; then \
-		echo "AWS credentials are missing or expired; running aws login"; \
-		aws login; \
-	fi; \
 	./bin/$(BINARY)
 
 test:
@@ -72,24 +68,6 @@ docker-agent-build:
 docker-agent-build-local:
 	$(DOCKER) build -t backflow-agent docker/agent/
 
-docker-agent-push:
-	@echo "Usage: make docker-agent-push REGISTRY=<ecr-uri>"
-	$(DOCKER) tag backflow-agent $(REGISTRY):latest
-	$(DOCKER) push $(REGISTRY):latest
-
-docker-agent-deploy:
-	@$(ENV); \
-	ACCOUNT_ID=$$(aws sts get-caller-identity --query Account --output text) && \
-	REGION=$${AWS_REGION:-us-east-1} && \
-	ECR=$$ACCOUNT_ID.dkr.ecr.$$REGION.amazonaws.com && \
-	aws ecr get-login-password --region $$REGION | $(DOCKER) login --username AWS --password-stdin $$ECR && \
-	$(DOCKER) buildx build \
-		--platform linux/amd64,linux/arm64 \
-		-t $$ECR/backflow-agent:latest \
-		--push \
-		docker/agent/ && \
-	echo "Pushed to $$ECR/backflow-agent:latest"
-
 docker-reader-build:
 	$(DOCKER) buildx build \
 		--platform linux/amd64,linux/arm64 \
@@ -99,24 +77,6 @@ docker-reader-build:
 docker-reader-build-local:
 	$(DOCKER) build -t backflow-reader docker/reader/
 
-docker-reader-push:
-	@echo "Usage: make docker-reader-push REGISTRY=<ecr-uri>"
-	$(DOCKER) tag backflow-reader $(REGISTRY):latest
-	$(DOCKER) push $(REGISTRY):latest
-
-docker-reader-deploy:
-	@$(ENV); \
-	ACCOUNT_ID=$$(aws sts get-caller-identity --query Account --output text) && \
-	REGION=$${AWS_REGION:-us-east-1} && \
-	ECR=$$ACCOUNT_ID.dkr.ecr.$$REGION.amazonaws.com && \
-	aws ecr get-login-password --region $$REGION | $(DOCKER) login --username AWS --password-stdin $$ECR && \
-	$(DOCKER) buildx build \
-		--platform linux/amd64,linux/arm64 \
-		-t $$ECR/backflow-reader:latest \
-		--push \
-		docker/reader/ && \
-	echo "Pushed to $$ECR/backflow-reader:latest"
-
 docker-server-build:
 	$(DOCKER) buildx build \
 		--platform linux/amd64,linux/arm64 \
@@ -125,19 +85,6 @@ docker-server-build:
 
 docker-server-build-local:
 	$(DOCKER) build -t backflow-server -f docker/server/Dockerfile .
-
-docker-server-deploy:
-	@$(ENV); \
-	ACCOUNT_ID=$$(aws sts get-caller-identity --query Account --output text) && \
-	REGION=$${AWS_REGION:-us-east-1} && \
-	ECR=$$ACCOUNT_ID.dkr.ecr.$$REGION.amazonaws.com && \
-	aws ecr get-login-password --region $$REGION | $(DOCKER) login --username AWS --password-stdin $$ECR && \
-	$(DOCKER) buildx build \
-		--platform linux/amd64,linux/arm64 \
-		-t $$ECR/backflow-server:latest \
-		--push \
-		-f docker/server/Dockerfile . && \
-	echo "Pushed to $$ECR/backflow-server:latest"
 
 DB_QUERY = @$(ENV); psql "$$BACKFLOW_DATABASE_URL" -c
 
@@ -165,8 +112,8 @@ db-cancelled:
 db-recovering:
 	$(DB_QUERY) "SELECT id, repo_url, branch, harness, instance_id, container_id, updated_at FROM tasks WHERE status = 'recovering' ORDER BY updated_at ASC;"
 
-setup-aws:
-	@$(ENV); bash scripts/setup-aws.sh
+teardown-aws:
+	@bash scripts/teardown-aws.sh $(ARGS)
 
 deps:
 	go mod tidy

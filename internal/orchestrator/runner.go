@@ -2,15 +2,13 @@ package orchestrator
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/backflow-labs/backflow/internal/models"
 )
 
-// Runner abstracts container lifecycle management. Implementations include
-// DockerManager (EC2/local modes) and FargateManager (Fargate mode).
+// Runner abstracts container lifecycle management on the local Docker host.
 type Runner interface {
 	RunAgent(ctx context.Context, instance *models.Instance, task *models.Task) (string, error)
 	InspectContainer(ctx context.Context, instanceID, containerID string) (ContainerStatus, error)
@@ -75,26 +73,13 @@ type AgentStatus struct {
 	SummaryMarkdown string              `json:"summary_markdown,omitempty"`
 }
 
-// SpotChecker detects spot/preemption interruptions and re-queues affected tasks.
-type SpotChecker interface {
-	CheckInterruptions(ctx context.Context)
-}
-
-// ErrSpotInterruption is returned when an ECS task is stopped due to Fargate
-// Spot capacity reclamation.
-var ErrSpotInterruption = errors.New("spot interruption")
-
 var errNoCapacity = fmt.Errorf("no instance capacity available")
 
-// IsInstanceGone returns true if the error indicates the EC2 instance no
-// longer exists or is not reachable via SSM (e.g. terminated, shutting down),
-// or if a Fargate Spot task was interrupted.
+// IsInstanceGone returns true if the error indicates the underlying Docker
+// daemon is unreachable or the container can no longer be inspected.
 func IsInstanceGone(err error) bool {
 	if err == nil {
 		return false
-	}
-	if errors.Is(err, ErrSpotInterruption) {
-		return true
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "invalidinstanceid")

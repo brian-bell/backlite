@@ -192,7 +192,6 @@ func TestMain(m *testing.M) {
 // avoiding interference from inherited env vars (e.g., BACKFLOW_DISCORD_APP_ID).
 func buildSubprocessEnv(port int, connStr, webhookURL string) []string {
 	env := []string{
-		"BACKFLOW_MODE=local",
 		"BACKFLOW_POLL_INTERVAL_SEC=1",
 		"BACKFLOW_AGENT_IMAGE=backflow-fake-agent:test",
 		fmt.Sprintf("BACKFLOW_LISTEN_ADDR=:%d", port),
@@ -279,7 +278,7 @@ func resetBetweenTests(t *testing.T) {
 		t.Fatalf("truncate tables: %v", err)
 	}
 
-	// Re-create the synthetic local instance. The orchestrator's initLocalMode()
+	// Re-create the synthetic local instance. The orchestrator's initInstance()
 	// only runs at startup, so after truncation we must re-insert it manually.
 	_, err = dbPool.Exec(ctx, `
 		INSERT INTO instances (instance_id, instance_type, status, max_containers, running_containers, created_at, updated_at)

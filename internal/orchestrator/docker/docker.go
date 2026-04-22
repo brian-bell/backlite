@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"sync"
 
-	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/rs/zerolog/log"
 
 	"github.com/backflow-labs/backflow/internal/config"
@@ -16,12 +14,9 @@ import (
 	"github.com/backflow-labs/backflow/internal/orchestrator"
 )
 
-// Manager manages agent containers on remote (SSM) or local hosts.
+// Manager manages agent containers on the local Docker host.
 type Manager struct {
-	config     *config.Config
-	ssmClient  *ssm.Client
-	ssmOnce    sync.Once
-	ssmInitErr error
+	config *config.Config
 }
 
 // NewManager creates a new Manager.
@@ -35,16 +30,13 @@ func (m *Manager) RunAgent(ctx context.Context, instance *models.Instance, task 
 	secrets := m.buildSecretEnvPairs(task)
 
 	var cmd string
-	if m.config.Mode == config.ModeLocal && len(secrets) > 0 {
+	if len(secrets) > 0 {
 		envFile, err := writeEnvFile(secrets)
 		if err != nil {
 			return "", fmt.Errorf("write secret env file: %w", err)
 		}
 		defer os.Remove(envFile)
 		cmd = m.buildRunCommand(task, envFile)
-	} else if len(secrets) > 0 {
-		dockerCmd := m.buildRunCommand(task, "\"$_ef\"")
-		cmd = wrapWithRemoteEnvFile(dockerCmd, secrets)
 	} else {
 		cmd = m.buildRunCommand(task, "")
 	}
@@ -218,22 +210,6 @@ func writeEnvFile(pairs []string) (string, error) {
 		}
 	}
 	return f.Name(), nil
-}
-
-// wrapWithRemoteEnvFile wraps a docker run command with temp env file
-// creation and cleanup on a remote host (for SSM execution). The secrets
-// still appear in the SSM command parameters but are kept off the EC2
-// process list and out of docker inspect.
-func wrapWithRemoteEnvFile(dockerCmd string, secrets []string) string {
-	escaped := make([]string, len(secrets))
-	for i, s := range secrets {
-		escaped[i] = shellEscape(s)
-	}
-	return fmt.Sprintf(
-		"_ef=$(mktemp) && printf '%%s\\n' %s > \"$_ef\" && %s; _rc=$?; rm -f \"$_ef\"; exit $_rc",
-		strings.Join(escaped, " "),
-		dockerCmd,
-	)
 }
 
 // buildVolumeFlags returns volume flags for the docker run command.

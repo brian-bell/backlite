@@ -6,7 +6,6 @@ import (
 
 	"github.com/rs/zerolog/log"
 
-	"github.com/backflow-labs/backflow/internal/config"
 	"github.com/backflow-labs/backflow/internal/models"
 	"github.com/backflow-labs/backflow/internal/notify"
 	"github.com/backflow-labs/backflow/internal/store"
@@ -148,16 +147,10 @@ func (o *Orchestrator) handleRecoveringInspectError(ctx context.Context, task *m
 // is true, it decrements o.running (since recoverOnStartup counted it).
 func (o *Orchestrator) requeueRecoveringTask(ctx context.Context, task *models.Task, reason string, wasRunning bool) {
 	if wasRunning {
-		// Mark the instance as terminated in EC2 mode so no new tasks go there
-		if task.InstanceID != "" && o.config.Mode == config.ModeEC2 {
-			o.markInstanceTerminated(ctx, task.InstanceID)
-		}
 		o.decrementRunning()
 	}
 
 	if err := o.store.RequeueTask(ctx, task.ID, reason); err != nil {
 		log.Error().Err(err).Str("task_id", task.ID).Msg("failed to re-queue recovering task")
 	}
-
-	o.scaler.RequestScaleUp(ctx)
 }

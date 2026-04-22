@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backflow-labs/backflow/internal/config"
 	"github.com/backflow-labs/backflow/internal/models"
 	"github.com/backflow-labs/backflow/internal/notify"
 	"github.com/backflow-labs/backflow/internal/orchestrator/outputs"
@@ -1011,64 +1010,6 @@ func TestKillTask_CompleteTaskError(t *testing.T) {
 	}
 }
 
-func TestRequeueTask_EC2Mode(t *testing.T) {
-	s := newMockStore()
-	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:        "i-abc",
-		Status:            models.InstanceStatusRunning,
-		MaxContainers:     4,
-		RunningContainers: 1,
-	})
-
-	s.CreateTask(context.Background(), &models.Task{
-		ID:          "bf_requeue",
-		Status:      models.TaskStatusRunning,
-		RepoURL:     "https://github.com/test/repo",
-		Prompt:      "requeue me",
-		InstanceID:  "i-abc",
-		ContainerID: "cont_rq",
-		StartedAt:   &now,
-	})
-
-	bus, _ := newTestBus()
-	defer bus.Close()
-	o := newTestOrchestrator(s, bus, func(o *Orchestrator) {
-		o.config.Mode = config.ModeEC2
-	})
-	o.running = 1
-
-	task, _ := s.GetTask(context.Background(), "bf_requeue")
-	o.requeueTask(context.Background(), task, "instance terminated")
-
-	task, _ = s.GetTask(context.Background(), "bf_requeue")
-	if task.Status != models.TaskStatusPending {
-		t.Errorf("status = %q, want pending", task.Status)
-	}
-	if task.InstanceID != "" {
-		t.Errorf("instanceID = %q, want empty", task.InstanceID)
-	}
-	if task.ContainerID != "" {
-		t.Errorf("containerID = %q, want empty", task.ContainerID)
-	}
-	if task.StartedAt != nil {
-		t.Error("StartedAt should be nil")
-	}
-	if task.RetryCount != 1 {
-		t.Errorf("retry count = %d, want 1", task.RetryCount)
-	}
-	if o.running != 0 {
-		t.Errorf("running = %d, want 0", o.running)
-	}
-
-	// Instance should be marked terminated in EC2 mode
-	inst, _ := s.GetInstance(context.Background(), "i-abc")
-	if inst.Status != models.InstanceStatusTerminated {
-		t.Errorf("instance status = %q, want terminated", inst.Status)
-	}
-}
-
 func TestRequeueTask_LocalMode(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
@@ -1092,7 +1033,7 @@ func TestRequeueTask_LocalMode(t *testing.T) {
 
 	bus, _ := newTestBus()
 	defer bus.Close()
-	o := newTestOrchestrator(s, bus) // defaults to ModeLocal
+	o := newTestOrchestrator(s, bus)
 	o.running = 1
 
 	task, _ := s.GetTask(context.Background(), "bf_requeue_local")
@@ -1304,72 +1245,6 @@ func TestMonitorRunning_Completed_PersistsFinalOutputMetadata(t *testing.T) {
 	}
 }
 
-func TestMonitorRunning_Completed_UploadsFinalTaskMetadata(t *testing.T) {
-	s := newMockStore()
-	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:        "local",
-		Status:            models.InstanceStatusRunning,
-		MaxContainers:     4,
-		RunningContainers: 1,
-	})
-	s.CreateTask(context.Background(), &models.Task{
-		ID:              "bf_done_s3_meta",
-		Status:          models.TaskStatusRunning,
-		RepoURL:         "https://github.com/test/repo",
-		Prompt:          "finish me",
-		SaveAgentOutput: true,
-		InstanceID:      "local",
-		ContainerID:     "cont1",
-		StartedAt:       &now,
-		CreatedAt:       now,
-	})
-
-	bus, _ := newTestBus()
-	writer := &mockWriter{}
-	mockS3 := &mockS3Client{}
-	mock := &mockDockerManager{
-		inspectResults: map[string]ContainerStatus{
-			"local/cont1": {
-				Done:         true,
-				Complete:     true,
-				ExitCode:     0,
-				PRURL:        "https://github.com/test/repo/pull/84",
-				RepoURL:      "https://github.com/test/repo",
-				TargetBranch: "main",
-				TaskMode:     "code",
-			},
-		},
-		agentOutput: "agent log bytes",
-	}
-	o := newTestOrchestrator(s, bus, withDocker(mock), withOutputs(writer), withS3(mockS3))
-	o.running = 1
-
-	o.monitorRunning(context.Background())
-	bus.Close()
-
-	if len(mockS3.uploads) != 1 {
-		t.Fatalf("expected 1 S3 upload, got %d", len(mockS3.uploads))
-	}
-	var meta taskMetadata
-	if err := json.Unmarshal(mockS3.uploads[0].data, &meta); err != nil {
-		t.Fatalf("unmarshal uploaded JSON: %v (body: %s)", err, string(mockS3.uploads[0].data))
-	}
-	if meta.Status != models.TaskStatusCompleted {
-		t.Errorf("status = %q, want %q", meta.Status, models.TaskStatusCompleted)
-	}
-	if meta.PRURL != "https://github.com/test/repo/pull/84" {
-		t.Errorf("PRURL = %q, want PR URL", meta.PRURL)
-	}
-	if meta.OutputURL != "/api/v1/tasks/bf_done_s3_meta/output" {
-		t.Errorf("OutputURL = %q, want output endpoint", meta.OutputURL)
-	}
-	if meta.CompletedAt == nil {
-		t.Error("CompletedAt should be set")
-	}
-}
-
 func TestMonitorRunning_CompletedFromStatusFile(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
@@ -1525,39 +1400,6 @@ func TestHandleInspectError_InstanceGone(t *testing.T) {
 	}
 }
 
-func TestHandleInspectError_InstanceGone_FargatePreservesSyntheticInstance(t *testing.T) {
-	s := newMockStore()
-	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:        "fargate",
-		Status:            models.InstanceStatusRunning,
-		MaxContainers:     5,
-		RunningContainers: 1,
-	})
-	s.CreateTask(context.Background(), &models.Task{
-		ID:          "bf_gone_fargate",
-		Status:      models.TaskStatusRunning,
-		InstanceID:  "fargate",
-		ContainerID: "arn:aws:ecs:us-east-1:123456789012:task/backflow/abc",
-		StartedAt:   &now,
-	})
-
-	bus, _ := newTestBus()
-	defer bus.Close()
-	o := newTestOrchestrator(s, bus)
-	o.config.Mode = config.ModeFargate
-	o.running = 1
-
-	task, _ := s.GetTask(context.Background(), "bf_gone_fargate")
-	o.handleInspectError(context.Background(), task, fmt.Errorf("%w: Fargate Spot capacity reclaimed", ErrSpotInterruption))
-
-	inst, _ := s.GetInstance(context.Background(), "fargate")
-	if inst.Status != models.InstanceStatusRunning {
-		t.Errorf("instance status = %q, want running", inst.Status)
-	}
-}
-
 func TestHandleInspectError_AccumulatesFailures(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
@@ -1642,33 +1484,7 @@ func TestHandleInspectError_KillsAtMaxFailures(t *testing.T) {
 	}
 }
 
-func TestSaveTaskMetadata_NilS3(t *testing.T) {
-	s := newMockStore()
-	now := time.Now().UTC()
-
-	s.CreateTask(context.Background(), &models.Task{
-		ID:          "bf_meta_nil",
-		Status:      models.TaskStatusCompleted,
-		TaskMode:    "code",
-		Harness:     models.HarnessClaudeCode,
-		RepoURL:     "https://github.com/test/repo",
-		Branch:      "main",
-		Prompt:      "do something",
-		CreatePR:    true,
-		PRURL:       "https://github.com/test/repo/pull/1",
-		CreatedAt:   now,
-		CompletedAt: &now,
-	})
-
-	bus, _ := newTestBus()
-	defer bus.Close()
-	o := newTestOrchestrator(s, bus)
-	// o.s3 is nil — should be a no-op without panicking
-	task, _ := s.GetTask(context.Background(), "bf_meta_nil")
-	o.saveTaskMetadata(context.Background(), task)
-}
-
-func TestSaveTaskMetadata_JSONSerialization(t *testing.T) {
+func TestTaskMetadata_JSONSerialization(t *testing.T) {
 	now := time.Now().UTC()
 	meta := taskMetadata{
 		ID:            "bf_ser",
@@ -1726,137 +1542,6 @@ func TestSaveTaskMetadata_JSONSerialization(t *testing.T) {
 	if decoded.MaxRuntimeSec != 1800 {
 		t.Errorf("MaxRuntimeSec = %d, want 1800", decoded.MaxRuntimeSec)
 	}
-}
-
-func TestSaveTaskMetadata_UploadIntegration(t *testing.T) {
-	s := newMockStore()
-	now := time.Now().UTC()
-	started := now.Add(-5 * time.Minute)
-
-	task := &models.Task{
-		ID:            "bf_meta_int",
-		Status:        models.TaskStatusCompleted,
-		TaskMode:      "code",
-		Harness:       models.HarnessClaudeCode,
-		RepoURL:       "https://github.com/test/repo",
-		Branch:        "feature",
-		TargetBranch:  "main",
-		Prompt:        "implement feature",
-		Model:         "claude-sonnet-4-20250514",
-		Effort:        "high",
-		MaxBudgetUSD:  5.0,
-		MaxTurns:      50,
-		MaxRuntimeSec: 1800,
-		CreatePR:      true,
-		SelfReview:    true,
-		PRURL:         "https://github.com/test/repo/pull/10",
-		CostUSD:       1.23,
-		RetryCount:    1,
-		CreatedAt:     now,
-		StartedAt:     &started,
-		CompletedAt:   &now,
-	}
-	s.CreateTask(context.Background(), task)
-
-	mockS3 := &mockS3Client{}
-	bus, _ := newTestBus()
-	defer bus.Close()
-	o := newTestOrchestrator(s, bus, withS3(mockS3))
-
-	stored, _ := s.GetTask(context.Background(), "bf_meta_int")
-	o.saveTaskMetadata(context.Background(), stored)
-
-	if len(mockS3.uploads) != 1 {
-		t.Fatalf("expected 1 upload, got %d", len(mockS3.uploads))
-	}
-
-	upload := mockS3.uploads[0]
-
-	expectedKey := "tasks/bf_meta_int/task_metadata.json"
-	if upload.key != expectedKey {
-		t.Errorf("S3 key = %q, want %q", upload.key, expectedKey)
-	}
-
-	var meta taskMetadata
-	if err := json.Unmarshal(upload.data, &meta); err != nil {
-		t.Fatalf("failed to unmarshal uploaded JSON: %v", err)
-	}
-
-	if meta.ID != "bf_meta_int" {
-		t.Errorf("ID = %q, want bf_meta_int", meta.ID)
-	}
-	if meta.Status != models.TaskStatusCompleted {
-		t.Errorf("Status = %q, want completed", meta.Status)
-	}
-	if meta.TaskMode != "code" {
-		t.Errorf("TaskMode = %q, want code", meta.TaskMode)
-	}
-	if meta.Harness != models.HarnessClaudeCode {
-		t.Errorf("Harness = %q, want claude_code", meta.Harness)
-	}
-	if meta.RepoURL != "https://github.com/test/repo" {
-		t.Errorf("RepoURL = %q", meta.RepoURL)
-	}
-	if meta.Branch != "feature" {
-		t.Errorf("Branch = %q, want feature", meta.Branch)
-	}
-	if meta.TargetBranch != "main" {
-		t.Errorf("TargetBranch = %q, want main", meta.TargetBranch)
-	}
-	if meta.Model != "claude-sonnet-4-20250514" {
-		t.Errorf("Model = %q", meta.Model)
-	}
-	if meta.Effort != "high" {
-		t.Errorf("Effort = %q, want high", meta.Effort)
-	}
-	if meta.MaxBudgetUSD != 5.0 {
-		t.Errorf("MaxBudgetUSD = %v, want 5.0", meta.MaxBudgetUSD)
-	}
-	if meta.MaxTurns != 50 {
-		t.Errorf("MaxTurns = %d, want 50", meta.MaxTurns)
-	}
-	if meta.MaxRuntimeSec != 1800 {
-		t.Errorf("MaxRuntimeSec = %d, want 1800", meta.MaxRuntimeSec)
-	}
-	if !meta.CreatePR {
-		t.Error("CreatePR should be true")
-	}
-	if !meta.SelfReview {
-		t.Error("SelfReview should be true")
-	}
-	if meta.PRURL != "https://github.com/test/repo/pull/10" {
-		t.Errorf("PRURL = %q", meta.PRURL)
-	}
-	if meta.CostUSD != 1.23 {
-		t.Errorf("CostUSD = %v, want 1.23", meta.CostUSD)
-	}
-	if meta.RetryCount != 1 {
-		t.Errorf("RetryCount = %d, want 1", meta.RetryCount)
-	}
-}
-
-func TestSaveTaskMetadata_UploadError(t *testing.T) {
-	s := newMockStore()
-	now := time.Now().UTC()
-
-	s.CreateTask(context.Background(), &models.Task{
-		ID:        "bf_meta_err",
-		Status:    models.TaskStatusCompleted,
-		RepoURL:   "https://github.com/test/repo",
-		Branch:    "main",
-		Prompt:    "do something",
-		CreatedAt: now,
-	})
-
-	mockS3 := &mockS3Client{err: fmt.Errorf("simulated S3 failure")}
-	bus, _ := newTestBus()
-	defer bus.Close()
-	o := newTestOrchestrator(s, bus, withS3(mockS3))
-
-	task, _ := s.GetTask(context.Background(), "bf_meta_err")
-
-	// Should not panic on upload error — just logs and returns
-	o.saveTaskMetadata(context.Background(), task)
 }
 
 func TestIsTimedOut(t *testing.T) {

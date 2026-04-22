@@ -21,10 +21,7 @@ import (
 	"github.com/backflow-labs/backflow/internal/notify"
 	"github.com/backflow-labs/backflow/internal/orchestrator"
 	orchdocker "github.com/backflow-labs/backflow/internal/orchestrator/docker"
-	orchec2 "github.com/backflow-labs/backflow/internal/orchestrator/ec2"
-	orchfargate "github.com/backflow-labs/backflow/internal/orchestrator/fargate"
 	"github.com/backflow-labs/backflow/internal/orchestrator/outputs"
-	orchs3 "github.com/backflow-labs/backflow/internal/orchestrator/s3"
 	"github.com/backflow-labs/backflow/internal/store"
 )
 
@@ -113,34 +110,7 @@ func main() {
 		log.Info().Str("url", cfg.WebhookURL).Msg("webhook notifications enabled")
 	}
 
-	// Declare as the interface type so a nil *Uploader stays a nil interface
-	// (avoids the nil-pointer-in-non-nil-interface trap in saveTaskMetadata).
-	var s3Uploader orchestrator.S3Client
-	if u, err := orchs3.NewUploader(context.Background(), cfg); err != nil {
-		log.Fatal().Err(err).Msg("failed to create S3 uploader")
-	} else if u != nil {
-		s3Uploader = u
-		log.Info().Str("bucket", cfg.S3Bucket).Msg("S3 storage enabled")
-	}
-
-	// Wire runner, scaler, and spot checker based on operating mode
-	var runner orchestrator.Runner
-	var scaler orchestrator.Scaler
-	var spot orchestrator.SpotChecker
-
-	switch cfg.Mode {
-	case config.ModeLocal:
-		runner = orchdocker.NewManager(cfg)
-		scaler = orchestrator.NoopScaler{}
-	case config.ModeFargate:
-		runner = orchfargate.NewManager(cfg, s3Uploader)
-		scaler = orchestrator.NoopScaler{}
-	default:
-		runner = orchdocker.NewManager(cfg)
-		ec2mgr := orchec2.NewManager(cfg)
-		scaler = orchec2.NewScaler(db, ec2mgr, cfg)
-		spot = orchec2.NewSpotHandler(db, ec2mgr, bus)
-	}
+	runner := orchdocker.NewManager(cfg)
 
 	var embedder embeddings.Embedder
 	if cfg.OpenAIAPIKey != "" {
@@ -150,7 +120,7 @@ func main() {
 	fsOutputs := outputs.New(cfg.DataDir)
 	log.Info().Str("data_dir", cfg.DataDir).Msg("filesystem output writer enabled")
 
-	orch := orchestrator.New(db, cfg, bus, runner, scaler, spot, s3Uploader, fsOutputs, embedder)
+	orch := orchestrator.New(db, cfg, bus, runner, fsOutputs, embedder)
 	handler := buildHTTPHandler(cfg, db, db, orch.Docker(), bus, orch.Running, startedAt)
 
 	srv := &http.Server{

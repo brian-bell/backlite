@@ -421,26 +421,6 @@ func TestWriteEnvFile_Empty(t *testing.T) {
 	}
 }
 
-func TestWrapWithRemoteEnvFile(t *testing.T) {
-	dockerCmd := "docker run -d --env-file \"$_ef\" -e TASK_ID=bf_01 image"
-	secrets := []string{"API_KEY=sk-test", "TOKEN=ghp_abc"}
-
-	cmd := wrapWithRemoteEnvFile(dockerCmd, secrets)
-
-	if !strings.HasPrefix(cmd, "_ef=$(mktemp) && printf") {
-		t.Errorf("should start with temp file creation, got: %s", cmd)
-	}
-	if !strings.Contains(cmd, dockerCmd) {
-		t.Error("should contain the original docker command")
-	}
-	if !strings.Contains(cmd, "rm -f \"$_ef\"") {
-		t.Error("should clean up the temp file")
-	}
-	if !strings.Contains(cmd, "'API_KEY=sk-test'") {
-		t.Error("should contain shell-escaped secret")
-	}
-}
-
 func TestBuildEnvFlags_ShellEscapesKeys(t *testing.T) {
 	cfg := &config.Config{}
 	dm := NewManager(cfg)

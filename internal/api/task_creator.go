@@ -90,9 +90,6 @@ func NewReadTask(ctx context.Context, req *models.CreateTaskRequest, s store.Sto
 	if cfg.ReaderImage == "" {
 		return nil, fmt.Errorf("reading mode is not configured on this server (BACKFLOW_READER_IMAGE is not set)")
 	}
-	if cfg.Mode == config.ModeFargate && cfg.ECSReaderTaskDefinition == "" {
-		return nil, fmt.Errorf("reading mode is not configured on this server (BACKFLOW_ECS_READER_TASK_DEFINITION is not set)")
-	}
 
 	now := time.Now().UTC()
 

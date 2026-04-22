@@ -106,6 +106,7 @@ func TestLoad_DataDir_Set(t *testing.T) {
 		t.Errorf("DataDir = %q, want %q", cfg.DataDir, "/var/lib/backflow")
 	}
 }
+
 func TestLoad_LogFile_DefaultEmpty(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "test-key")
 	t.Setenv("BACKFLOW_DATABASE_URL", "postgres://user:pass@localhost:5432/db")

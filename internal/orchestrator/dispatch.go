@@ -7,7 +7,6 @@ import (
 
 	"github.com/rs/zerolog/log"
 
-	"github.com/backflow-labs/backflow/internal/config"
 	"github.com/backflow-labs/backflow/internal/models"
 	"github.com/backflow-labs/backflow/internal/notify"
 	"github.com/backflow-labs/backflow/internal/store"
@@ -56,9 +55,6 @@ func (o *Orchestrator) dispatch(ctx context.Context, task *models.Task) error {
 		if o.config.ReaderImage == "" {
 			return fmt.Errorf("cannot dispatch read task: no reader image configured (set BACKFLOW_READER_IMAGE)")
 		}
-		if o.config.Mode == config.ModeFargate && o.config.ECSReaderTaskDefinition == "" {
-			return fmt.Errorf("cannot dispatch read task: no reader task definition configured (set BACKFLOW_ECS_READER_TASK_DEFINITION)")
-		}
 		if !task.Force {
 			existing, err := o.store.GetReadingByURL(ctx, task.Prompt)
 			if err != nil && !errors.Is(err, store.ErrNotFound) {
@@ -72,7 +68,6 @@ func (o *Orchestrator) dispatch(ctx context.Context, task *models.Task) error {
 
 	instance, err := o.findAvailableInstance(ctx)
 	if errors.Is(err, errNoCapacity) {
-		o.scaler.RequestScaleUp(ctx)
 		return nil
 	}
 	if err != nil {

@@ -471,38 +471,6 @@ func (m *mockWriter) SaveMetadata(_ context.Context, taskID string, metadata any
 	return nil
 }
 
-// --- Mock S3 client ---
-
-type mockS3Client struct {
-	uploads []mockS3Upload
-	err     error
-}
-
-type mockS3Upload struct {
-	key  string
-	data []byte
-}
-
-func (m *mockS3Client) Upload(_ context.Context, key string, data []byte) (string, error) {
-	if m.err != nil {
-		return "", m.err
-	}
-	m.uploads = append(m.uploads, mockS3Upload{key: key, data: data})
-	return fmt.Sprintf("s3://test-bucket/%s", key), nil
-}
-
-func (m *mockS3Client) UploadJSON(_ context.Context, key string, data []byte) (string, error) {
-	if m.err != nil {
-		return "", m.err
-	}
-	m.uploads = append(m.uploads, mockS3Upload{key: key, data: data})
-	return fmt.Sprintf("s3://test-bucket/%s", key), nil
-}
-
-func (m *mockS3Client) PresignGetURL(_ context.Context, key string, _ time.Duration) (string, error) {
-	return fmt.Sprintf("https://test-bucket.s3.amazonaws.com/%s?presigned", key), nil
-}
-
 // newTestBus creates an EventBus with a mockNotifier subscribed.
 // Call bus.Close() before reading events from the notifier.
 func newTestBus() (*notify.EventBus, *mockNotifier) {
@@ -516,7 +484,6 @@ func newTestBus() (*notify.EventBus, *mockNotifier) {
 
 func newTestOrchestrator(s store.Store, bus *notify.EventBus, opts ...func(*Orchestrator)) *Orchestrator {
 	cfg := &config.Config{
-		Mode:              config.ModeLocal,
 		ContainersPerInst: 4,
 		MaxUserRetries:    2,
 		PollInterval:      5 * time.Second,
@@ -526,7 +493,6 @@ func newTestOrchestrator(s store.Store, bus *notify.EventBus, opts ...func(*Orch
 		config:          cfg,
 		bus:             bus,
 		docker:          &mockDockerManager{},
-		scaler:          NoopScaler{},
 		stopCh:          make(chan struct{}),
 		inspectFailures: make(map[string]int),
 	}
@@ -538,10 +504,6 @@ func newTestOrchestrator(s store.Store, bus *notify.EventBus, opts ...func(*Orch
 
 func withDocker(d Runner) func(*Orchestrator) {
 	return func(o *Orchestrator) { o.docker = d }
-}
-
-func withS3(s S3Client) func(*Orchestrator) {
-	return func(o *Orchestrator) { o.s3 = s }
 }
 
 func withOutputs(w Writer) func(*Orchestrator) {

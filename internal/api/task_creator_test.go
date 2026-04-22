@@ -198,24 +198,6 @@ func TestNewReadTask_NoReaderImage_FailsFast(t *testing.T) {
 	}
 }
 
-// TestNewReadTask_Fargate_NoReaderTaskDefinition_FailsFast ensures the same
-// fail-fast behavior in Fargate mode when the reader task definition isn't set.
-func TestNewReadTask_Fargate_NoReaderTaskDefinition_FailsFast(t *testing.T) {
-	cfg := readTestConfig()
-	cfg.Mode = config.ModeFargate
-	cfg.ECSReaderTaskDefinition = ""
-	s := &mockStore{}
-	req := &models.CreateTaskRequest{Prompt: "https://example.com/post"}
-
-	_, err := NewReadTask(context.Background(), req, s, cfg, nil)
-	if err == nil {
-		t.Fatal("expected error when ECSReaderTaskDefinition is unset in fargate mode, got nil")
-	}
-	if !contains(err.Error(), "BACKFLOW_ECS_READER_TASK_DEFINITION") {
-		t.Errorf("error should name the missing env var; got: %v", err)
-	}
-}
-
 func strPtr(s string) *string { return &s }
 
 // TestNewTask_TaskModeRead_DispatchesToNewReadTask verifies the REST API entry

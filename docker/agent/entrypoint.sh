@@ -64,8 +64,29 @@ elif [ -z "${ANTHROPIC_API_KEY:-}" ]; then
 fi
 
 # =============================================================================
-# PREP STAGE — infer repo_url, target_branch, task_type from the prompt
+# RESOLVE STAGE — determine repo_url, target_branch, task_type
 # =============================================================================
+#
+# The orchestrator passes REPO_URL / TARGET_BRANCH / TASK_MODE as env vars.
+# When REPO_URL is set we trust it and skip the LLM-based prep stage entirely;
+# otherwise we fall back to inferring these fields from the prompt text.
+
+if [ -n "${REPO_URL:-}" ]; then
+    echo "==> Using repo metadata from env (skipping prep stage)"
+    TARGET_BRANCH="${TARGET_BRANCH:-main}"
+    case "${TASK_MODE:-code}" in
+        review) TASK_TYPE="review" ;;
+        *)      TASK_TYPE="code" ;;
+    esac
+    PR_URL=""
+    if [ "$TASK_TYPE" = "review" ]; then
+        PR_URL=$(printf '%s\n' "$PROMPT" | grep -oE 'https?://github\.com/[^/[:space:]]+/[^/[:space:]]+/pull/[0-9]+' | head -1 || true)
+    fi
+    echo "==> Resolved: repo=${REPO_URL} branch=${TARGET_BRANCH} type=${TASK_TYPE}"
+    if [ "$TASK_TYPE" = "review" ] && [ -n "$PR_URL" ]; then
+        echo "==> Review PR: ${PR_URL}"
+    fi
+else
 
 echo "==> Running prep stage..."
 
@@ -167,6 +188,8 @@ fi
 if [ -n "$PR_URL" ] && [ "$TASK_TYPE" = "review" ]; then
     echo "==> Review PR: ${PR_URL}"
 fi
+
+fi  # end: REPO_URL env branch / prep-stage fallback
 
 # =============================================================================
 # CLONE

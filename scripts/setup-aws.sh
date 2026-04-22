@@ -600,16 +600,20 @@ echo "    Reader task definition: ${READER_TASK_DEF_ARN}"
 # =============================================================================
 # Fly.io deployment IAM user
 # =============================================================================
+# NOTE: Fly.io is no longer a deployment target for backflow. This block is
+# retained so the teardown path (delete the IAM user + its inline policy) is
+# discoverable. Skipped unless BACKFLOW_PROVISION_FLY_USER=1.
 
-FLY_USER="backflow-fly"
-echo "==> Creating IAM user for Fly.io deployment..."
-if aws iam get-user --user-name "$FLY_USER" &>/dev/null; then
-    echo "    IAM user already exists, updating policy..."
-else
-    aws iam create-user --user-name "$FLY_USER"
-fi
+if [ "${BACKFLOW_PROVISION_FLY_USER:-0}" = "1" ]; then
+    FLY_USER="backflow-fly"
+    echo "==> Creating IAM user for Fly.io deployment..."
+    if aws iam get-user --user-name "$FLY_USER" &>/dev/null; then
+        echo "    IAM user already exists, updating policy..."
+    else
+        aws iam create-user --user-name "$FLY_USER"
+    fi
 
-FLY_POLICY=$(cat <<FLYEOF
+    FLY_POLICY=$(cat <<FLYEOF
 {
   "Version": "2012-10-17",
   "Statement": [
@@ -667,13 +671,20 @@ FLY_POLICY=$(cat <<FLYEOF
 FLYEOF
 )
 
-aws iam put-user-policy \
-    --user-name "$FLY_USER" \
-    --policy-name "${FLY_USER}-policy" \
-    --policy-document "$FLY_POLICY"
+    aws iam put-user-policy \
+        --user-name "$FLY_USER" \
+        --policy-name "${FLY_USER}-policy" \
+        --policy-document "$FLY_POLICY"
 
-echo "    IAM user: ${FLY_USER}"
-echo "    Policy: ECS (${ECS_CLUSTER}), CloudWatch (${CW_LOG_GROUP}), S3 (${S3_BUCKET})"
+    echo "    IAM user: ${FLY_USER}"
+    echo "    Policy: ECS (${ECS_CLUSTER}), CloudWatch (${CW_LOG_GROUP}), S3 (${S3_BUCKET})"
+fi
+
+# To tear down the Fly.io IAM user previously provisioned by this script:
+#   aws iam delete-user-policy --user-name backflow-fly --policy-name backflow-fly-policy
+#   aws iam list-access-keys --user-name backflow-fly --query 'AccessKeyMetadata[].AccessKeyId' --output text \
+#     | tr '\t' '\n' | xargs -I{} aws iam delete-access-key --user-name backflow-fly --access-key-id {}
+#   aws iam delete-user --user-name backflow-fly
 
 echo ""
 echo "==> Setup complete!"
@@ -695,17 +706,11 @@ echo "  BACKFLOW_CLOUDWATCH_LOG_GROUP=${CW_LOG_GROUP}"
 echo "  BACKFLOW_S3_BUCKET=${S3_BUCKET}"
 echo "  AWS_REGION=${REGION}"
 if [ -n "$CI_ROLE_ARN" ]; then
-    echo "For GitHub Actions CI (see docs/setup-ci.md):"
+    echo "For GitHub Actions CI:"
     echo "  Add this secret to your GitHub repo:"
     echo "    AWS_ROLE_ARN=${CI_ROLE_ARN}"
     echo ""
 fi
-echo ""
-echo "For Fly.io deployment:"
-echo "  Create access keys for the ${FLY_USER} IAM user:"
-echo "    aws iam create-access-key --user-name ${FLY_USER}"
-echo "  Then set them as Fly secrets:"
-echo "    fly secrets set AWS_ACCESS_KEY_ID=<key> AWS_SECRET_ACCESS_KEY=<secret>"
 echo ""
 echo "Next steps:"
 echo "  1. Build and push the agent image:  make docker-agent-deploy"

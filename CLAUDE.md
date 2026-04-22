@@ -43,8 +43,6 @@ make docker-reader-build-local # Single-architecture reader build
 make docker-reader-push        # Tag + push reader to ECR (requires REGISTRY=<ecr-uri>)
 make docker-reader-deploy      # Full reader ECR pipeline: login, buildx, push
 make setup-aws          # Create AWS infrastructure
-make restore-env        # Copy ~/dev/etc/backflow/.env → ./.env
-make backup-env         # Copy ./.env → ~/dev/etc/backflow/.env
 goose -dir migrations status # Show pending/applied migrations
 goose -dir migrations up     # Apply the next migration(s)
 goose -dir migrations down   # Roll back the last migration
@@ -60,9 +58,9 @@ Two goroutines: chi REST API on `:8080` + polling orchestrator (5s default). Thr
 
 ### API endpoints
 
-- `GET /health` — Health check (root-level, always accessible; used by Fly.io)
+- `GET /health` — Health check (root-level, always accessible)
 - `GET /debug/stats` — Operational stats: PID, uptime, running tasks, pool metrics (outside `/api/v1/`, bearer-auth protected when API keys are configured)
-- `GET /api/v1/health` — Health check (under API prefix; bearer-auth protected when API keys are configured; blocked when `BACKFLOW_RESTRICT_API=true`)
+- `GET /api/v1/health` — Health check (under API prefix; bearer-auth protected when API keys are configured)
 - `POST /api/v1/tasks` — Create task
 - `GET /api/v1/tasks` — List tasks (query params: `status`, `limit`, `offset`)
 - `GET /api/v1/tasks/{id}` — Get task
@@ -79,7 +77,7 @@ Two goroutines: chi REST API on `:8080` + polling orchestrator (5s default). Thr
 - **store/** — `Store` interface + PostgreSQL (`pgxpool`, goose migrations). Includes `UpsertReading` / `GetReadingByURL` for the `readings` table.
 - **models/** — `Task`, `Instance`, and `Reading` (+ `Connection`) structs with status enums. `Task.AgentImage` records which Docker image the orchestrator used (read tasks get `ReaderImage`, others get the default agent image). `FindFirstURL` / `InferReviewMode` auto-detect review mode when a prompt's first URL is a GitHub PR URL.
 - **embeddings/** — Thin `Embedder` interface (`Embed(ctx, text) ([]float32, error)`) with an `OpenAIEmbedder` HTTP client (no SDK). Used by the orchestrator to embed a reading's final TL;DR before writing the `readings` row.
-- **config/** — Env-var config (`BACKFLOW_*` prefix), three modes (`ec2`/`local`/`fargate`). `RestrictAPI` blocks all `/api/v1/*` endpoints when `BACKFLOW_RESTRICT_API=true` (used in Fly.io deployment). `BACKFLOW_API_KEY` enables single-token API auth; otherwise `api_keys` in Postgres can back authenticated API/debug requests. `TaskDefaults(taskMode)` returns resolved defaults — for `read` mode it swaps in `ReaderImage` plus the `BACKFLOW_DEFAULT_READ_MAX_*` caps. `Apply(task, overrides)` fills zero-value fields using `*bool` overrides (nil = use default, non-nil = use pointed value)
+- **config/** — Env-var config (`BACKFLOW_*` prefix), three modes (`ec2`/`local`/`fargate`). `BACKFLOW_API_KEY` enables single-token API auth; otherwise `api_keys` in Postgres can back authenticated API/debug requests. `TaskDefaults(taskMode)` returns resolved defaults — for `read` mode it swaps in `ReaderImage` plus the `BACKFLOW_DEFAULT_READ_MAX_*` caps. `Apply(task, overrides)` fills zero-value fields using `*bool` overrides (nil = use default, non-nil = use pointed value)
 - **notify/** — `Notifier` interface, `WebhookNotifier` (HTTP POST, 3 retries, event filtering), `NoopNotifier`, `EventBus` (async fan-out delivery via buffered channel), `NewEvent` constructor with `EventOption` functional options (including `WithReading` for read-mode completion events). `Event` carries `TaskMode` plus optional reading fields (`TLDR`, `NoveltyVerdict`, `Tags`, `Connections`) populated only for read-task completion events.
 - **debug/** — `/debug/stats` handler: PID, uptime, running task count, pgxpool metrics
 
@@ -193,12 +191,6 @@ ECS prerequisites:
 - Subnets and security groups in the same VPC, with egress for git/GitHub/API traffic
 - IAM execution/task roles allowing image pull, log delivery, and whatever repository/API access the agent needs
 
-## Fly.io deployment
-
-Production app: `backflow` (`fly.toml`). Auto-deploys on push to main via `.github/workflows/ci.yml`. `BACKFLOW_RESTRICT_API=true` blocks all `/api/v1/*` endpoints; root `/health` is unaffected.
-
-AWS credentials for ECS/S3/CloudWatch are provided via the `backflow-fly` IAM user (created by `make setup-aws`). See `docs/fly-setup.md` for deployment steps.
-
 ## Documentation guidelines
 
 Do not record default values for config or env vars in documentation. Defaults change frequently and docs drift silently. Instead, point to the source (`internal/config/config.go`) or say "see config for current defaults."
@@ -237,6 +229,4 @@ Create new migrations in `migrations/` with the next numeric prefix, `-- +goose 
 Additional docs in `docs/`:
 - `schema.md` — Database schema (tables, columns, indexes, status lifecycles)
 - `sizing.md` — EC2 instance sizing and container density guide
-- `setup-ci.md` — GitHub Actions CI/CD setup for agent image builds
-- `fly-setup.md` — Fly.io deployment setup and configuration
 - `supabase-setup.md` — Supabase project setup, `readings` table, `reader` schema for PostgREST, and the publishable-key model used by the reader container

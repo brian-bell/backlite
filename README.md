@@ -40,10 +40,6 @@ make test-fake-agent    # Unit tests for the fake agent image
 make test-schema        # Schemathesis fuzz tests against OpenAPI spec
 ```
 
-### Local Tunnel (for webhooks)
-
-To receive inbound webhooks (Discord interactions, Twilio SMS) during local development, expose `localhost:8080` over HTTPS with a tunneling tool of your choice (for example `ngrok http 8080`). Set the public URL as the Discord Interactions Endpoint URL and the Twilio webhook URL. Discord task lifecycle notifications will then land in the configured channel and per-task thread. See [docs/discord-setup.md](docs/discord-setup.md) and [docs/sms-setup.md](docs/sms-setup.md) for full configuration.
-
 ## Submitting Tasks
 
 Scripts pass through only explicitly-set options; the server applies defaults for anything omitted. Use `--pr` / `--no-pr` to override the server's `BACKFLOW_DEFAULT_CREATE_PR` setting.
@@ -124,10 +120,10 @@ curl -X POST http://localhost:8080/api/v1/tasks \
 | `DELETE` | `/api/v1/tasks/{id}` | Cancel a task |
 | `POST` | `/api/v1/tasks/{id}/retry` | Retry a failed/cancelled/interrupted task |
 | `GET` | `/api/v1/tasks/{id}/logs` | Container logs (`?tail=100`) |
+| `GET` | `/api/v1/tasks/{id}/output` | Persisted agent stdout log |
+| `GET` | `/api/v1/tasks/{id}/output.json` | Persisted task metadata snapshot |
 | `GET` | `/api/v1/health` | Health check |
 | `GET` | `/debug/stats` | Operational stats (PID, uptime, running tasks, pool metrics) |
-| `POST` | `/webhooks/discord` | Discord interaction endpoint (signature-verified) |
-| `POST` | `/webhooks/sms/inbound` | Twilio inbound SMS webhook |
 
 ### Task Request Fields
 
@@ -152,7 +148,7 @@ curl -X POST http://localhost:8080/api/v1/tasks \
 | `claude_md` | string | Extra CLAUDE.md content injected into the repo |
 | `allowed_tools` | []string | Restrict agent tool access |
 | `env_vars` | map | Extra env vars passed to the container (keys must be POSIX-valid; system keys like `ANTHROPIC_API_KEY` are reserved) |
-| `save_agent_output` | bool | Save agent output to S3 (omit to use server default) |
+| `save_agent_output` | bool | Persist agent output for the `/output` endpoints (omit to use server default) |
 
 ## Monitoring and Operations
 
@@ -231,63 +227,6 @@ BACKFLOW_CLOUDWATCH_LOG_GROUP=/ecs/backflow
 ```
 
 Prerequisites: ECS cluster with Fargate capacity providers, task definition with `awslogs` log driver, subnets with egress, IAM roles for image pull + log delivery.
-
-## Code Review Agents
-
-This project includes Claude Code agent definitions (`.claude/agents/`) for automated code review.
-
-### Full team review
-
-```bash
-claude --agent review-lead
-```
-
-Spawns a coordinated team of 4 specialized reviewers (structure, errors, style, security) that examine all non-test Go files and produce a prioritized cleanup report.
-
-### Individual reviewers
-
-Run a single reviewer for a focused analysis:
-
-```bash
-claude --agent structure-reviewer   # Architecture, duplication, dead code
-claude --agent error-reviewer       # Error handling, resource management
-claude --agent style-reviewer       # Go idioms, naming, simplification
-claude --agent security-reviewer    # Injection, auth, secrets, input validation
-```
-
-All agents are read-only — they suggest changes but never modify files. Test files are excluded from review.
-
-## Feature Acceptance Agents
-
-A separate agent team evaluates features from a product perspective — not code quality, but whether a feature is complete, safe, maintainable, and documented. All reviewers evaluate against `docs/ROADMAP.md` as the north star for product direction.
-
-### Review a PR
-
-```bash
-claude --agent acceptance-lead "Review PR #42"
-```
-
-### Review an existing feature
-
-```bash
-claude --agent acceptance-lead "Review the discord feature"
-claude --agent acceptance-lead "Review the fargate feature"
-claude --agent acceptance-lead "Review the notifications feature"
-```
-
-The lead spawns 5 specialist reviewers in parallel:
-
-| Reviewer | Focus |
-|----------|-------|
-| `product-reviewer` | Roadmap alignment, persona fit, competitive positioning, cross-mode completeness |
-| `acceptance-security-reviewer` | Attack surface, auth boundaries, credential handling, threat model |
-| `quality-reviewer` | Test coverage, edge cases, status transitions, graceful degradation |
-| `maintainability-reviewer` | Pattern consistency, config model, observability, complexity budget |
-| `documentation-reviewer` | CLAUDE.md accuracy, config docs, schema docs, discoverability |
-
-The consolidated report ends with a verdict: **ACCEPT**, **ACCEPT WITH CONDITIONS**, or **REQUEST CHANGES**.
-
-All agents are read-only — they analyze and report but never modify files or post PR comments.
 
 ## Configuration
 
@@ -373,31 +312,3 @@ Defaults are set in `internal/config/config.go` and can be overridden via env va
 | `BACKFLOW_WEBHOOK_EVENTS` | all | Comma-separated event filter |
 
 Events: `task.created`, `task.running`, `task.completed`, `task.failed`, `task.needs_input`, `task.interrupted`, `task.recovering`, `task.cancelled`, `task.retry`
-
-### Discord
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `BACKFLOW_DISCORD_APP_ID` | | Discord application ID (enables integration when set) |
-| `BACKFLOW_DISCORD_PUBLIC_KEY` | | Ed25519 public key for interaction verification |
-| `BACKFLOW_DISCORD_BOT_TOKEN` | | Bot token for API calls |
-| `BACKFLOW_DISCORD_GUILD_ID` | | Target server ID |
-| `BACKFLOW_DISCORD_CHANNEL_ID` | | Target channel ID |
-| `BACKFLOW_DISCORD_ALLOWED_ROLES` | | Comma-separated role IDs for mutation authorization |
-| `BACKFLOW_DISCORD_EVENTS` | all | Comma-separated event filter |
-
-See [docs/discord-setup.md](docs/discord-setup.md) for full setup instructions.
-
-### SMS (Twilio)
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `BACKFLOW_SMS_PROVIDER` | | Set to `twilio` to enable SMS |
-| `TWILIO_ACCOUNT_SID` | | Twilio Account SID (required when provider is `twilio`) |
-| `TWILIO_AUTH_TOKEN` | | Twilio Auth Token (required when provider is `twilio`) |
-| `BACKFLOW_SMS_FROM_NUMBER` | | Twilio phone number in E.164 format (required when provider is `twilio`) |
-| `BACKFLOW_SMS_EVENTS` | `task.completed,task.failed` | Comma-separated events that trigger outbound SMS |
-| `BACKFLOW_SMS_OUTBOUND_ENABLED` | `true` | Set to `false` to disable outbound SMS while keeping inbound |
-
-See [docs/sms-setup.md](docs/sms-setup.md) for full setup instructions including allowed sender registration and A2P 10DLC compliance.
-

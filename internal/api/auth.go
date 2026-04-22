@@ -128,6 +128,10 @@ func requiredScopeForRequest(r *http.Request) (string, bool) {
 		return "tasks:read", true
 	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/logs"):
 		return "tasks:read", true
+	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/output"):
+		return "tasks:read", true
+	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/output.json"):
+		return "tasks:read", true
 	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/tasks/"):
 		return "tasks:write", true
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/retry"):

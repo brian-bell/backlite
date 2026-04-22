@@ -213,7 +213,7 @@ func (s *PostgresStore) RequeueTask(ctx context.Context, id string, reason strin
 	now := time.Now().UTC()
 	_, err := s.q.Exec(ctx,
 		`UPDATE tasks SET status=$1, instance_id='', container_id='', started_at=NULL,
-		 retry_count=retry_count+1, ready_for_retry=false, error=$2, updated_at=$3 WHERE id=$4`,
+		 retry_count=retry_count+1, ready_for_retry=false, error=$2, output_url='', updated_at=$3 WHERE id=$4`,
 		models.TaskStatusPending, "re-queued: "+reason+" at "+now.Format(time.RFC3339),
 		now, id,
 	)
@@ -254,7 +254,7 @@ func (s *PostgresStore) RetryTask(ctx context.Context, id string, maxRetries int
 	tag, err := s.q.Exec(ctx,
 		`UPDATE tasks SET status=$1, instance_id='', container_id='', started_at=NULL,
 		 completed_at=NULL, retry_count=retry_count+1, user_retry_count=user_retry_count+1,
-		 ready_for_retry=false, error=$2, updated_at=$3
+		 ready_for_retry=false, error=$2, output_url='', updated_at=$3
 		 WHERE id=$4 AND ready_for_retry=true AND user_retry_count < $5`,
 		models.TaskStatusPending,
 		"re-queued: user_retry at "+now.Format(time.RFC3339),
@@ -357,114 +357,6 @@ func (s *PostgresStore) ResetRunningContainers(ctx context.Context, id string) e
 		time.Now().UTC(), id,
 	)
 	return err
-}
-
-// --- Allowed senders ---
-
-func (s *PostgresStore) CreateAllowedSender(ctx context.Context, sender *models.AllowedSender) error {
-	_, err := s.q.Exec(ctx,
-		"INSERT INTO allowed_senders (channel_type, address, enabled, created_at) VALUES ($1, $2, $3, $4)",
-		sender.ChannelType, sender.Address, sender.Enabled, sender.CreatedAt,
-	)
-	return err
-}
-
-func (s *PostgresStore) GetAllowedSender(ctx context.Context, channelType, address string) (*models.AllowedSender, error) {
-	row := s.q.QueryRow(ctx,
-		"SELECT channel_type, address, enabled, created_at FROM allowed_senders WHERE channel_type = $1 AND address = $2",
-		channelType, address,
-	)
-
-	var sender models.AllowedSender
-	err := row.Scan(&sender.ChannelType, &sender.Address, &sender.Enabled, &sender.CreatedAt)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrNotFound
-		}
-		return nil, err
-	}
-	return &sender, nil
-}
-
-// --- Discord installs ---
-
-func (s *PostgresStore) UpsertDiscordInstall(ctx context.Context, install *models.DiscordInstall) error {
-	roles := install.AllowedRoles
-	if roles == nil {
-		roles = []string{}
-	}
-	allowedRoles, err := json.Marshal(roles)
-	if err != nil {
-		return fmt.Errorf("marshal allowed_roles: %w", err)
-	}
-	_, err = s.q.Exec(ctx, `
-		INSERT INTO discord_installs (guild_id, app_id, channel_id, allowed_roles, installed_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		ON CONFLICT (guild_id) DO UPDATE SET
-			app_id = EXCLUDED.app_id,
-			channel_id = EXCLUDED.channel_id,
-			allowed_roles = EXCLUDED.allowed_roles,
-			updated_at = EXCLUDED.updated_at`,
-		install.GuildID, install.AppID, install.ChannelID, allowedRoles,
-		install.InstalledAt, install.UpdatedAt,
-	)
-	return err
-}
-
-func (s *PostgresStore) GetDiscordInstall(ctx context.Context, guildID string) (*models.DiscordInstall, error) {
-	row := s.q.QueryRow(ctx,
-		"SELECT guild_id, app_id, channel_id, allowed_roles, installed_at, updated_at FROM discord_installs WHERE guild_id = $1",
-		guildID,
-	)
-	var install models.DiscordInstall
-	var allowedRoles []byte
-	err := row.Scan(&install.GuildID, &install.AppID, &install.ChannelID, &allowedRoles, &install.InstalledAt, &install.UpdatedAt)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrNotFound
-		}
-		return nil, err
-	}
-	if err := json.Unmarshal(allowedRoles, &install.AllowedRoles); err != nil {
-		return nil, fmt.Errorf("unmarshal allowed_roles: %w", err)
-	}
-	return &install, nil
-}
-
-func (s *PostgresStore) DeleteDiscordInstall(ctx context.Context, guildID string) error {
-	_, err := s.q.Exec(ctx, "DELETE FROM discord_installs WHERE guild_id = $1", guildID)
-	return err
-}
-
-// --- Discord task threads ---
-
-func (s *PostgresStore) UpsertDiscordTaskThread(ctx context.Context, thread *models.DiscordTaskThread) error {
-	_, err := s.q.Exec(ctx, `
-		INSERT INTO discord_task_threads (task_id, root_message_id, thread_id, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (task_id) DO UPDATE SET
-			root_message_id = EXCLUDED.root_message_id,
-			thread_id = EXCLUDED.thread_id,
-			updated_at = EXCLUDED.updated_at`,
-		thread.TaskID, thread.RootMessageID, thread.ThreadID, thread.CreatedAt, thread.UpdatedAt,
-	)
-	return err
-}
-
-func (s *PostgresStore) GetDiscordTaskThread(ctx context.Context, taskID string) (*models.DiscordTaskThread, error) {
-	row := s.q.QueryRow(ctx,
-		"SELECT task_id, root_message_id, thread_id, created_at, updated_at FROM discord_task_threads WHERE task_id = $1",
-		taskID,
-	)
-	var thread models.DiscordTaskThread
-	err := row.Scan(&thread.TaskID, &thread.RootMessageID, &thread.ThreadID, &thread.CreatedAt, &thread.UpdatedAt)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrNotFound
-		}
-		return nil, err
-	}
-	return &thread, nil
 }
 
 // --- API keys ---

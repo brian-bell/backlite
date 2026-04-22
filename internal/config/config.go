@@ -87,26 +87,11 @@ type Config struct {
 	WebhookURL    string
 	WebhookEvents []string
 
-	// SMS / Messaging
-	SMSProvider        string
-	TwilioAccountSID   string
-	TwilioAuthToken    string
-	SMSFromNumber      string
-	SMSEvents          []string
-	SMSOutboundEnabled bool
-
-	// Discord
-	DiscordAppID        string
-	DiscordPublicKey    string
-	DiscordBotToken     string
-	DiscordGuildID      string
-	DiscordChannelID    string
-	DiscordCommandName  string
-	DiscordAllowedRoles []string
-	DiscordEvents       []string
-
 	// S3 (task data: agent output, offloaded config for large prompts)
 	S3Bucket string
+
+	// Filesystem data directory (agent output log + task metadata written here)
+	DataDir string
 
 	// Logging
 	LogFile string
@@ -120,8 +105,6 @@ type Config struct {
 	// Orchestrator
 	PollInterval time.Duration
 }
-
-func (c *Config) DiscordEnabled() bool { return c.DiscordAppID != "" }
 
 func (c *Config) MaxConcurrent() int {
 	if c.Mode == ModeFargate {
@@ -174,16 +157,9 @@ func Load() (*Config, error) {
 		SupabaseURL:             os.Getenv("SUPABASE_URL"),
 		SupabaseAnonKey:         os.Getenv("SUPABASE_ANON_KEY"),
 		S3Bucket:                os.Getenv("BACKFLOW_S3_BUCKET"),
+		DataDir:                 envOr("BACKFLOW_DATA_DIR", "./data"),
 		GitHubToken:             os.Getenv("GITHUB_TOKEN"),
 		WebhookURL:              os.Getenv("BACKFLOW_WEBHOOK_URL"),
-		DiscordAppID:            os.Getenv("BACKFLOW_DISCORD_APP_ID"),
-		DiscordPublicKey:        os.Getenv("BACKFLOW_DISCORD_PUBLIC_KEY"),
-		DiscordBotToken:         os.Getenv("BACKFLOW_DISCORD_BOT_TOKEN"),
-		DiscordGuildID:          os.Getenv("BACKFLOW_DISCORD_GUILD_ID"),
-		DiscordChannelID:        os.Getenv("BACKFLOW_DISCORD_CHANNEL_ID"),
-		DiscordCommandName:      envOr("BACKFLOW_DISCORD_COMMAND_NAME", "backflow"),
-		DiscordAllowedRoles:     envCSV("BACKFLOW_DISCORD_ALLOWED_ROLES"),
-		DiscordEvents:           envCSV("BACKFLOW_DISCORD_EVENTS"),
 		LogFile:                 os.Getenv("BACKFLOW_LOG_FILE"),
 		DatabaseURL:             os.Getenv("BACKFLOW_DATABASE_URL"),
 		MaxUserRetries:          envInt("BACKFLOW_MAX_USER_RETRIES", 2),
@@ -194,12 +170,6 @@ func Load() (*Config, error) {
 	c.DefaultSelfReview = envBool("BACKFLOW_DEFAULT_SELF_REVIEW", false)
 	c.DefaultSaveOutput = envBool("BACKFLOW_DEFAULT_SAVE_AGENT_OUTPUT", true)
 
-	c.SMSProvider = envOr("BACKFLOW_SMS_PROVIDER", "")
-	c.TwilioAccountSID = os.Getenv("TWILIO_ACCOUNT_SID")
-	c.TwilioAuthToken = os.Getenv("TWILIO_AUTH_TOKEN")
-	c.SMSFromNumber = os.Getenv("BACKFLOW_SMS_FROM_NUMBER")
-	c.SMSEvents = envCSVOrDefault("BACKFLOW_SMS_EVENTS", []string{"task.completed", "task.failed"})
-	c.SMSOutboundEnabled = envOr("BACKFLOW_SMS_OUTBOUND_ENABLED", "true") == "true"
 	c.WebhookEvents = envCSV("BACKFLOW_WEBHOOK_EVENTS")
 
 	if c.Mode != ModeEC2 && c.Mode != ModeLocal && c.Mode != ModeFargate {
@@ -241,30 +211,6 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("BACKFLOW_ECS_SUBNETS is required when BACKFLOW_MODE=%s", ModeFargate)
 		case c.CloudWatchLogGroup == "":
 			return nil, fmt.Errorf("BACKFLOW_CLOUDWATCH_LOG_GROUP is required when BACKFLOW_MODE=%s", ModeFargate)
-		}
-	}
-
-	if c.SMSProvider != "" {
-		switch c.SMSProvider {
-		case "twilio":
-			if c.TwilioAccountSID == "" || c.TwilioAuthToken == "" || c.SMSFromNumber == "" {
-				return nil, fmt.Errorf("TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and BACKFLOW_SMS_FROM_NUMBER are required when BACKFLOW_SMS_PROVIDER=twilio")
-			}
-		default:
-			return nil, fmt.Errorf("invalid BACKFLOW_SMS_PROVIDER: %q (must be %q)", c.SMSProvider, "twilio")
-		}
-	}
-
-	if c.DiscordAppID != "" {
-		switch {
-		case c.DiscordPublicKey == "":
-			return nil, fmt.Errorf("BACKFLOW_DISCORD_PUBLIC_KEY is required when BACKFLOW_DISCORD_APP_ID is set")
-		case c.DiscordBotToken == "":
-			return nil, fmt.Errorf("BACKFLOW_DISCORD_BOT_TOKEN is required when BACKFLOW_DISCORD_APP_ID is set")
-		case c.DiscordGuildID == "":
-			return nil, fmt.Errorf("BACKFLOW_DISCORD_GUILD_ID is required when BACKFLOW_DISCORD_APP_ID is set")
-		case c.DiscordChannelID == "":
-			return nil, fmt.Errorf("BACKFLOW_DISCORD_CHANNEL_ID is required when BACKFLOW_DISCORD_APP_ID is set")
 		}
 	}
 
@@ -340,14 +286,6 @@ func envCSV(key string) []string {
 		if part != "" {
 			values = append(values, part)
 		}
-	}
-	return values
-}
-
-func envCSVOrDefault(key string, fallback []string) []string {
-	values := envCSV(key)
-	if values == nil {
-		return fallback
 	}
 	return values
 }

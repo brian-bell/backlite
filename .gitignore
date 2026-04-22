@@ -12,3 +12,4 @@ mise.toml
 .claude/worktrees/
 logs/
 backflow
+data/

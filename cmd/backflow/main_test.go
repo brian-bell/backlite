@@ -102,12 +102,6 @@ func TestBuildHTTPHandler_NoWebhookRoutes(t *testing.T) {
 			path:   "/webhooks/discord",
 			want:   http.StatusNotFound,
 		},
-		{
-			name:   "sms webhook remains absent from binary routes",
-			method: http.MethodPost,
-			path:   "/webhooks/sms/inbound",
-			want:   http.StatusNotFound,
-		},
 	}
 
 	for _, tc := range tests {

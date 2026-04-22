@@ -597,6 +597,95 @@ READER_TASK_DEF_ARN=$(aws ecs register-task-definition \
     --output text)
 echo "    Reader task definition: ${READER_TASK_DEF_ARN}"
 
+# =============================================================================
+# Fly.io deployment IAM user
+# =============================================================================
+# NOTE: Fly.io is no longer a deployment target for backflow. This block is
+# retained so the teardown path (delete the IAM user + its inline policy) is
+# discoverable. Skipped unless BACKFLOW_PROVISION_FLY_USER=1.
+
+if [ "${BACKFLOW_PROVISION_FLY_USER:-0}" = "1" ]; then
+    FLY_USER="backflow-fly"
+    echo "==> Creating IAM user for Fly.io deployment..."
+    if aws iam get-user --user-name "$FLY_USER" &>/dev/null; then
+        echo "    IAM user already exists, updating policy..."
+    else
+        aws iam create-user --user-name "$FLY_USER"
+    fi
+
+    FLY_POLICY=$(cat <<FLYEOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ECS",
+      "Effect": "Allow",
+      "Action": [
+        "ecs:RunTask",
+        "ecs:StopTask",
+        "ecs:DescribeTasks",
+        "ecs:ListTasks"
+      ],
+      "Resource": [
+        "arn:aws:ecs:${REGION}:${ACCOUNT_ID}:cluster/${ECS_CLUSTER}",
+        "arn:aws:ecs:${REGION}:${ACCOUNT_ID}:task/${ECS_CLUSTER}/*",
+        "arn:aws:ecs:${REGION}:${ACCOUNT_ID}:task-definition/${ECS_CONTAINER_NAME}:*",
+        "arn:aws:ecs:${REGION}:${ACCOUNT_ID}:task-definition/${READER_TASK_FAMILY}:*"
+      ]
+    },
+    {
+      "Sid": "ECSPassRole",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": [
+        "arn:aws:iam::${ACCOUNT_ID}:role/${ECS_EXECUTION_ROLE}",
+        "arn:aws:iam::${ACCOUNT_ID}:role/${ECS_TASK_ROLE}"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "ecs-tasks.amazonaws.com"
+        }
+      }
+    },
+    {
+      "Sid": "CloudWatchLogs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:GetLogEvents",
+        "logs:FilterLogEvents",
+        "logs:DescribeLogStreams"
+      ],
+      "Resource": "arn:aws:logs:${REGION}:${ACCOUNT_ID}:log-group:${CW_LOG_GROUP}:*"
+    },
+    {
+      "Sid": "S3",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject"
+      ],
+      "Resource": "arn:aws:s3:::${S3_BUCKET}/*"
+    }
+  ]
+}
+FLYEOF
+)
+
+    aws iam put-user-policy \
+        --user-name "$FLY_USER" \
+        --policy-name "${FLY_USER}-policy" \
+        --policy-document "$FLY_POLICY"
+
+    echo "    IAM user: ${FLY_USER}"
+    echo "    Policy: ECS (${ECS_CLUSTER}), CloudWatch (${CW_LOG_GROUP}), S3 (${S3_BUCKET})"
+fi
+
+# To tear down the Fly.io IAM user previously provisioned by this script:
+#   aws iam delete-user-policy --user-name backflow-fly --policy-name backflow-fly-policy
+#   aws iam list-access-keys --user-name backflow-fly --query 'AccessKeyMetadata[].AccessKeyId' --output text \
+#     | tr '\t' '\n' | xargs -I{} aws iam delete-access-key --user-name backflow-fly --access-key-id {}
+#   aws iam delete-user --user-name backflow-fly
+
 echo ""
 echo "==> Setup complete!"
 echo ""

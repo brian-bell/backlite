@@ -3,16 +3,19 @@ set -euo pipefail
 
 # Create a task via the Backflow API
 #
+# The prompt must include a GitHub URL — the agent's prep stage infers
+# repo_url, target_branch, and task_type from the prompt text.
+#
 # Usage:
-#   ./scripts/create-task.sh <repo_url> <prompt> [options]
-#   ./scripts/create-task.sh <repo_url> --plan <file> [options]
+#   ./scripts/create-task.sh <prompt> [options]
+#   ./scripts/create-task.sh --plan <file> [options]
 #
 # Examples:
-#   ./scripts/create-task.sh https://github.com/org/repo "Fix the login bug"
-#   ./scripts/create-task.sh https://github.com/org/repo "Add unit tests" --model claude-sonnet-4-6
-#   ./scripts/create-task.sh https://github.com/org/repo "Refactor auth" --pr-title "Refactor auth module" --budget 20
-#   ./scripts/create-task.sh https://github.com/org/repo "Fix bug" --no-pr --effort low
-#   ./scripts/create-task.sh https://github.com/org/repo --plan plan.md --self-review
+#   ./scripts/create-task.sh "Fix the login bug in https://github.com/org/repo"
+#   ./scripts/create-task.sh "Add unit tests to github.com/org/repo" --model claude-sonnet-4-6
+#   ./scripts/create-task.sh "Refactor auth in https://github.com/org/repo" --pr-title "Refactor auth" --budget 20
+#   ./scripts/create-task.sh "Fix bug in https://github.com/org/repo" --no-pr --effort low
+#   ./scripts/create-task.sh --plan plan.md --self-review
 #
 # For PR reviews, use ./scripts/review-pr.sh instead.
 
@@ -20,8 +23,10 @@ BACKFLOW_URL="${BACKFLOW_URL:-http://localhost:8080}"
 
 usage() {
     cat <<USAGE
-Usage: $(basename "$0") <repo_url> <prompt> [options]
-       $(basename "$0") <repo_url> --plan <file> [options]
+Usage: $(basename "$0") <prompt> [options]
+       $(basename "$0") --plan <file> [options]
+
+The prompt must include a GitHub URL so the agent can infer the repo.
 
 Options:
   --plan <file>           Read prompt from a file (use instead of <prompt> arg)
@@ -46,14 +51,11 @@ USAGE
     exit 1
 }
 
-if [ $# -lt 2 ]; then
+if [ $# -lt 1 ]; then
     usage
 fi
 
-REPO_URL="$1"
-shift 1
-
-# If the next argument is a flag (starts with --), prompt must come from --plan
+# If the first argument is a flag (starts with --), prompt must come from --plan
 if [[ "$1" == --* ]]; then
     PROMPT=""
 else
@@ -118,7 +120,6 @@ fi
 
 # Build JSON payload
 JSON=$(jq -n \
-    --arg repo_url "$REPO_URL" \
     --arg prompt "$PROMPT" \
     --arg harness "$HARNESS" \
     --arg branch "$BRANCH" \
@@ -136,7 +137,6 @@ JSON=$(jq -n \
     --arg claude_md "$CLAUDE_MD" \
     --arg context "$CONTEXT" \
     '{
-        repo_url: $repo_url,
         prompt: $prompt
     }
     + if $harness != "" then {harness: $harness} else {} end

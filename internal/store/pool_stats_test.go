@@ -5,7 +5,7 @@ import (
 )
 
 func TestPoolStats_ReturnsValidStats(t *testing.T) {
-	s := testPostgresStore(t)
+	s := testSQLiteStore(t)
 
 	stats := s.PoolStats()
 

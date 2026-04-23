@@ -32,9 +32,6 @@ type SQLiteStore struct {
 	q  sqliteQuerier
 }
 
-// PostgresStore is kept as a compatibility alias for older tests and callers.
-type PostgresStore = SQLiteStore
-
 // NewSQLite opens a local SQLite database, runs goose migrations, and returns
 // a ready-to-use store.
 func NewSQLite(ctx context.Context, databasePath string, migrationsDir string) (*SQLiteStore, error) {
@@ -80,11 +77,6 @@ func NewSQLite(ctx context.Context, databasePath string, migrationsDir string) (
 	}
 
 	return &SQLiteStore{db: db, q: db}, nil
-}
-
-// NewPostgres is kept as a compatibility wrapper for older tests and callers.
-func NewPostgres(ctx context.Context, databasePath string, migrationsDir string) (*SQLiteStore, error) {
-	return NewSQLite(ctx, databasePath, migrationsDir)
 }
 
 func (s *SQLiteStore) Close() error {

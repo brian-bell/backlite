@@ -821,7 +821,7 @@ components:
         context:
           type: string
           description: Additional context provided to the agent.
-          example: "This service uses chi router and pgx for postgres"
+          example: "This service uses chi router and SQLite via database/sql"
         model:
           type: string
           description: LLM model override. Defaults to server configuration.

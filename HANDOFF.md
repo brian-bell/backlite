@@ -17,7 +17,7 @@ Ledger of cross-PR tradeoffs. Each entry: decision → consequence for downstrea
 
 ## Completion artifact ordering
 
-- **Output logs and metadata snapshots are written in two steps.** The orchestrator now persists `container_output.log` first to obtain `output_url`, then completes the task in Postgres, reloads the finished row, and only then writes `task.json` / `task_metadata.json` and emits completion-side metadata. This avoids stale "running" snapshots at `/output.json` and in S3, at the cost of splitting the writer interface into separate log and metadata calls.
+- **Output logs and metadata snapshots are written in two steps.** The orchestrator now persists `container_output.log` first to obtain `output_url`, then completes the task in SQLite, reloads the finished row, and only then writes `task.json` and emits completion-side metadata. This avoids stale "running" snapshots at `/output.json`, at the cost of splitting the writer interface into separate log and metadata calls.
 
 ## Retry output gating
 
@@ -33,6 +33,5 @@ Ledger of cross-PR tradeoffs. Each entry: decision → consequence for downstrea
 
 ## AWS runtime removal (issue #5)
 
-- **Only the local Docker runtime remains.** `internal/orchestrator/{ec2,fargate,s3}`, `scaler.go`, `local.go`, `s3.go`, spot-handler paths, `cmd/migrate-to-postgres`, every `BACKFLOW_MODE` branch, and every `BACKFLOW_ECS_*` / `BACKFLOW_S3_BUCKET` / EC2 env var were deleted in one PR. `go list -deps ./... | grep aws-sdk-go-v2` is empty. If AWS execution is ever wanted again, it will need to be rebuilt from scratch rather than revived from git history — the Fargate and EC2 runners were deeply entangled with ECS task overrides, SSM, and spot-interruption handling that the simplified orchestrator no longer models.
-- **`task_metadata.json` is no longer uploaded to S3.** The filesystem `task.json` (written by `internal/orchestrator/outputs`) is now the single post-run metadata artifact. Anything that was reading the S3 copy must switch to `GET /api/v1/tasks/{id}/output.json`. The `taskMetadata` struct stayed in `monitor.go` (used by `saveOutputMetadata` → `outputs.SaveMetadata`); only the S3 upload path was removed.
+- **Only the local Docker runtime remains.** The AWS-specific orchestrator paths, `BACKFLOW_MODE` branches, and `BACKFLOW_ECS_*` / `BACKFLOW_S3_BUCKET` / EC2 env vars were deleted in one PR. `go list -deps ./... | grep aws-sdk-go-v2` is empty. If AWS execution is ever wanted again, it will need to be rebuilt from scratch rather than revived from git history — the Fargate and EC2 runners were deeply entangled with ECS task overrides, SSM, and spot-interruption handling that the simplified orchestrator no longer models.
 - **`scripts/setup-aws.sh` and `scripts/teardown-aws.sh` share identifiers via `scripts/aws-resource-names.sh`.** `teardown-aws.sh` was added (wired as `make teardown-aws`) so operators can clean up existing AWS resources; it defaults to dry-run, is idempotent, and continues on error. The teardown script, its helper, and the setup script should all be deleted once the fork has run AWS-free long enough that no lingering cleanup is needed (no hard deadline; tracked here rather than as a follow-up issue).

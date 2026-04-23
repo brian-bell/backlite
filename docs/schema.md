@@ -67,8 +67,8 @@ Tracks EC2 spot instances managed by the orchestrator.
 | `status` | `TEXT` | `'pending'` | Instance lifecycle state. One of: `pending`, `running`, `draining`, `terminated`. |
 | `max_containers` | `INTEGER` | `4` | Maximum concurrent agent containers on this instance. |
 | `running_containers` | `INTEGER` | `0` | Current number of running containers. |
-| `created_at` | `TIMESTAMPTZ` | `now()` | When the instance record was created. |
-| `updated_at` | `TIMESTAMPTZ` | `now()` | Last modification time. |
+| `created_at` | `TEXT` | current UTC timestamp | When the instance record was created. |
+| `updated_at` | `TEXT` | current UTC timestamp | Last modification time. |
 
 **Indexes:**
 - `idx_instances_status` on `status` — used to find running/pending instances for task dispatch.
@@ -109,8 +109,8 @@ Structured output of completed `task_mode=read` tasks. Populated by the orchestr
 | `summary` | `TEXT` | `''` | Full markdown summary. |
 | `raw_output` | `TEXT` | `'{}'` | Lossless JSON of the agent's parsed `status.json`, kept for future re-normalization. |
 | `embedding` | `TEXT` | `''` | JSON-encoded OpenAI `text-embedding-3-small` vector of the final TL;DR. Embedded by the orchestrator, not the agent. |
-| `is_available` | `BOOLEAN` | `true` | When `false`, the row is hidden from the Supabase Data API (RLS policy + RPC filter). Used for moderation / soft-delete. |
-| `created_at` | `TIMESTAMPTZ` | `now()` | When the reading was stored. |
+| `is_available` | `BOOLEAN` | `true` | When `false`, the row is hidden from Backflow duplicate/similarity lookups and treated as moderated / soft-deleted content. |
+| `created_at` | `TEXT` | current UTC timestamp | When the reading was stored. |
 
 **Indexes:**
 - Unique `idx_readings_url` on `url` — duplicate detection and upsert.

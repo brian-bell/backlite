@@ -1,14 +1,16 @@
-# ADR-001: HNSW over IVFFlat for embedding index
+# ADR-001: Historical pgvector HNSW decision
 
 ## Status
 
-Accepted
+Superseded by the SQLite migration
 
 ## Context
 
-The `readings` table stores 1536-dimensional embeddings (OpenAI `text-embedding-3-small`) and needs a vector similarity index for `match_readings` queries. pgvector supports two ANN index types: IVFFlat and HNSW.
+This ADR described the former Postgres + pgvector design for `readings` similarity search.
+Backflow now stores embeddings as JSON text in SQLite and ranks cosine similarity in Go, so
+the pgvector index decision is no longer part of the active architecture.
 
-## Decision
+## Historical decision
 
 Use HNSW (`CREATE INDEX ... USING hnsw (embedding vector_cosine_ops)`).
 

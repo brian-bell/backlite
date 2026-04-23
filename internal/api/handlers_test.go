@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -443,5 +444,68 @@ func TestDeleteTask_EmitsCancelledEvent(t *testing.T) {
 	}
 	if emitter.events[0].TaskID != taskID {
 		t.Fatalf("event task_id = %q, want %q", emitter.events[0].TaskID, taskID)
+	}
+}
+
+// TestLookupReading_EmptyResultReturnsDataArray locks in the JSON envelope
+// shape on a miss. The reader container's read-lookup.sh requires
+// `.data | type == "array"`; if `data` is ever omitted on empty results the
+// script fails with "unexpected response from Backflow API".
+func TestLookupReading_EmptyResultReturnsDataArray(t *testing.T) {
+	srv := testServer(t)
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/readings/lookup?url="+url.QueryEscape("https://example.com/never-captured"),
+		nil,
+	)
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v (raw: %s)", err, rr.Body.String())
+	}
+	raw, ok := body["data"]
+	if !ok {
+		t.Fatalf("response missing \"data\" key: %s", rr.Body.String())
+	}
+	if string(raw) != "[]" {
+		t.Fatalf("data = %s, want []", string(raw))
+	}
+}
+
+// TestFindSimilarReadings_EmptyResultReturnsDataArray mirrors the lookup test
+// for the POST similarity endpoint.
+func TestFindSimilarReadings_EmptyResultReturnsDataArray(t *testing.T) {
+	srv := testServer(t)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/readings/similar",
+		strings.NewReader(`{"query_embedding":[1,0,0],"match_count":3}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v (raw: %s)", err, rr.Body.String())
+	}
+	raw, ok := body["data"]
+	if !ok {
+		t.Fatalf("response missing \"data\" key: %s", rr.Body.String())
+	}
+	if string(raw) != "[]" {
+		t.Fatalf("data = %s, want []", string(raw))
 	}
 }

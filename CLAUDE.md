@@ -22,7 +22,7 @@ make test               # Unit/integration tests (excludes blackbox; see make te
 make lint               # go vet ./...
 make test-schema        # Schemathesis fuzz tests against OpenAPI spec (requires docker, goose, schemathesis)
 make test-blackbox      # Black-box integration test (builds fake agent, spins up server + DB)
-make test-soak          # Soak test (10 min short mode; warns before truncating tasks DB)
+make test-soak          # Soak test (10 min short mode; starts dedicated server on sibling -soak.db)
 make test-fake-agent    # Unit tests for the fake agent Docker image
 make test-reader-scripts         # Reader-agent shell script tests
 make test-reader-status-writer   # Reader-agent status writer test
@@ -82,7 +82,7 @@ Minimal Alpine image used by black-box and soak tests. Reads `FAKE_OUTCOME` env 
 
 ### Soak test (`test/soak/`)
 
-Long-running resource leak detector. Submits tasks at intervals, collects RSS, pool stats, and container counts, then analyzes for memory growth and container accumulation. Run via `make test-soak` (10-min short mode). Truncates the tasks table and prunes stale containers at start and end. The wrapper script (`scripts/test-soak.sh`) warns before truncating and asks for confirmation.
+Long-running resource leak detector. Submits tasks at intervals, collects RSS, pool stats, and container counts, then analyzes for memory growth and container accumulation. Run via `make test-soak` (10-min short mode). It derives a sibling `-soak.db` path from `BACKFLOW_DATABASE_PATH`, starts a dedicated Backflow subprocess against that database, truncates the soak tables there, and prunes stale containers at start and end. The wrapper script (`scripts/test-soak.sh`) warns before truncating and asks for confirmation.
 
 ### Agent container (`docker/agent/`)
 

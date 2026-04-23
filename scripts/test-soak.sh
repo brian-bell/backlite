@@ -11,19 +11,31 @@ Exercises cancel, retry, retry limits, and mixed failure modes.
 Requires: BACKFLOW_CONTAINERS_PER_INSTANCE >= 4 (multi-step scenarios
 need concurrent container slots). Set BACKFLOW_AGENT_IMAGE=backflow-fake-agent.
 
-WARNING: This will DELETE task data from your SQLite database.
+Starts a dedicated Backflow subprocess against the soak SQLite database.
+WARNING: This will DELETE task data from that soak database.
 
 Options:
   --short              Run a short soak test (10 minutes)
   --duration <dur>     Custom duration (e.g., 30m, 2h)
   --task-interval <d>  Interval between task submissions (default: 30s)
-  --api-url <url>      Backflow API base URL (default: http://localhost:8080)
   -h, --help           Show this help message
 
 Examples:
   $(basename "$0") --short         # 10-minute soak test
   $(basename "$0") --duration 30m  # 30-minute soak test
 EOF
+}
+
+default_soak_db_path() {
+    local base="${1:-}"
+    if [ -z "$base" ]; then
+        base="./backflow.db"
+    fi
+    case "$base" in
+        *-soak.db) printf '%s\n' "$base" ;;
+        *.db) printf '%s-soak.db\n' "${base%.db}" ;;
+        *) printf '%s-soak.db\n' "$base" ;;
+    esac
 }
 
 case "${1:-}" in
@@ -36,12 +48,15 @@ if [ -f .env ]; then
 fi
 
 cat <<'WARNING'
-WARNING: The soak test will DELETE task data from your SQLite database.
-All existing task records will be deleted.
+WARNING: The soak test starts a dedicated Backflow subprocess against the soak SQLite database.
+That database will be truncated before and after the run.
+All existing soak task records will be deleted.
 WARNING
 
-if [ -n "${BACKFLOW_DATABASE_PATH:-}" ]; then
-    echo "  Database: ${BACKFLOW_DATABASE_PATH}"
+SOAK_DATABASE_PATH="$(default_soak_db_path "${BACKFLOW_DATABASE_PATH:-}")"
+
+if [ -n "${SOAK_DATABASE_PATH}" ]; then
+    echo "  Database: ${SOAK_DATABASE_PATH}"
 fi
 echo ""
 
@@ -52,4 +67,4 @@ case "$answer" in
 esac
 
 echo ""
-exec go run ./test/soak/ "$@"
+exec go run ./test/soak/ --database-path "${SOAK_DATABASE_PATH}" "$@"

@@ -33,7 +33,7 @@ DB-backed tests use temporary SQLite files ending in `-test.db`.
 
 ```bash
 make test-blackbox      # End-to-end: builds fake agent, starts server + DB, runs happy-path
-make test-soak          # Resource leak detector (10 min; truncates tasks DB with confirmation)
+make test-soak          # Resource leak detector (10 min; starts dedicated server on sibling -soak.db)
 make test-fake-agent    # Unit tests for the fake agent image
 make test-schema        # Schemathesis fuzz tests against OpenAPI spec
 ```

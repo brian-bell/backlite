@@ -6,9 +6,13 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,13 +22,14 @@ import (
 )
 
 func main() {
+	defaultDatabasePath := defaultSoakDatabasePath(os.Getenv("BACKFLOW_DATABASE_PATH"))
+
 	var (
 		duration     = flag.Duration("duration", 1*time.Hour, "total test duration")
 		short        = flag.Bool("short", false, "run a short soak test (10 minutes)")
 		taskInterval = flag.Duration("task-interval", 3*time.Second, "interval between task submissions")
-		apiURL       = flag.String("api-url", "http://localhost:8080", "Backflow API base URL")
 		agentImage   = flag.String("agent-image", "backflow-fake-agent:test", "agent image name for container counting")
-		databasePath = flag.String("database-path", os.Getenv("BACKFLOW_DATABASE_PATH"), "SQLite database path (default: $BACKFLOW_DATABASE_PATH)")
+		databasePath = flag.String("database-path", defaultDatabasePath, "SQLite database path for the dedicated soak server (default: $BACKFLOW_DATABASE_PATH with -soak.db suffix)")
 		maxRetries   = flag.Int("max-retries", 2, "max user retries (must match server BACKFLOW_MAX_USER_RETRIES)")
 	)
 	flag.Parse()
@@ -33,16 +38,23 @@ func main() {
 		*duration = 10 * time.Minute
 	}
 
-	fmt.Printf("==> Soak test starting: duration=%s task-interval=%s api-url=%s\n", *duration, *taskInterval, *apiURL)
-
 	// Prune stale containers from previous runs so the baseline starts at 0.
 	pruneStaleContainers(*agentImage)
 
-	// Truncate the tasks table so counts from previous runs don't pollute metrics.
+	apiURL, stopServer, err := startSoakServer(*databasePath, *agentImage)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to start dedicated soak server: %v\n", err)
+		os.Exit(1)
+	}
+	defer stopServer()
+
+	fmt.Printf("==> Soak test starting: duration=%s task-interval=%s api-url=%s database=%s\n", *duration, *taskInterval, apiURL, *databasePath)
+
+	// Truncate the soak DB so counts from previous runs don't pollute metrics.
 	if *databasePath != "" {
 		truncateTasks(*databasePath)
 	} else {
-		fmt.Println("  [warn] no --database-path or BACKFLOW_DATABASE_PATH; skipping task table truncation")
+		fmt.Println("  [warn] no --database-path or BACKFLOW_DATABASE_PATH; skipping soak DB truncation")
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
@@ -87,11 +99,11 @@ func main() {
 						defer func() { <-multiStepSem; wg.Done() }()
 						switch s.Name {
 						case "cancel":
-							runCancelScenario(ctx, client, *apiURL, stats)
+							runCancelScenario(ctx, client, apiURL, stats)
 						case "retry_cycle":
-							runRetryCycleScenario(ctx, client, *apiURL, stats)
+							runRetryCycleScenario(ctx, client, apiURL, stats)
 						case "retry_limit":
-							runRetryLimitScenario(ctx, client, *apiURL, *maxRetries, stats)
+							runRetryLimitScenario(ctx, client, apiURL, *maxRetries, stats)
 						}
 					}(sc)
 					mu.Lock()
@@ -106,7 +118,7 @@ func main() {
 			}
 
 			// Fire-and-forget: create the task and move on.
-			_, err := createTask(client, *apiURL, sc.FakeOutcome)
+			_, err := createTask(client, apiURL, sc.FakeOutcome)
 			mu.Lock()
 			tasksSubmitted++
 			if err != nil {
@@ -126,7 +138,7 @@ func main() {
 
 	// Collect initial baseline after a brief warmup.
 	time.Sleep(5 * time.Second)
-	if s, pid, err := collectMetrics(client, *apiURL, *agentImage, serverPID); err == nil {
+	if s, pid, err := collectMetrics(client, apiURL, *agentImage, serverPID); err == nil {
 		mu.Lock()
 		samples = append(samples, s)
 		mu.Unlock()
@@ -143,7 +155,7 @@ func main() {
 			break
 		}
 
-		s, pid, err := collectMetrics(client, *apiURL, *agentImage, serverPID)
+		s, pid, err := collectMetrics(client, apiURL, *agentImage, serverPID)
 		if err != nil {
 			fmt.Printf("  [warn] metric collection error: %v\n", err)
 			continue
@@ -221,6 +233,182 @@ func main() {
 		}
 		os.Exit(1)
 	}
+}
+
+func defaultSoakDatabasePath(base string) string {
+	if base == "" {
+		base = "./backflow.db"
+	}
+	if strings.HasSuffix(base, "-soak.db") {
+		return base
+	}
+	if filepath.Ext(base) == ".db" {
+		return strings.TrimSuffix(base, ".db") + "-soak.db"
+	}
+	return base + "-soak.db"
+}
+
+func startSoakServer(databasePath, agentImage string) (string, func(), error) {
+	repoRoot, err := soakRepoRoot()
+	if err != nil {
+		return "", nil, err
+	}
+
+	tempDir, err := os.MkdirTemp("", "backflow-soak-*")
+	if err != nil {
+		return "", nil, fmt.Errorf("create temp dir: %w", err)
+	}
+
+	binaryPath := filepath.Join(tempDir, "backflow-soak")
+	build := exec.Command("go", "build", "-trimpath", "-o", binaryPath, "./cmd/backflow")
+	build.Dir = repoRoot
+	build.Stdout = os.Stdout
+	build.Stderr = os.Stderr
+	if err := build.Run(); err != nil {
+		_ = os.RemoveAll(tempDir)
+		return "", nil, fmt.Errorf("build soak server binary: %w", err)
+	}
+
+	port, err := freePort()
+	if err != nil {
+		_ = os.RemoveAll(tempDir)
+		return "", nil, fmt.Errorf("find free port: %w", err)
+	}
+
+	logPath := filepath.Join(tempDir, "backflow-soak.log")
+	logFile, err := os.Create(logPath)
+	if err != nil {
+		_ = os.RemoveAll(tempDir)
+		return "", nil, fmt.Errorf("create soak log file: %w", err)
+	}
+
+	cmd := exec.Command(binaryPath)
+	cmd.Dir = repoRoot
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	cmd.Env = buildSoakServerEnv(port, databasePath, agentImage)
+
+	cleanup := func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Signal(os.Interrupt)
+			done := make(chan struct{})
+			go func() {
+				_, _ = cmd.Process.Wait()
+				close(done)
+			}()
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				_ = cmd.Process.Kill()
+				<-done
+			}
+		}
+		_ = logFile.Close()
+		_ = os.RemoveAll(tempDir)
+	}
+
+	if err := cmd.Start(); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("start soak server: %w", err)
+	}
+
+	apiURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	if err := waitForHealth(apiURL, 30*time.Second); err != nil {
+		logSnippet, readErr := readLogTail(logPath, 4096)
+		cleanup()
+		if readErr != nil {
+			return "", nil, fmt.Errorf("wait for soak server health: %w", err)
+		}
+		return "", nil, fmt.Errorf("wait for soak server health: %w\n%s", err, logSnippet)
+	}
+
+	fmt.Printf("==> Started dedicated soak server: api-url=%s\n", apiURL)
+	return apiURL, cleanup, nil
+}
+
+func soakRepoRoot() (string, error) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		return "", fmt.Errorf("determine soak harness path")
+	}
+	return filepath.Join(filepath.Dir(thisFile), "..", ".."), nil
+}
+
+func buildSoakServerEnv(port int, databasePath, agentImage string) []string {
+	env := map[string]string{}
+	for _, entry := range os.Environ() {
+		parts := strings.SplitN(entry, "=", 2)
+		if len(parts) == 2 {
+			env[parts[0]] = parts[1]
+		}
+	}
+
+	env["BACKFLOW_LISTEN_ADDR"] = fmt.Sprintf(":%d", port)
+	env["BACKFLOW_DATABASE_PATH"] = databasePath
+	env["BACKFLOW_AGENT_IMAGE"] = agentImage
+	env["BACKFLOW_API_KEY"] = ""
+	env["BACKFLOW_WEBHOOK_URL"] = ""
+	env["BACKFLOW_WEBHOOK_EVENTS"] = ""
+	env["BACKFLOW_LOG_FILE"] = ""
+	env["BACKFLOW_DEFAULT_CREATE_PR"] = "false"
+	env["BACKFLOW_DEFAULT_SELF_REVIEW"] = "false"
+	env["BACKFLOW_DEFAULT_SAVE_AGENT_OUTPUT"] = "false"
+	if env["ANTHROPIC_API_KEY"] == "" {
+		env["ANTHROPIC_API_KEY"] = "sk-test-fake"
+	}
+
+	keys := make([]string, 0, len(env))
+	for key := range env {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	out := make([]string, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, key+"="+env[key])
+	}
+	return out
+}
+
+func freePort() (int, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, fmt.Errorf("reserve port: %w", err)
+	}
+	defer ln.Close()
+
+	tcpAddr, ok := ln.Addr().(*net.TCPAddr)
+	if !ok {
+		return 0, fmt.Errorf("unexpected listener addr type %T", ln.Addr())
+	}
+	return tcpAddr.Port, nil
+}
+
+func waitForHealth(apiURL string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	client := &http.Client{Timeout: 2 * time.Second}
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(apiURL + "/health")
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return nil
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return fmt.Errorf("health endpoint did not become ready within %s", timeout)
+}
+
+func readLogTail(path string, maxBytes int) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	if len(data) > maxBytes {
+		data = data[len(data)-maxBytes:]
+	}
+	return string(data), nil
 }
 
 // debugStatsResponse mirrors the /debug/stats JSON shape.

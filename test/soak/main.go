@@ -303,9 +303,6 @@ func truncateTasks(databasePath string) {
 
 	if _, err := db.ExecContext(ctx, `
 		DELETE FROM readings;
-		DELETE FROM discord_task_threads;
-		DELETE FROM discord_installs;
-		DELETE FROM allowed_senders;
 		DELETE FROM api_keys;
 		DELETE FROM instances;
 		DELETE FROM tasks;`); err != nil {

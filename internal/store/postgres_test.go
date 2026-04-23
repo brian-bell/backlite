@@ -1087,6 +1087,96 @@ func TestPG_GetReadingByURL(t *testing.T) {
 	}
 }
 
+func TestPG_GetReadingByURL_IgnoresUnavailableReadings(t *testing.T) {
+	s := testPostgresStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	task := pgTestTask(t, s)
+
+	seeded := &models.Reading{
+		ID:             "bf_READ_HIDDEN",
+		TaskID:         task.ID,
+		URL:            "https://example.com/hidden",
+		Title:          "Hidden Reading",
+		TLDR:           "should not be returned",
+		Tags:           []string{"hidden"},
+		Keywords:       []string{},
+		People:         []string{},
+		Orgs:           []string{},
+		NoveltyVerdict: "novel",
+		Connections:    []models.Connection{},
+		Summary:        "",
+		RawOutput:      []byte(`{}`),
+		CreatedAt:      now,
+	}
+	if err := s.UpsertReading(ctx, seeded); err != nil {
+		t.Fatalf("UpsertReading: %v", err)
+	}
+	if _, err := s.db.ExecContext(ctx, "UPDATE readings SET is_available = false WHERE url = ?", seeded.URL); err != nil {
+		t.Fatalf("hide reading: %v", err)
+	}
+
+	_, err := s.GetReadingByURL(ctx, seeded.URL)
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetReadingByURL(hidden) err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestPG_UpsertReading_PreservesUnavailableState(t *testing.T) {
+	s := testPostgresStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	task := pgTestTask(t, s)
+
+	original := &models.Reading{
+		ID:             "bf_READ_HIDDEN_UPSERT",
+		TaskID:         task.ID,
+		URL:            "https://example.com/hidden-upsert",
+		Title:          "Original Hidden Reading",
+		TLDR:           "original",
+		Tags:           []string{"hidden"},
+		Keywords:       []string{},
+		People:         []string{},
+		Orgs:           []string{},
+		NoveltyVerdict: "novel",
+		Connections:    []models.Connection{},
+		Summary:        "",
+		RawOutput:      []byte(`{}`),
+		CreatedAt:      now,
+	}
+	if err := s.UpsertReading(ctx, original); err != nil {
+		t.Fatalf("UpsertReading(seed): %v", err)
+	}
+	if _, err := s.db.ExecContext(ctx, "UPDATE readings SET is_available = false WHERE url = ?", original.URL); err != nil {
+		t.Fatalf("hide reading: %v", err)
+	}
+
+	updated := &models.Reading{
+		ID:             "bf_READ_HIDDEN_UPSERT_NEW",
+		TaskID:         task.ID,
+		URL:            original.URL,
+		Title:          "Updated Hidden Reading",
+		TLDR:           "updated",
+		Tags:           []string{"updated"},
+		Keywords:       []string{"updated"},
+		People:         []string{},
+		Orgs:           []string{},
+		NoveltyVerdict: "extends_existing",
+		Connections:    []models.Connection{},
+		Summary:        "updated summary",
+		RawOutput:      []byte(`{"version":2}`),
+		CreatedAt:      now,
+	}
+	if err := s.UpsertReading(ctx, updated); err != nil {
+		t.Fatalf("UpsertReading(update): %v", err)
+	}
+
+	_, err := s.GetReadingByURL(ctx, original.URL)
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetReadingByURL(after hidden upsert) err = %v, want ErrNotFound", err)
+	}
+}
+
 func TestPG_MatchReadings_SimilarityOrdering(t *testing.T) {
 	s := testPostgresStore(t)
 	ctx := context.Background()

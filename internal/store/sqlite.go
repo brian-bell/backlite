@@ -513,8 +513,7 @@ func (s *SQLiteStore) UpsertReading(ctx context.Context, r *models.Reading) erro
 			connections     = excluded.connections,
 			summary         = excluded.summary,
 			raw_output      = excluded.raw_output,
-			embedding       = excluded.embedding,
-			is_available    = excluded.is_available`, args...)
+			embedding       = excluded.embedding`, args...)
 	return err
 }
 
@@ -525,7 +524,8 @@ func (s *SQLiteStore) GetReadingByURL(ctx context.Context, url string) (*models.
 		       novelty_verdict, connections, summary, raw_output,
 		       created_at
 		FROM readings
-		WHERE url = ?`, url)
+		WHERE url = ?
+		  AND is_available = true`, url)
 
 	var (
 		r               models.Reading

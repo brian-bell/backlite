@@ -239,7 +239,7 @@ Do NOT comment on:
 
 You MUST post your review as a comment on the PR using the gh CLI. Do not just print your review to stdout."
 
-    CLAUDE_LOG="${WORKSPACE}/container_output.log"
+    CLAUDE_LOG="/tmp/container_output.log"
     set +e
     if [ "$HARNESS" = "codex" ]; then
         CODEX_REVIEW_ARGS=(
@@ -394,7 +394,7 @@ while [ $ATTEMPT -lt "$MAX_RETRIES" ]; do
     ATTEMPT=$((ATTEMPT + 1))
     echo "==> Running ${HARNESS} (attempt ${ATTEMPT}/${MAX_RETRIES})..."
 
-    CLAUDE_LOG="${WORKSPACE}/container_output.log"
+    CLAUDE_LOG="/tmp/container_output.log"
     set +e
     if [ "$HARNESS" = "codex" ]; then
         build_codex_args "$FULL_PROMPT"

@@ -268,11 +268,8 @@ func resetBetweenTests(t *testing.T) {
 	_, err := dbPool.ExecContext(ctx, `
 		DELETE FROM readings;
 		DELETE FROM api_keys;
-		DELETE FROM discord_task_threads;
-		DELETE FROM discord_installs;
-		DELETE FROM allowed_senders;
-		DELETE FROM instances;
-		DELETE FROM tasks;`)
+		DELETE FROM tasks;
+		DELETE FROM instances;`)
 	if err != nil {
 		t.Fatalf("truncate tables: %v", err)
 	}

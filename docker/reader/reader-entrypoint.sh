@@ -127,7 +127,7 @@ Do not write any other files. Do not make commits or PRs."
 # =============================================================================
 
 cd "$WORKSPACE"
-HARNESS_LOG="${WORKSPACE}/container_output.log"
+HARNESS_LOG="/tmp/container_output.log"
 
 echo "==> Running ${HARNESS} for URL: ${URL}"
 set +e

@@ -20,8 +20,8 @@ cp .env.example .env
 
 ```bash
 make build          # Compile to bin/backflow
-make run            # Build + run (auto-sources .env, refreshes AWS creds if needed)
-make test           # Run all tests (no cache)
+make run            # Build + run (auto-sources .env)
+make test           # Run all tests with -tags nocontainers (no cache)
 make lint           # go vet
 make deps           # go mod tidy
 make clean          # Remove bin/
@@ -168,9 +168,6 @@ curl -s http://localhost:8080/api/v1/health
 
 # Operational stats (PID, uptime, running tasks, pool metrics)
 curl -s http://localhost:8080/debug/stats | jq .
-
-# Shell into an agent EC2 instance
-aws ssm start-session --target i-0abc...
 ```
 
 ### Task Lifecycle
@@ -194,37 +191,20 @@ sqlite3 "$BACKFLOW_DATABASE_PATH" "SELECT id, status, created_at FROM tasks ORDE
 
 To add a migration: create a new file in `migrations/` (e.g. `002_add_column.sql`) with `-- +goose Up` and `-- +goose Down` sections.
 
-## Deployment
-
-### Agent Image
+## Docker Images
 
 ```bash
-make docker-agent-build-local    # Single-arch local build
-make docker-agent-deploy         # Multi-arch build + push to ECR
+make docker-agent-build-local    # Single-arch agent image
+make docker-agent-build          # Multi-arch buildx (amd64+arm64)
+
+make docker-reader-build-local   # Single-arch reader image (for task_mode=read)
+make docker-reader-build         # Multi-arch buildx
+
+make docker-server-build-local   # Single-arch server image
+make docker-server-build         # Multi-arch buildx
 ```
 
-### AWS Setup (EC2 Mode)
-
-```bash
-make setup-aws
-# Creates: ECR repo, IAM role, security group, launch template
-# Copy BACKFLOW_LAUNCH_TEMPLATE_ID from output into .env
-```
-
-### Fargate Mode
-
-Set `BACKFLOW_MODE=fargate`. No EC2 instances to manage.
-
-```bash
-# Required in .env
-BACKFLOW_MODE=fargate
-BACKFLOW_ECS_CLUSTER=backflow
-BACKFLOW_ECS_TASK_DEFINITION=backflow-agent
-BACKFLOW_ECS_SUBNETS=subnet-abc123,subnet-def456
-BACKFLOW_CLOUDWATCH_LOG_GROUP=/ecs/backflow
-```
-
-Prerequisites: ECS cluster with Fargate capacity providers, task definition with `awslogs` log driver, subnets with egress, IAM roles for image pull + log delivery.
+Backflow runs agent containers directly against the local Docker daemon; there is no remote orchestration runtime. A legacy `make teardown-aws` target exists to clean up AWS resources from older deploys — see `scripts/teardown-aws.sh` (dry-run by default; pass `ARGS="--yes"` to actually delete).
 
 ## Configuration
 

@@ -68,6 +68,7 @@ jobs:
         run: go test ./test/blackbox/ -v -count=1 -timeout 120s
 
   fuzz:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
 
     services:

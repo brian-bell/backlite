@@ -67,7 +67,6 @@ type Store interface {
 	UpdateInstanceStatus(ctx context.Context, id string, status models.InstanceStatus) error
 	IncrementRunningContainers(ctx context.Context, id string) error
 	DecrementRunningContainers(ctx context.Context, id string) error
-	UpdateInstanceDetails(ctx context.Context, id string, privateIP, az string) error
 	ResetRunningContainers(ctx context.Context, id string) error
 
 	// API keys

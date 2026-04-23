@@ -304,13 +304,13 @@ func (s *SQLiteStore) RetryTask(ctx context.Context, id string, maxRetries int) 
 	return nil
 }
 
-const instanceColumns = `instance_id, instance_type, availability_zone, private_ip, status, max_containers, running_containers, created_at, updated_at`
+const instanceColumns = `instance_id, status, max_containers, running_containers, created_at, updated_at`
 
 func (s *SQLiteStore) CreateInstance(ctx context.Context, inst *models.Instance) error {
 	_, err := s.q.ExecContext(ctx, `
-		INSERT INTO instances (instance_id, instance_type, availability_zone, private_ip, status, max_containers, running_containers, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		inst.InstanceID, inst.InstanceType, inst.AvailabilityZone, inst.PrivateIP,
+		INSERT INTO instances (instance_id, status, max_containers, running_containers, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		inst.InstanceID,
 		inst.Status, inst.MaxContainers, inst.RunningContainers,
 		timeString(inst.CreatedAt), timeString(inst.UpdatedAt),
 	)
@@ -377,14 +377,6 @@ func (s *SQLiteStore) DecrementRunningContainers(ctx context.Context, id string)
 	_, err := s.q.ExecContext(ctx,
 		"UPDATE instances SET running_containers=max(running_containers-1, 0), updated_at=? WHERE instance_id=?",
 		timeString(time.Now().UTC()), id,
-	)
-	return err
-}
-
-func (s *SQLiteStore) UpdateInstanceDetails(ctx context.Context, id string, privateIP, az string) error {
-	_, err := s.q.ExecContext(ctx,
-		"UPDATE instances SET private_ip=?, availability_zone=?, updated_at=? WHERE instance_id=?",
-		privateIP, az, timeString(time.Now().UTC()), id,
 	)
 	return err
 }
@@ -486,12 +478,12 @@ func (s *SQLiteStore) UpsertReading(ctx context.Context, r *models.Reading) erro
 			id, task_id, url, title, tldr,
 			tags, keywords, people, orgs,
 			novelty_verdict, connections, summary, raw_output,
-			embedding, is_available, created_at
+			embedding, created_at
 		) VALUES (
 			?, ?, ?, ?, ?,
 			?, ?, ?, ?,
 			?, ?, ?, ?,
-			?, ?, ?
+			?, ?
 		)
 		ON CONFLICT(url) DO UPDATE SET
 			task_id         = excluded.task_id,
@@ -509,6 +501,7 @@ func (s *SQLiteStore) UpsertReading(ctx context.Context, r *models.Reading) erro
 	return err
 }
 
+// GetReadingByURL returns the reading row whose url column matches exactly.
 func (s *SQLiteStore) GetReadingByURL(ctx context.Context, url string) (*models.Reading, error) {
 	row := s.q.QueryRowContext(ctx, `
 		SELECT id, task_id, url, title, tldr,
@@ -516,8 +509,7 @@ func (s *SQLiteStore) GetReadingByURL(ctx context.Context, url string) (*models.
 		       novelty_verdict, connections, summary, raw_output,
 		       created_at
 		FROM readings
-		WHERE url = ?
-		  AND is_available = true`, url)
+		WHERE url = ?`, url)
 
 	var (
 		r               models.Reading
@@ -573,8 +565,7 @@ func (s *SQLiteStore) FindSimilarReadings(ctx context.Context, queryEmbedding []
 	rows, err := s.q.QueryContext(ctx, `
 		SELECT id, title, tldr, url, embedding
 		FROM readings
-		WHERE is_available = true
-		  AND embedding IS NOT NULL
+		WHERE embedding IS NOT NULL
 		  AND embedding != ''`)
 	if err != nil {
 		return nil, err
@@ -687,8 +678,7 @@ func scanInstance(row sqlScanner) (*models.Instance, error) {
 	)
 
 	err = row.Scan(
-		&inst.InstanceID, &inst.InstanceType, &inst.AvailabilityZone,
-		&inst.PrivateIP, &inst.Status, &inst.MaxContainers,
+		&inst.InstanceID, &inst.Status, &inst.MaxContainers,
 		&inst.RunningContainers, &createdAt, &updatedAt,
 	)
 	if err != nil {
@@ -741,7 +731,7 @@ func readingArgs(r *models.Reading) ([]any, error) {
 		r.ID, r.TaskID, r.URL, r.Title, r.TLDR,
 		tagsJSON, keywordsJSON, peopleJSON, orgsJSON,
 		r.NoveltyVerdict, connectionsJSON, r.Summary, string(rawOutput),
-		embeddingJSON, true, timeString(r.CreatedAt),
+		embeddingJSON, timeString(r.CreatedAt),
 	}, nil
 }
 

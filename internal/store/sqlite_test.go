@@ -43,9 +43,6 @@ func sqliteTestInstance(t *testing.T, s *SQLiteStore) *models.Instance {
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	inst := &models.Instance{
 		InstanceID:        "i-test123",
-		InstanceType:      "m7g.xlarge",
-		AvailabilityZone:  "us-east-1a",
-		PrivateIP:         "10.0.1.5",
 		Status:            models.InstanceStatusRunning,
 		MaxContainers:     4,
 		RunningContainers: 0,
@@ -282,11 +279,10 @@ func TestSQLite_WithTx_Commit(t *testing.T) {
 	}
 
 	inst := &models.Instance{
-		InstanceID:   "i-tx01",
-		InstanceType: "m7g.xlarge",
-		Status:       models.InstanceStatusRunning,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		InstanceID: "i-tx01",
+		Status:     models.InstanceStatusRunning,
+		CreatedAt:  now,
+		UpdatedAt:  now,
 	}
 	if err := s.CreateInstance(ctx, inst); err != nil {
 		t.Fatalf("CreateInstance: %v", err)
@@ -338,11 +334,10 @@ func TestSQLite_WithTx_Rollback(t *testing.T) {
 	}
 
 	inst := &models.Instance{
-		InstanceID:   "i-tx02",
-		InstanceType: "m7g.xlarge",
-		Status:       models.InstanceStatusRunning,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		InstanceID: "i-tx02",
+		Status:     models.InstanceStatusRunning,
+		CreatedAt:  now,
+		UpdatedAt:  now,
 	}
 	if err := s.CreateInstance(ctx, inst); err != nil {
 		t.Fatalf("CreateInstance: %v", err)
@@ -689,8 +684,8 @@ func TestSQLite_InstanceCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetInstance: %v", err)
 	}
-	if got.InstanceType != "m7g.xlarge" {
-		t.Errorf("InstanceType = %q, want m7g.xlarge", got.InstanceType)
+	if got.InstanceID != "i-test123" {
+		t.Errorf("InstanceID = %q, want i-test123", got.InstanceID)
 	}
 	if got.MaxContainers != 4 {
 		t.Errorf("MaxContainers = %d, want 4", got.MaxContainers)
@@ -727,9 +722,6 @@ func TestSQLite_UpdateInstanceStatus(t *testing.T) {
 	if got.RunningContainers != 0 {
 		t.Errorf("RunningContainers = %d, want 0 (should zero on terminate)", got.RunningContainers)
 	}
-	if got.InstanceType != "m7g.xlarge" {
-		t.Errorf("InstanceType was clobbered: %q", got.InstanceType)
-	}
 }
 
 func TestSQLite_IncrementDecrementRunningContainers(t *testing.T) {
@@ -761,32 +753,6 @@ func TestSQLite_IncrementDecrementRunningContainers(t *testing.T) {
 	got, _ = s.GetInstance(ctx, "i-test123")
 	if got.RunningContainers != 0 {
 		t.Errorf("RunningContainers = %d, want 0 (should floor at zero)", got.RunningContainers)
-	}
-}
-
-func TestSQLite_UpdateInstanceDetails(t *testing.T) {
-	s := testSQLiteStore(t)
-	ctx := context.Background()
-	now := time.Now().UTC().Truncate(time.Microsecond)
-	inst := &models.Instance{
-		InstanceID:   "i-new",
-		InstanceType: "m7g.xlarge",
-		Status:       models.InstanceStatusPending,
-		CreatedAt:    now,
-		UpdatedAt:    now,
-	}
-	s.CreateInstance(ctx, inst)
-
-	if err := s.UpdateInstanceDetails(ctx, "i-new", "10.0.1.99", "us-west-2b"); err != nil {
-		t.Fatalf("UpdateInstanceDetails: %v", err)
-	}
-
-	got, _ := s.GetInstance(ctx, "i-new")
-	if got.PrivateIP != "10.0.1.99" {
-		t.Errorf("PrivateIP = %q, want 10.0.1.99", got.PrivateIP)
-	}
-	if got.AvailabilityZone != "us-west-2b" {
-		t.Errorf("AvailabilityZone = %q, want us-west-2b", got.AvailabilityZone)
 	}
 }
 
@@ -1084,96 +1050,6 @@ func TestSQLite_GetReadingByURL(t *testing.T) {
 	_, err = s.GetReadingByURL(ctx, "https://example.com/does-not-exist")
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("GetReadingByURL (miss) err = %v, want ErrNotFound", err)
-	}
-}
-
-func TestSQLite_GetReadingByURL_IgnoresUnavailableReadings(t *testing.T) {
-	s := testSQLiteStore(t)
-	ctx := context.Background()
-	now := time.Now().UTC().Truncate(time.Microsecond)
-	task := sqliteTestTask(t, s)
-
-	seeded := &models.Reading{
-		ID:             "bf_READ_HIDDEN",
-		TaskID:         task.ID,
-		URL:            "https://example.com/hidden",
-		Title:          "Hidden Reading",
-		TLDR:           "should not be returned",
-		Tags:           []string{"hidden"},
-		Keywords:       []string{},
-		People:         []string{},
-		Orgs:           []string{},
-		NoveltyVerdict: "novel",
-		Connections:    []models.Connection{},
-		Summary:        "",
-		RawOutput:      []byte(`{}`),
-		CreatedAt:      now,
-	}
-	if err := s.UpsertReading(ctx, seeded); err != nil {
-		t.Fatalf("UpsertReading: %v", err)
-	}
-	if _, err := s.db.ExecContext(ctx, "UPDATE readings SET is_available = false WHERE url = ?", seeded.URL); err != nil {
-		t.Fatalf("hide reading: %v", err)
-	}
-
-	_, err := s.GetReadingByURL(ctx, seeded.URL)
-	if !errors.Is(err, ErrNotFound) {
-		t.Fatalf("GetReadingByURL(hidden) err = %v, want ErrNotFound", err)
-	}
-}
-
-func TestSQLite_UpsertReading_PreservesUnavailableState(t *testing.T) {
-	s := testSQLiteStore(t)
-	ctx := context.Background()
-	now := time.Now().UTC().Truncate(time.Microsecond)
-	task := sqliteTestTask(t, s)
-
-	original := &models.Reading{
-		ID:             "bf_READ_HIDDEN_UPSERT",
-		TaskID:         task.ID,
-		URL:            "https://example.com/hidden-upsert",
-		Title:          "Original Hidden Reading",
-		TLDR:           "original",
-		Tags:           []string{"hidden"},
-		Keywords:       []string{},
-		People:         []string{},
-		Orgs:           []string{},
-		NoveltyVerdict: "novel",
-		Connections:    []models.Connection{},
-		Summary:        "",
-		RawOutput:      []byte(`{}`),
-		CreatedAt:      now,
-	}
-	if err := s.UpsertReading(ctx, original); err != nil {
-		t.Fatalf("UpsertReading(seed): %v", err)
-	}
-	if _, err := s.db.ExecContext(ctx, "UPDATE readings SET is_available = false WHERE url = ?", original.URL); err != nil {
-		t.Fatalf("hide reading: %v", err)
-	}
-
-	updated := &models.Reading{
-		ID:             "bf_READ_HIDDEN_UPSERT_NEW",
-		TaskID:         task.ID,
-		URL:            original.URL,
-		Title:          "Updated Hidden Reading",
-		TLDR:           "updated",
-		Tags:           []string{"updated"},
-		Keywords:       []string{"updated"},
-		People:         []string{},
-		Orgs:           []string{},
-		NoveltyVerdict: "extends_existing",
-		Connections:    []models.Connection{},
-		Summary:        "updated summary",
-		RawOutput:      []byte(`{"version":2}`),
-		CreatedAt:      now,
-	}
-	if err := s.UpsertReading(ctx, updated); err != nil {
-		t.Fatalf("UpsertReading(update): %v", err)
-	}
-
-	_, err := s.GetReadingByURL(ctx, original.URL)
-	if !errors.Is(err, ErrNotFound) {
-		t.Fatalf("GetReadingByURL(after hidden upsert) err = %v, want ErrNotFound", err)
 	}
 }
 

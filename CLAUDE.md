@@ -18,7 +18,7 @@ Three task modes: `code` (default: clone → code → commit → PR), `review` (
 ```bash
 make build              # Build to bin/backflow
 make run                # Build + run (sources .env if present)
-make test               # Unit/integration tests (excludes blackbox; see make test-blackbox)
+make test               # Unit/integration tests with -tags nocontainers (excludes blackbox; see make test-blackbox)
 make lint               # go vet ./...
 make test-schema        # Schemathesis fuzz tests against OpenAPI spec (requires docker, goose, schemathesis)
 make test-blackbox      # Black-box integration test (builds fake agent, spins up server + DB)
@@ -180,7 +180,9 @@ Secrets (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GITHUB_TOKEN`) are passed via `
 
 ## Database
 
-SQLite. Tables: `tasks`, `instances`, `allowed_senders`, `api_keys`, `readings`. See `docs/schema.md` for the full column-level schema. Migrations are managed by [goose](https://github.com/pressly/goose) and live in `migrations/`. The store implementation is in `internal/store/sqlite.go` using `database/sql`. Set `BACKFLOW_DATABASE_PATH` to the local database path.
+SQLite. Tables: `tasks`, `instances`, `api_keys`, `readings`. See `docs/schema.md` for the full column-level schema. Migrations are managed by [goose](https://github.com/pressly/goose) and live in `migrations/`. The store implementation is in `internal/store/sqlite.go` using `database/sql`. Set `BACKFLOW_DATABASE_PATH` to the local database path.
+
+The schema has been collapsed to a single `001_initial_schema.sql` — any new schema change starts at `002_*.sql`.
 
 Migration workflow:
 
@@ -196,3 +198,4 @@ Create new migrations in `migrations/` with the next numeric prefix, `-- +goose 
 
 Additional docs in `docs/`:
 - `schema.md` — Database schema (tables, columns, indexes, status lifecycles)
+- `adrs/` — Architecture Decision Records (historical; see individual files for current status)

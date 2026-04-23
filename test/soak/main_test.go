@@ -37,8 +37,8 @@ func TestTruncateTasks_ClearsCurrentSchema(t *testing.T) {
 	})
 
 	if _, err := db.ExecContext(ctx, `
-		INSERT INTO instances (instance_id, instance_type, status, created_at, updated_at)
-		VALUES ('local', 'local', 'running', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+		INSERT INTO instances (instance_id, status, created_at, updated_at)
+		VALUES ('local', 'running', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 		INSERT INTO tasks (id, status, task_mode, harness, prompt, created_at, updated_at)
 		VALUES ('bf_01TESTSOAK0000000000000001', 'completed', 'read', 'claude_code', 'https://example.com', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 		INSERT INTO api_keys (key_hash, name, permissions, created_at, updated_at)

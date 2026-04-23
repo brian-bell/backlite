@@ -69,10 +69,8 @@ func (o *Orchestrator) initInstance() {
 		now := time.Now().UTC()
 		inst := &models.Instance{
 			InstanceID:    localInstanceID,
-			InstanceType:  "local",
 			Status:        models.InstanceStatusRunning,
 			MaxContainers: o.config.ContainersPerInst,
-			PrivateIP:     "127.0.0.1",
 			CreatedAt:     now,
 			UpdatedAt:     now,
 		}

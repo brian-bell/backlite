@@ -277,8 +277,8 @@ func resetBetweenTests(t *testing.T) {
 	// Re-create the synthetic local instance. The orchestrator's initInstance()
 	// only runs at startup, so after truncation we must re-insert it manually.
 	_, err = dbPool.ExecContext(ctx, `
-		INSERT INTO instances (instance_id, instance_type, status, max_containers, running_containers, created_at, updated_at)
-		VALUES ('local', 'local', 'running', 1, 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+		INSERT INTO instances (instance_id, status, max_containers, running_containers, created_at, updated_at)
+		VALUES ('local', 'running', 1, 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 		ON CONFLICT (instance_id) DO UPDATE
 		SET status = 'running', running_containers = 0, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`)
 	if err != nil {

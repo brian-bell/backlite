@@ -302,16 +302,6 @@ func (s *mockStore) DecrementRunningContainers(_ context.Context, id string) err
 	return nil
 }
 
-func (s *mockStore) UpdateInstanceDetails(_ context.Context, id string, privateIP, az string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if i, ok := s.instances[id]; ok {
-		i.PrivateIP = privateIP
-		i.AvailabilityZone = az
-	}
-	return nil
-}
-
 func (s *mockStore) ResetRunningContainers(_ context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -17,10 +17,16 @@ Ledger of cross-PR tradeoffs. Each entry: decision → consequence for downstrea
 
 - **`/output` and `/output.json` are gated by current-attempt state, not raw file presence.** The API now looks up the task row and only serves persisted artifacts when the task is terminal and `output_url` is still set for the current attempt. `RetryTask` and `RequeueTask` clear `output_url` when they start a new attempt so stale files under `{data_dir}/tasks/{id}/` cannot leak through the API while a retried/requeued attempt is pending, running, or later terminates without producing fresh output. The filesystem path remains per-task rather than per-attempt; if future work needs historical-attempt artifact access, it will need explicit versioning instead of reusing the current endpoints.
 
-## SMS removal docs cleanup
+## Schema drop cleanup
 
-- **Operator docs were updated in the SMS-removal slice, but legacy schema/history references remain until the schema-drop slice.** `.env.example` and Fly secret sync now reflect that SMS/Twilio support is gone. `docs/schema.md`, migrations, and historical review notes still mention `reply_channel` / `allowed_senders` because those database artifacts remain in place until the later migration that drops them; clean those references up when the schema actually changes.
+- **Migration 013 now drops the orphaned integration tables.** `allowed_senders`, `discord_installs`, and `discord_task_threads` are removed from the live schema, and active docs/tests should treat them as historical-only migration artifacts. `reply_channel` remains on `tasks`; dropping that legacy task field is a separate migration if it ever becomes worth the churn.
 
 ## Static site removal
 
 - **The repo no longer ships the old static Pages site.** `site/` and the `make deploy-site` target were removed while resolving the SMS/Discord cleanup branch against `main`. If public marketing or legal pages are needed again, recreate them intentionally instead of assuming a Pages deploy still exists.
+
+## AWS runtime removal (issue #5)
+
+- **Only the local Docker runtime remains.** `internal/orchestrator/{ec2,fargate,s3}`, `scaler.go`, `local.go`, `s3.go`, spot-handler paths, `cmd/migrate-to-postgres`, every `BACKFLOW_MODE` branch, and every `BACKFLOW_ECS_*` / `BACKFLOW_S3_BUCKET` / EC2 env var were deleted in one PR. `go list -deps ./... | grep aws-sdk-go-v2` is empty. If AWS execution is ever wanted again, it will need to be rebuilt from scratch rather than revived from git history — the Fargate and EC2 runners were deeply entangled with ECS task overrides, SSM, and spot-interruption handling that the simplified orchestrator no longer models.
+- **`task_metadata.json` is no longer uploaded to S3.** The filesystem `task.json` (written by `internal/orchestrator/outputs`) is now the single post-run metadata artifact. Anything that was reading the S3 copy must switch to `GET /api/v1/tasks/{id}/output.json`. The `taskMetadata` struct stayed in `monitor.go` (used by `saveOutputMetadata` → `outputs.SaveMetadata`); only the S3 upload path was removed.
+- **`scripts/setup-aws.sh` and `scripts/teardown-aws.sh` share identifiers via `scripts/aws-resource-names.sh`.** `teardown-aws.sh` was added (wired as `make teardown-aws`) so operators can clean up existing AWS resources; it defaults to dry-run, is idempotent, and continues on error. The teardown script, its helper, and the setup script should all be deleted once the fork has run AWS-free long enough that no lingering cleanup is needed (no hard deadline; tracked here rather than as a follow-up issue).

@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backflow-labs/backflow/internal/config"
 	"github.com/backflow-labs/backflow/internal/models"
 	"github.com/backflow-labs/backflow/internal/notify"
 )
@@ -288,39 +287,6 @@ func TestHandleRecoveringInspectError_InstanceGone(t *testing.T) {
 	}
 	if _, exists := o.inspectFailures["bf_rgone"]; exists {
 		t.Error("inspectFailures should be cleared on instance gone")
-	}
-}
-
-func TestHandleRecoveringInspectError_InstanceGone_FargatePreservesSyntheticInstance(t *testing.T) {
-	s := newMockStore()
-	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:        "fargate",
-		Status:            models.InstanceStatusRunning,
-		MaxContainers:     5,
-		RunningContainers: 1,
-	})
-	s.CreateTask(context.Background(), &models.Task{
-		ID:          "bf_rgone_fargate",
-		Status:      models.TaskStatusRecovering,
-		InstanceID:  "fargate",
-		ContainerID: "arn:aws:ecs:us-east-1:123456789012:task/backflow/abc",
-		StartedAt:   &now,
-	})
-
-	bus, _ := newTestBus()
-	defer bus.Close()
-	o := newTestOrchestrator(s, bus)
-	o.config.Mode = config.ModeFargate
-	o.running = 1
-
-	task, _ := s.GetTask(context.Background(), "bf_rgone_fargate")
-	o.handleRecoveringInspectError(context.Background(), task, fmt.Errorf("%w: Fargate Spot capacity reclaimed", ErrSpotInterruption))
-
-	inst, _ := s.GetInstance(context.Background(), "fargate")
-	if inst.Status != models.InstanceStatusRunning {
-		t.Errorf("instance status = %q, want running", inst.Status)
 	}
 }
 

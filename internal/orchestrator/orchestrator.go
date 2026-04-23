@@ -19,6 +19,11 @@ import (
 // before a task is killed or requeued.
 const maxInspectFailures = 3
 
+// localInstanceID is the synthetic instance row used to track local Docker
+// capacity. There is exactly one instance now that the service only runs
+// containers on the local host.
+const localInstanceID = "local"
+
 // Orchestrator manages the lifecycle of tasks: dispatching them to instances,
 // monitoring their containers, handling completions, and recovering from restarts.
 type Orchestrator struct {
@@ -26,9 +31,6 @@ type Orchestrator struct {
 	config   *config.Config
 	bus      *notify.EventBus
 	docker   Runner
-	scaler   Scaler
-	spot     SpotChecker
-	s3       S3Client
 	outputs  Writer
 	embedder embeddings.Embedder
 
@@ -38,131 +40,50 @@ type Orchestrator struct {
 	inspectFailures map[string]int // task ID -> consecutive inspect failure count
 }
 
-func New(s store.Store, cfg *config.Config, bus *notify.EventBus, runner Runner, scaler Scaler, spot SpotChecker, s3 S3Client, outputs Writer, embedder embeddings.Embedder) *Orchestrator {
+func New(s store.Store, cfg *config.Config, bus *notify.EventBus, runner Runner, outputs Writer, embedder embeddings.Embedder) *Orchestrator {
 	o := &Orchestrator{
 		store:           s,
 		config:          cfg,
 		bus:             bus,
 		docker:          runner,
-		scaler:          scaler,
-		spot:            spot,
-		s3:              s3,
 		outputs:         outputs,
 		embedder:        embedder,
 		stopCh:          make(chan struct{}),
 		inspectFailures: make(map[string]int),
 	}
 
-	switch cfg.Mode {
-	case config.ModeLocal:
-		o.initLocalMode()
-	case config.ModeFargate:
-		o.initFargateMode()
-	default:
-		o.initEC2Mode()
-	}
+	o.initInstance()
 
 	return o
 }
 
-// initLocalMode seeds a "local" instance so findAvailableInstance works without EC2.
-func (o *Orchestrator) initLocalMode() {
-	o.syncSyntheticInstance(syntheticInstanceSpec{
-		id:            "local",
-		instanceType:  "local",
-		maxContainers: o.config.ContainersPerInst,
-		privateIP:     "127.0.0.1",
-		getErrMsg:     "local init: failed to get synthetic instance",
-		createErrMsg:  "local init: failed to create synthetic instance",
-	})
-}
-
-// initFargateMode seeds a synthetic "fargate" instance so the orchestrator can
-// track capacity without managing VM lifecycle.
-func (o *Orchestrator) initFargateMode() {
-	if !o.syncSyntheticInstance(syntheticInstanceSpec{
-		id:            "fargate",
-		instanceType:  "fargate",
-		maxContainers: o.config.MaxConcurrentTasks,
-		getErrMsg:     "fargate init: failed to get synthetic instance",
-		createErrMsg:  "fargate init: failed to create synthetic instance",
-	}) {
-		return
-	}
-	o.terminateStaleInstances("fargate")
-}
-
-// initEC2Mode cleans up leftover local instances from a previous local-mode run.
-func (o *Orchestrator) initEC2Mode() {
-	inst, err := o.store.GetInstance(context.Background(), "local")
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		log.Error().Err(err).Msg("ec2 init: failed to check for leftover local instance")
-	} else if err == nil && inst.Status != models.InstanceStatusTerminated {
-		o.store.UpdateInstanceStatus(context.Background(), "local", models.InstanceStatusTerminated)
-	}
-}
-
-type syntheticInstanceSpec struct {
-	id            string
-	instanceType  string
-	maxContainers int
-	privateIP     string
-	getErrMsg     string
-	createErrMsg  string
-}
-
-// syncSyntheticInstance ensures a synthetic instance exists and is marked running.
-// It is used by local and Fargate modes to keep capacity management consistent.
-func (o *Orchestrator) syncSyntheticInstance(spec syntheticInstanceSpec) bool {
+// initInstance ensures the synthetic local instance row exists and is marked
+// running with zero containers. This is the only instance the orchestrator
+// tracks now that it runs containers directly on the local Docker host.
+func (o *Orchestrator) initInstance() {
 	ctx := context.Background()
 
-	_, err := o.store.GetInstance(ctx, spec.id)
+	_, err := o.store.GetInstance(ctx, localInstanceID)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		now := time.Now().UTC()
 		inst := &models.Instance{
-			InstanceID:    spec.id,
-			InstanceType:  spec.instanceType,
+			InstanceID:    localInstanceID,
+			InstanceType:  "local",
 			Status:        models.InstanceStatusRunning,
-			MaxContainers: spec.maxContainers,
+			MaxContainers: o.config.ContainersPerInst,
+			PrivateIP:     "127.0.0.1",
 			CreatedAt:     now,
 			UpdatedAt:     now,
 		}
-		if spec.privateIP != "" {
-			inst.PrivateIP = spec.privateIP
+		if err := o.store.CreateInstance(ctx, inst); err != nil {
+			log.Error().Err(err).Msg("init: failed to create synthetic local instance")
 		}
-		if err := o.store.CreateInstance(ctx, inst); err != nil && spec.createErrMsg != "" {
-			log.Error().Err(err).Msg(spec.createErrMsg)
-		}
-		return true
 	case err != nil:
-		if spec.getErrMsg != "" {
-			log.Error().Err(err).Msg(spec.getErrMsg)
-		}
-		return false
+		log.Error().Err(err).Msg("init: failed to get synthetic local instance")
 	default:
-		o.store.UpdateInstanceStatus(ctx, spec.id, models.InstanceStatusRunning)
-		o.store.ResetRunningContainers(ctx, spec.id)
-		return true
-	}
-}
-
-// terminateStaleInstances marks any non-synthetic instances as terminated.
-func (o *Orchestrator) terminateStaleInstances(keepID string) {
-	ctx := context.Background()
-
-	instances, err := o.store.ListInstances(ctx, nil)
-	if err != nil {
-		log.Error().Err(err).Msg("fargate init: failed to list instances for cleanup")
-		return
-	}
-	for _, other := range instances {
-		if other.InstanceID == keepID || other.Status == models.InstanceStatusTerminated {
-			continue
-		}
-		if err := o.store.UpdateInstanceStatus(ctx, other.InstanceID, models.InstanceStatusTerminated); err != nil {
-			log.Error().Err(err).Str("instance_id", other.InstanceID).Msg("fargate init: failed to terminate stale instance")
-		}
+		o.store.UpdateInstanceStatus(ctx, localInstanceID, models.InstanceStatusRunning)
+		o.store.ResetRunningContainers(ctx, localInstanceID)
 	}
 }
 
@@ -181,7 +102,6 @@ func (o *Orchestrator) Docker() Runner {
 // Start begins the orchestrator poll loop, recovering orphaned tasks first.
 func (o *Orchestrator) Start(ctx context.Context) {
 	log.Info().
-		Str("mode", string(o.config.Mode)).
 		Str("agent_image", o.config.AgentImage).
 		Int("max_concurrent", o.config.MaxConcurrent()).
 		Dur("poll_interval", o.config.PollInterval).
@@ -211,16 +131,12 @@ func (o *Orchestrator) Stop() {
 	close(o.stopCh)
 }
 
-// tick runs a single orchestration cycle: monitor, dispatch, scale.
+// tick runs a single orchestration cycle: monitor, dispatch.
 func (o *Orchestrator) tick(ctx context.Context) {
-	if o.spot != nil {
-		o.spot.CheckInterruptions(ctx)
-	}
 	o.monitorCancelled(ctx)
 	o.monitorRecovering(ctx)
 	o.monitorRunning(ctx)
 	o.dispatchPending(ctx)
-	o.scaler.Evaluate(ctx)
 }
 
 // --- Shared helpers used across dispatch, monitor, and recovery ---
@@ -255,14 +171,4 @@ func (o *Orchestrator) releaseInstanceSlot(ctx context.Context, instanceID strin
 func (o *Orchestrator) releaseSlot(ctx context.Context, task *models.Task) {
 	o.decrementRunning()
 	o.releaseInstanceSlot(ctx, task.InstanceID)
-}
-
-// markInstanceTerminated sets an instance to terminated status if it isn't already.
-func (o *Orchestrator) markInstanceTerminated(ctx context.Context, instanceID string) {
-	if instanceID == "" {
-		return
-	}
-	if err := o.store.UpdateInstanceStatus(ctx, instanceID, models.InstanceStatusTerminated); err != nil {
-		log.Warn().Err(err).Str("instance_id", instanceID).Msg("markInstanceTerminated: failed to update instance status")
-	}
 }

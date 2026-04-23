@@ -273,7 +273,7 @@ func resetBetweenTests(t *testing.T) {
 	// NOTE: Keep this list in sync with migrations — add new tables here when
 	// new migrations introduce them.
 	_, err := dbPool.Exec(ctx,
-		"TRUNCATE tasks, instances, allowed_senders, api_keys, discord_installs, discord_task_threads CASCADE")
+		"TRUNCATE tasks, instances, api_keys CASCADE")
 	if err != nil {
 		t.Fatalf("truncate tables: %v", err)
 	}

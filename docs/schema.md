@@ -73,19 +73,6 @@ Tracks EC2 spot instances managed by the orchestrator.
 **Indexes:**
 - `idx_instances_status` on `status` — used to find running/pending instances for task dispatch.
 
-### `allowed_senders`
-
-Pre-registered senders authorized to create tasks via messaging (e.g. SMS).
-
-| Column | Type | Default | Description |
-|--------|------|---------|-------------|
-| `channel_type` | `TEXT` | — | **Composite PK.** Messaging channel type (e.g. `sms`). |
-| `address` | `TEXT` | — | **Composite PK.** Sender address (e.g. `+15551234567`). |
-| `enabled` | `BOOLEAN` | `true` | Whether this sender is allowed to create tasks. |
-| `created_at` | `TIMESTAMPTZ` | `now()` | When the sender was registered. |
-
-**Primary key:** `(channel_type, address)`
-
 ### `api_keys`
 
 Stores bearer tokens used to authenticate API and debug requests.
@@ -135,7 +122,7 @@ Structured output of completed `task_mode=read` tasks. Populated by the orchestr
 - Schema `reader` — exposes a narrow view and RPC via Supabase PostgREST. Intended as the only schema in the Supabase Data API → Exposed schemas list.
 - View `reader.readings` (`security_invoker = true`) projecting only `id, url, title, tldr`.
 - Function `reader.match_readings(query_embedding vector(1536), match_count int)` returning `(id, title, tldr, url, similarity)` ordered by cosine similarity, executable by `anon`.
-- RLS is also enabled on `tasks`, `instances`, `allowed_senders`, `api_keys`, and the legacy `discord_installs` / `discord_task_threads` tables as deny-all for non-owner roles.
+- RLS is also enabled on `tasks`, `instances`, and `api_keys` as deny-all for non-owner roles.
 
 See [supabase-setup.md](supabase-setup.md) for how the reader container authenticates to PostgREST and why there is intentionally no `SUPABASE_READER_KEY`.
 
@@ -163,31 +150,6 @@ The `recovering` status is set on startup for tasks orphaned by a server restart
 pending → running → draining → terminated
                   → terminated
 ```
-
-### `discord_installs` (legacy)
-
-Legacy installation state retained from the removed Discord integration. The current runtime no longer seeds or updates this table.
-
-| Column | Type | Default | Description |
-|--------|------|---------|-------------|
-| `guild_id` | `TEXT` | — | **Primary key.** Discord server (guild) ID. |
-| `app_id` | `TEXT` | — | Discord application ID. |
-| `channel_id` | `TEXT` | — | Target channel for notifications. |
-| `allowed_roles` | `JSONB` | `'[]'` | Role IDs authorized for mutation commands. |
-| `installed_at` | `TIMESTAMPTZ` | `now()` | When the install record was first created. |
-| `updated_at` | `TIMESTAMPTZ` | `now()` | Last config update. |
-
-### `discord_task_threads` (legacy)
-
-Legacy thread mapping retained from the removed Discord integration. The current runtime no longer writes this table.
-
-| Column | Type | Default | Description |
-|--------|------|---------|-------------|
-| `task_id` | `TEXT` | — | **Primary key.** Backflow task ID. |
-| `root_message_id` | `TEXT` | — | Discord message ID of the root lifecycle post in the channel. |
-| `thread_id` | `TEXT` | — | Discord thread ID used for subsequent lifecycle updates. |
-| `created_at` | `TIMESTAMPTZ` | `now()` | When the mapping was first created. |
-| `updated_at` | `TIMESTAMPTZ` | `now()` | Last update time. |
 
 ## Notes
 

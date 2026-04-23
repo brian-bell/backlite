@@ -25,7 +25,7 @@ func outputTestServer(t *testing.T) (http.Handler, *store.PostgresStore, string)
 	t.Helper()
 	ctx := context.Background()
 
-	if _, err := truncatePool.Exec(ctx, "TRUNCATE tasks, instances, allowed_senders, api_keys CASCADE"); err != nil {
+	if _, err := truncatePool.Exec(ctx, "TRUNCATE tasks, instances, api_keys CASCADE"); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 
@@ -198,7 +198,7 @@ func TestGetTaskOutput_400_RejectsMalformedTaskID(t *testing.T) {
 
 func TestGetTaskOutput_401_WhenBearerMissing(t *testing.T) {
 	ctx := context.Background()
-	if _, err := truncatePool.Exec(ctx, "TRUNCATE tasks, instances, allowed_senders, api_keys CASCADE"); err != nil {
+	if _, err := truncatePool.Exec(ctx, "TRUNCATE tasks, instances, api_keys CASCADE"); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 	_, thisFile, _, _ := runtime.Caller(0)

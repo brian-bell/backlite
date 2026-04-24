@@ -20,11 +20,9 @@ import (
 	"github.com/brian-bell/backlite/internal/store"
 )
 
-// Emitter is the narrow notify interface the coordinator needs. *notify.EventBus
-// satisfies this without the coordinator depending on the bus's full API.
-type Emitter interface {
-	Emit(notify.Event)
-}
+// Emitter is re-exported from notify for convenience — the coordinator only
+// needs the narrow Emit method, which *notify.EventBus already satisfies.
+type Emitter = notify.Emitter
 
 // Slots exposes the orchestrator's in-memory running-task counter so the
 // coordinator can pair its DB writes with the local accounting update.
@@ -148,6 +146,24 @@ func (c *Coordinator) Start(ctx context.Context, task *models.Task, instanceID, 
 	}
 	c.slots.Acquire()
 	c.emitter.Emit(notify.NewEvent(notify.EventTaskRunning, task))
+	return nil
+}
+
+// Cancel transitions a task to cancelled from any non-terminal state and
+// emits task.cancelled. Rejects tasks already in a terminal state
+// (completed, failed, cancelled, interrupted). Container cleanup + slot
+// release happen later via monitorCancelled — Cancel itself is a pure
+// state-write + event-emit.
+func (c *Coordinator) Cancel(ctx context.Context, task *models.Task) error {
+	switch task.Status {
+	case models.TaskStatusPending, models.TaskStatusProvisioning, models.TaskStatusRunning, models.TaskStatusRecovering:
+	default:
+		return fmt.Errorf("task %s cannot be cancelled (status: %s)", task.ID, task.Status)
+	}
+	if err := c.store.CancelTask(ctx, task.ID); err != nil {
+		return fmt.Errorf("cancel task: %w", err)
+	}
+	c.emitter.Emit(notify.NewEvent(notify.EventTaskCancelled, task))
 	return nil
 }
 

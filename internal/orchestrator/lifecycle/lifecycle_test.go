@@ -535,6 +535,54 @@ func TestRequeue_Recovering_EmitsRecoveringEvent(t *testing.T) {
 	}
 }
 
+func TestCancel_CancellableState(t *testing.T) {
+	cases := []struct {
+		name  string
+		seed  models.TaskStatus
+		allow bool
+	}{
+		{"pending", models.TaskStatusPending, true},
+		{"provisioning", models.TaskStatusProvisioning, true},
+		{"running", models.TaskStatusRunning, true},
+		{"recovering", models.TaskStatusRecovering, true},
+		{"completed", models.TaskStatusCompleted, false},
+		{"failed", models.TaskStatusFailed, false},
+		{"cancelled", models.TaskStatusCancelled, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := context.Background()
+			task := seedTask(t, s, "bf_CAN_"+tc.name, tc.seed)
+
+			emitter := &captureEmitter{}
+			c := New(s, emitter, WithSlots(&trackingSlots{}), WithMaxUserRetries(2))
+
+			err := c.Cancel(ctx, task)
+			if tc.allow {
+				if err != nil {
+					t.Fatalf("Cancel from %s: %v", tc.seed, err)
+				}
+				got, _ := s.GetTask(ctx, task.ID)
+				if got.Status != models.TaskStatusCancelled {
+					t.Errorf("status = %q, want cancelled", got.Status)
+				}
+				evs := emitter.Events()
+				if len(evs) != 1 || evs[0].Type != notify.EventTaskCancelled {
+					t.Fatalf("events = %+v, want one task.cancelled", evs)
+				}
+			} else {
+				if err == nil {
+					t.Fatalf("Cancel from %s returned nil, want error", tc.seed)
+				}
+				if len(emitter.Events()) != 0 {
+					t.Errorf("terminal task should not emit cancel event; got %+v", emitter.Events())
+				}
+			}
+		})
+	}
+}
+
 func TestAssign_PendingToProvisioning(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

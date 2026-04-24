@@ -39,17 +39,18 @@ type ReadingMatch struct {
 	Similarity float64 `json:"similarity"`
 }
 
-// Store is the persistence interface for tasks and instances.
+// Store is the persistence interface for tasks, api keys, and readings.
 type Store interface {
 	// Tasks
 	CreateTask(ctx context.Context, task *models.Task) error
 	GetTask(ctx context.Context, id string) (*models.Task, error)
 	ListTasks(ctx context.Context, filter TaskFilter) ([]*models.Task, error)
 	DeleteTask(ctx context.Context, id string) error
+	CountActiveTasks(ctx context.Context) (int, error)
 
 	// Named task updates
 	UpdateTaskStatus(ctx context.Context, id string, status models.TaskStatus, taskErr string) error
-	AssignTask(ctx context.Context, id string, instanceID string) error
+	AssignTask(ctx context.Context, id string) error
 	StartTask(ctx context.Context, id string, containerID string) error
 	CompleteTask(ctx context.Context, id string, result TaskResult) error
 	RequeueTask(ctx context.Context, id string, reason string) error
@@ -57,17 +58,6 @@ type Store interface {
 	ClearTaskAssignment(ctx context.Context, id string) error
 	MarkReadyForRetry(ctx context.Context, id string) error
 	RetryTask(ctx context.Context, id string, maxRetries int) error
-
-	// Instances
-	CreateInstance(ctx context.Context, inst *models.Instance) error
-	GetInstance(ctx context.Context, id string) (*models.Instance, error)
-	ListInstances(ctx context.Context, status *models.InstanceStatus) ([]*models.Instance, error)
-
-	// Named instance updates
-	UpdateInstanceStatus(ctx context.Context, id string, status models.InstanceStatus) error
-	IncrementRunningContainers(ctx context.Context, id string) error
-	DecrementRunningContainers(ctx context.Context, id string) error
-	ResetRunningContainers(ctx context.Context, id string) error
 
 	// API keys
 	HasAPIKeys(ctx context.Context) (bool, error)

@@ -36,25 +36,6 @@ func sqliteTestTask(t *testing.T, s *SQLiteStore) *models.Task {
 	return task
 }
 
-// sqliteTestInstance creates a minimal instance and inserts it.
-func sqliteTestInstance(t *testing.T, s *SQLiteStore) *models.Instance {
-	t.Helper()
-	ctx := context.Background()
-	now := time.Now().UTC().Truncate(time.Microsecond)
-	inst := &models.Instance{
-		InstanceID:        "i-test123",
-		Status:            models.InstanceStatusRunning,
-		MaxContainers:     4,
-		RunningContainers: 0,
-		CreatedAt:         now,
-		UpdatedAt:         now,
-	}
-	if err := s.CreateInstance(ctx, inst); err != nil {
-		t.Fatalf("CreateInstance: %v", err)
-	}
-	return inst
-}
-
 func testSQLiteStore(t *testing.T) *SQLiteStore {
 	t.Helper()
 	ctx := context.Background()
@@ -263,7 +244,6 @@ func TestSQLite_WithTx_Commit(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 
-	// Seed a task and instance
 	task := &models.Task{
 		ID:        "bf_TX01",
 		Status:    models.TaskStatusPending,
@@ -278,39 +258,23 @@ func TestSQLite_WithTx_Commit(t *testing.T) {
 		t.Fatalf("CreateTask: %v", err)
 	}
 
-	inst := &models.Instance{
-		InstanceID: "i-tx01",
-		Status:     models.InstanceStatusRunning,
-		CreatedAt:  now,
-		UpdatedAt:  now,
-	}
-	if err := s.CreateInstance(ctx, inst); err != nil {
-		t.Fatalf("CreateInstance: %v", err)
-	}
-
-	// Transactional assign + increment
+	// Transactional assign + start
 	err := s.WithTx(ctx, func(tx Store) error {
-		if err := tx.AssignTask(ctx, "bf_TX01", "i-tx01"); err != nil {
+		if err := tx.AssignTask(ctx, "bf_TX01"); err != nil {
 			return err
 		}
-		return tx.IncrementRunningContainers(ctx, "i-tx01")
+		return tx.StartTask(ctx, "bf_TX01", "container-tx01")
 	})
 	if err != nil {
 		t.Fatalf("WithTx: %v", err)
 	}
 
-	// Verify both took effect
 	gotTask, _ := s.GetTask(ctx, "bf_TX01")
-	if gotTask.Status != models.TaskStatusProvisioning {
-		t.Errorf("Status = %q, want provisioning", gotTask.Status)
+	if gotTask.Status != models.TaskStatusRunning {
+		t.Errorf("Status = %q, want running", gotTask.Status)
 	}
-	if gotTask.InstanceID != "i-tx01" {
-		t.Errorf("InstanceID = %q, want i-tx01", gotTask.InstanceID)
-	}
-
-	gotInst, _ := s.GetInstance(ctx, "i-tx01")
-	if gotInst.RunningContainers != 1 {
-		t.Errorf("RunningContainers = %d, want 1", gotInst.RunningContainers)
+	if gotTask.ContainerID != "container-tx01" {
+		t.Errorf("ContainerID = %q, want container-tx01", gotTask.ContainerID)
 	}
 }
 
@@ -333,39 +297,62 @@ func TestSQLite_WithTx_Rollback(t *testing.T) {
 		t.Fatalf("CreateTask: %v", err)
 	}
 
-	inst := &models.Instance{
-		InstanceID: "i-tx02",
-		Status:     models.InstanceStatusRunning,
-		CreatedAt:  now,
-		UpdatedAt:  now,
-	}
-	if err := s.CreateInstance(ctx, inst); err != nil {
-		t.Fatalf("CreateInstance: %v", err)
-	}
-
-	// Transaction that fails — both operations should roll back
+	// Transaction that fails — the assign should roll back
 	err := s.WithTx(ctx, func(tx Store) error {
-		tx.AssignTask(ctx, "bf_TX02", "i-tx02")
-		tx.IncrementRunningContainers(ctx, "i-tx02")
+		tx.AssignTask(ctx, "bf_TX02")
+		tx.StartTask(ctx, "bf_TX02", "container-tx02")
 		return fmt.Errorf("something failed")
 	})
 	if err == nil {
 		t.Fatal("expected error from WithTx")
 	}
 
-	// Both should be unchanged
 	gotTask, _ := s.GetTask(ctx, "bf_TX02")
 	if gotTask.Status != models.TaskStatusPending {
 		t.Errorf("Status = %q, want pending (should have rolled back)", gotTask.Status)
 	}
-
-	gotInst, _ := s.GetInstance(ctx, "i-tx02")
-	if gotInst.RunningContainers != 0 {
-		t.Errorf("RunningContainers = %d, want 0 (should have rolled back)", gotInst.RunningContainers)
+	if gotTask.ContainerID != "" {
+		t.Errorf("ContainerID = %q, want empty (should have rolled back)", gotTask.ContainerID)
 	}
 }
 
 // --- ErrNotFound ---
+
+func TestSQLite_CountActiveTasks(t *testing.T) {
+	s := testSQLiteStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	mk := func(id string, status models.TaskStatus) {
+		task := &models.Task{
+			ID:        id,
+			Status:    status,
+			TaskMode:  models.TaskModeCode,
+			Harness:   models.HarnessClaudeCode,
+			Prompt:    "x",
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		if err := s.CreateTask(ctx, task); err != nil {
+			t.Fatalf("CreateTask %s: %v", id, err)
+		}
+	}
+
+	mk("bf_ACTIVE01", models.TaskStatusRunning)
+	mk("bf_ACTIVE02", models.TaskStatusProvisioning)
+	mk("bf_IDLE0001", models.TaskStatusPending)
+	mk("bf_DONE0001", models.TaskStatusCompleted)
+	mk("bf_DONE0002", models.TaskStatusFailed)
+	mk("bf_RECOV001", models.TaskStatusRecovering)
+
+	got, err := s.CountActiveTasks(ctx)
+	if err != nil {
+		t.Fatalf("CountActiveTasks: %v", err)
+	}
+	if got != 2 {
+		t.Errorf("CountActiveTasks = %d, want 2 (running + provisioning only)", got)
+	}
+}
 
 func TestSQLite_GetTaskNotFound(t *testing.T) {
 	s := testSQLiteStore(t)
@@ -375,17 +362,6 @@ func TestSQLite_GetTaskNotFound(t *testing.T) {
 	}
 	if got != nil {
 		t.Error("expected nil for nonexistent task")
-	}
-}
-
-func TestSQLite_GetInstanceNotFound(t *testing.T) {
-	s := testSQLiteStore(t)
-	got, err := s.GetInstance(context.Background(), "nonexistent")
-	if !errors.Is(err, ErrNotFound) {
-		t.Fatalf("expected ErrNotFound, got %v", err)
-	}
-	if got != nil {
-		t.Error("expected nil for nonexistent instance")
 	}
 }
 
@@ -468,16 +444,13 @@ func TestSQLite_AssignTask(t *testing.T) {
 	ctx := context.Background()
 	sqliteTestTask(t, s)
 
-	if err := s.AssignTask(ctx, "bf_TEST001", "i-abc123"); err != nil {
+	if err := s.AssignTask(ctx, "bf_TEST001"); err != nil {
 		t.Fatalf("AssignTask: %v", err)
 	}
 
 	got, _ := s.GetTask(ctx, "bf_TEST001")
 	if got.Status != models.TaskStatusProvisioning {
 		t.Errorf("Status = %q, want %q", got.Status, models.TaskStatusProvisioning)
-	}
-	if got.InstanceID != "i-abc123" {
-		t.Errorf("InstanceID = %q, want %q", got.InstanceID, "i-abc123")
 	}
 	if got.Prompt != "Fix the bug" {
 		t.Errorf("Prompt was clobbered: %q", got.Prompt)
@@ -603,19 +576,16 @@ func TestSQLite_RequeueTask(t *testing.T) {
 		t.Fatalf("seed output_url: %v", err)
 	}
 
-	s.AssignTask(ctx, task.ID, "i-abc123")
+	s.AssignTask(ctx, task.ID)
 	s.StartTask(ctx, task.ID, "container-abc")
 
-	if err := s.RequeueTask(ctx, task.ID, "instance terminated"); err != nil {
+	if err := s.RequeueTask(ctx, task.ID, "container gone"); err != nil {
 		t.Fatalf("RequeueTask: %v", err)
 	}
 
 	got, _ := s.GetTask(ctx, task.ID)
 	if got.Status != models.TaskStatusPending {
 		t.Errorf("Status = %q, want %q", got.Status, models.TaskStatusPending)
-	}
-	if got.InstanceID != "" {
-		t.Errorf("InstanceID should be cleared, got %q", got.InstanceID)
 	}
 	if got.ContainerID != "" {
 		t.Errorf("ContainerID should be cleared, got %q", got.ContainerID)
@@ -657,7 +627,7 @@ func TestSQLite_ClearTaskAssignment(t *testing.T) {
 	ctx := context.Background()
 	sqliteTestTask(t, s)
 
-	s.AssignTask(ctx, "bf_TEST001", "i-abc123")
+	s.AssignTask(ctx, "bf_TEST001")
 	s.StartTask(ctx, "bf_TEST001", "container-abc")
 
 	if err := s.ClearTaskAssignment(ctx, "bf_TEST001"); err != nil {
@@ -665,112 +635,8 @@ func TestSQLite_ClearTaskAssignment(t *testing.T) {
 	}
 
 	got, _ := s.GetTask(ctx, "bf_TEST001")
-	if got.InstanceID != "" {
-		t.Errorf("InstanceID should be cleared, got %q", got.InstanceID)
-	}
 	if got.ContainerID != "" {
 		t.Errorf("ContainerID should be cleared, got %q", got.ContainerID)
-	}
-}
-
-// --- Instance CRUD ---
-
-func TestSQLite_InstanceCRUD(t *testing.T) {
-	s := testSQLiteStore(t)
-	ctx := context.Background()
-	sqliteTestInstance(t, s)
-
-	got, err := s.GetInstance(ctx, "i-test123")
-	if err != nil {
-		t.Fatalf("GetInstance: %v", err)
-	}
-	if got.InstanceID != "i-test123" {
-		t.Errorf("InstanceID = %q, want i-test123", got.InstanceID)
-	}
-	if got.MaxContainers != 4 {
-		t.Errorf("MaxContainers = %d, want 4", got.MaxContainers)
-	}
-
-	// List filtered
-	running := models.InstanceStatusRunning
-	instances, err := s.ListInstances(ctx, &running)
-	if err != nil {
-		t.Fatalf("ListInstances: %v", err)
-	}
-	if len(instances) != 1 {
-		t.Errorf("ListInstances len = %d, want 1", len(instances))
-	}
-}
-
-// --- Named instance updates ---
-
-func TestSQLite_UpdateInstanceStatus(t *testing.T) {
-	s := testSQLiteStore(t)
-	ctx := context.Background()
-	sqliteTestInstance(t, s)
-
-	s.IncrementRunningContainers(ctx, "i-test123")
-
-	if err := s.UpdateInstanceStatus(ctx, "i-test123", models.InstanceStatusTerminated); err != nil {
-		t.Fatalf("UpdateInstanceStatus: %v", err)
-	}
-
-	got, _ := s.GetInstance(ctx, "i-test123")
-	if got.Status != models.InstanceStatusTerminated {
-		t.Errorf("Status = %q, want %q", got.Status, models.InstanceStatusTerminated)
-	}
-	if got.RunningContainers != 0 {
-		t.Errorf("RunningContainers = %d, want 0 (should zero on terminate)", got.RunningContainers)
-	}
-}
-
-func TestSQLite_IncrementDecrementRunningContainers(t *testing.T) {
-	s := testSQLiteStore(t)
-	ctx := context.Background()
-	sqliteTestInstance(t, s)
-
-	s.IncrementRunningContainers(ctx, "i-test123")
-	got, _ := s.GetInstance(ctx, "i-test123")
-	if got.RunningContainers != 1 {
-		t.Errorf("RunningContainers = %d, want 1", got.RunningContainers)
-	}
-
-	s.IncrementRunningContainers(ctx, "i-test123")
-	got, _ = s.GetInstance(ctx, "i-test123")
-	if got.RunningContainers != 2 {
-		t.Errorf("RunningContainers = %d, want 2", got.RunningContainers)
-	}
-
-	s.DecrementRunningContainers(ctx, "i-test123")
-	got, _ = s.GetInstance(ctx, "i-test123")
-	if got.RunningContainers != 1 {
-		t.Errorf("RunningContainers = %d, want 1", got.RunningContainers)
-	}
-
-	// Floor at zero
-	s.DecrementRunningContainers(ctx, "i-test123")
-	s.DecrementRunningContainers(ctx, "i-test123")
-	got, _ = s.GetInstance(ctx, "i-test123")
-	if got.RunningContainers != 0 {
-		t.Errorf("RunningContainers = %d, want 0 (should floor at zero)", got.RunningContainers)
-	}
-}
-
-func TestSQLite_ResetRunningContainers(t *testing.T) {
-	s := testSQLiteStore(t)
-	ctx := context.Background()
-	inst := sqliteTestInstance(t, s)
-
-	s.IncrementRunningContainers(ctx, inst.InstanceID)
-	s.IncrementRunningContainers(ctx, inst.InstanceID)
-
-	if err := s.ResetRunningContainers(ctx, inst.InstanceID); err != nil {
-		t.Fatalf("ResetRunningContainers: %v", err)
-	}
-
-	got, _ := s.GetInstance(ctx, inst.InstanceID)
-	if got.RunningContainers != 0 {
-		t.Errorf("RunningContainers = %d, want 0", got.RunningContainers)
 	}
 }
 

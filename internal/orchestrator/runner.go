@@ -2,19 +2,17 @@ package orchestrator
 
 import (
 	"context"
-	"fmt"
-	"strings"
 
 	"github.com/brian-bell/backlite/internal/models"
 )
 
 // Runner abstracts container lifecycle management on the local Docker host.
 type Runner interface {
-	RunAgent(ctx context.Context, instance *models.Instance, task *models.Task) (string, error)
-	InspectContainer(ctx context.Context, instanceID, containerID string) (ContainerStatus, error)
-	StopContainer(ctx context.Context, instanceID, containerID string) error
-	GetLogs(ctx context.Context, instanceID, containerID string, tail int) (string, error)
-	GetAgentOutput(ctx context.Context, instanceID, containerID string) (string, error)
+	RunAgent(ctx context.Context, task *models.Task) (string, error)
+	InspectContainer(ctx context.Context, containerID string) (ContainerStatus, error)
+	StopContainer(ctx context.Context, containerID string) error
+	GetLogs(ctx context.Context, containerID string, tail int) (string, error)
+	GetAgentOutput(ctx context.Context, containerID string) (string, error)
 }
 
 // ContainerStatus represents the current state of an agent container.
@@ -71,16 +69,4 @@ type AgentStatus struct {
 	NoveltyVerdict  string              `json:"novelty_verdict,omitempty"`
 	Connections     []models.Connection `json:"connections,omitempty"`
 	SummaryMarkdown string              `json:"summary_markdown,omitempty"`
-}
-
-var errNoCapacity = fmt.Errorf("no instance capacity available")
-
-// IsInstanceGone returns true if the error indicates the underlying Docker
-// daemon is unreachable or the container can no longer be inspected.
-func IsInstanceGone(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "invalidinstanceid")
 }

@@ -8,7 +8,7 @@ Usage: $(basename "$0") [options]
 Run the Backlite soak test (long-running resource leak detector).
 Exercises cancel, retry, retry limits, and mixed failure modes.
 
-Requires: BACKFLOW_CONTAINERS_PER_INSTANCE >= 4 (multi-step scenarios
+Requires: BACKFLOW_MAX_CONTAINERS >= 4 (multi-step scenarios
 need concurrent container slots). Set BACKFLOW_AGENT_IMAGE=backlite-fake-agent.
 
 Starts a dedicated Backlite subprocess against the soak SQLite database.

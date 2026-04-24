@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"time"
 
@@ -19,13 +18,8 @@ import (
 // before a task is killed or requeued.
 const maxInspectFailures = 3
 
-// localInstanceID is the synthetic instance row used to track local Docker
-// capacity. There is exactly one instance now that the service only runs
-// containers on the local host.
-const localInstanceID = "local"
-
-// Orchestrator manages the lifecycle of tasks: dispatching them to instances,
-// monitoring their containers, handling completions, and recovering from restarts.
+// Orchestrator manages the lifecycle of tasks: dispatching them, monitoring
+// their containers, handling completions, and recovering from restarts.
 type Orchestrator struct {
 	store    store.Store
 	config   *config.Config
@@ -41,7 +35,7 @@ type Orchestrator struct {
 }
 
 func New(s store.Store, cfg *config.Config, bus *notify.EventBus, runner Runner, outputs Writer, embedder embeddings.Embedder) *Orchestrator {
-	o := &Orchestrator{
+	return &Orchestrator{
 		store:           s,
 		config:          cfg,
 		bus:             bus,
@@ -50,38 +44,6 @@ func New(s store.Store, cfg *config.Config, bus *notify.EventBus, runner Runner,
 		embedder:        embedder,
 		stopCh:          make(chan struct{}),
 		inspectFailures: make(map[string]int),
-	}
-
-	o.initInstance()
-
-	return o
-}
-
-// initInstance ensures the synthetic local instance row exists and is marked
-// running with zero containers. This is the only instance the orchestrator
-// tracks now that it runs containers directly on the local Docker host.
-func (o *Orchestrator) initInstance() {
-	ctx := context.Background()
-
-	_, err := o.store.GetInstance(ctx, localInstanceID)
-	switch {
-	case errors.Is(err, store.ErrNotFound):
-		now := time.Now().UTC()
-		inst := &models.Instance{
-			InstanceID:    localInstanceID,
-			Status:        models.InstanceStatusRunning,
-			MaxContainers: o.config.ContainersPerInst,
-			CreatedAt:     now,
-			UpdatedAt:     now,
-		}
-		if err := o.store.CreateInstance(ctx, inst); err != nil {
-			log.Error().Err(err).Msg("init: failed to create synthetic local instance")
-		}
-	case err != nil:
-		log.Error().Err(err).Msg("init: failed to get synthetic local instance")
-	default:
-		o.store.UpdateInstanceStatus(ctx, localInstanceID, models.InstanceStatusRunning)
-		o.store.ResetRunningContainers(ctx, localInstanceID)
 	}
 }
 
@@ -155,18 +117,9 @@ func (o *Orchestrator) decrementRunning() {
 	o.mu.Unlock()
 }
 
-// releaseInstanceSlot decrements the running container count for an instance.
-func (o *Orchestrator) releaseInstanceSlot(ctx context.Context, instanceID string) {
-	if instanceID == "" {
-		return
-	}
-	if err := o.store.DecrementRunningContainers(ctx, instanceID); err != nil {
-		log.Warn().Err(err).Str("instance_id", instanceID).Msg("releaseInstanceSlot: failed to decrement running containers")
-	}
-}
-
-// releaseSlot decrements both the running counter and the instance container count.
-func (o *Orchestrator) releaseSlot(ctx context.Context, task *models.Task) {
+// releaseSlot decrements the in-memory running task counter. Capacity is
+// persisted as the live count of provisioning/running tasks in the `tasks`
+// table, so there is nothing else to release.
+func (o *Orchestrator) releaseSlot(_ context.Context, _ *models.Task) {
 	o.decrementRunning()
-	o.releaseInstanceSlot(ctx, task.InstanceID)
 }

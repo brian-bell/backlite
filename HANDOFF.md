@@ -25,7 +25,15 @@ Ledger of cross-PR tradeoffs. Each entry: decision → consequence for downstrea
 
 ## Schema consolidation
 
-- **Migrations collapsed to a single `001_initial_schema.sql`.** The SQLite migration folded every prior migration into one fresh-start schema: `tasks`, `instances`, `api_keys`, `readings`. The orphaned integration tables (`allowed_senders`, `discord_installs`, `discord_task_threads`) and the latent `readings.is_available` column were dropped rather than preserved. `reply_channel` remains on `tasks`; dropping that legacy field is a future-migration concern if it becomes worth the churn. Any new schema change goes in `002_*.sql`.
+- **Migrations collapsed to a single `001_initial_schema.sql`.** The SQLite migration folded every prior migration into one fresh-start schema: `tasks`, `api_keys`, `readings`. The orphaned integration tables (`allowed_senders`, `discord_installs`, `discord_task_threads`) and the latent `readings.is_available` column were dropped rather than preserved. Any new schema change goes in `002_*.sql`.
+
+## Instances table removed (issue #24, part 2)
+
+- **`instances` table and `models.Instance` are gone; capacity is now derived from `tasks`.** The synthetic `instance_id='local'` row, its CRUD methods (`CreateInstance`/`GetInstance`/`ListInstances`/`UpdateInstanceStatus`/`IncrementRunningContainers`/`DecrementRunningContainers`/`ResetRunningContainers`), `Orchestrator.initInstance`, and the `localInstanceID` constant were deleted. The orchestrator keeps its in-memory `running` counter for steady-state dispatch gating; `store.CountActiveTasks` (= `SELECT count(*) FROM tasks WHERE status IN ('provisioning','running')`) is the DB-side source of truth if a future caller needs it.
+- **`tasks.instance_id` removed.** No downstream consumer needed it after AWS was dropped. `AssignTask`, `ClearTaskAssignment`, `RequeueTask`, and `RetryTask` no longer touch an instance-id column; `AssignTask(ctx, id)` now takes a single id argument.
+- **`Runner` interface simplified.** `RunAgent`, `InspectContainer`, `StopContainer`, `GetLogs`, `GetAgentOutput`, and `api.LogFetcher.GetLogs` dropped their `instanceID` parameter — the local Docker manager always ignored it and the AWS path is gone. `IsInstanceGone` and the `errNoCapacity` sentinel were deleted with the findAvailableInstance helper they served; local Docker inspect failures now accumulate via the existing `maxInspectFailures` kill-switch path, without the AWS-specific requeue short-circuit.
+- **Config renamed.** `BACKFLOW_CONTAINERS_PER_INSTANCE` → `BACKFLOW_MAX_CONTAINERS`; `Config.ContainersPerInst` → `Config.MaxContainers`. `MaxConcurrent()` still reads it. Deployments setting the old env var must rename.
+- **Schema-change policy unchanged.** The column/table deletions were done in place on `001_initial_schema.sql` rather than via a forward migration — same reasoning as issue #24 part 1; the schema is consolidated and there is no committed baseline to preserve.
 
 ## Static site removal
 

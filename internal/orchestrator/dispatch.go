@@ -12,8 +12,8 @@ import (
 	"github.com/brian-bell/backlite/internal/store"
 )
 
-// dispatchPending finds pending tasks and dispatches them to available instances,
-// up to the maximum concurrency limit.
+// dispatchPending finds pending tasks and dispatches them, up to the maximum
+// concurrency limit.
 func (o *Orchestrator) dispatchPending(ctx context.Context) {
 	o.mu.Lock()
 	available := o.config.MaxConcurrent() - o.running
@@ -45,8 +45,8 @@ func (o *Orchestrator) dispatchPending(ctx context.Context) {
 	}
 }
 
-// dispatch assigns a task to an available instance, starts the container,
-// and transitions the task from pending → provisioning → running.
+// dispatch assigns a task, starts its container, and transitions
+// pending → provisioning → running.
 func (o *Orchestrator) dispatch(ctx context.Context, task *models.Task) error {
 	if task.TaskMode == models.TaskModeRead {
 		if o.embedder == nil {
@@ -66,29 +66,16 @@ func (o *Orchestrator) dispatch(ctx context.Context, task *models.Task) error {
 		}
 	}
 
-	instance, err := o.findAvailableInstance(ctx)
-	if errors.Is(err, errNoCapacity) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("find available instance: %w", err)
-	}
-
-	if err := o.store.AssignTask(ctx, task.ID, instance.InstanceID); err != nil {
+	if err := o.store.AssignTask(ctx, task.ID); err != nil {
 		return err
 	}
 
-	containerID, err := o.docker.RunAgent(ctx, instance, task)
+	containerID, err := o.docker.RunAgent(ctx, task)
 	if err != nil {
 		return err
 	}
 
-	if err := o.store.WithTx(ctx, func(tx store.Store) error {
-		if err := tx.StartTask(ctx, task.ID, containerID); err != nil {
-			return err
-		}
-		return tx.IncrementRunningContainers(ctx, instance.InstanceID)
-	}); err != nil {
+	if err := o.store.StartTask(ctx, task.ID, containerID); err != nil {
 		return err
 	}
 
@@ -96,7 +83,7 @@ func (o *Orchestrator) dispatch(ctx context.Context, task *models.Task) error {
 
 	o.bus.Emit(notify.NewEvent(notify.EventTaskRunning, task))
 
-	log.Info().Str("task_id", task.ID).Str("container", containerID).Str("instance", instance.InstanceID).Msg("task dispatched")
+	log.Info().Str("task_id", task.ID).Str("container", containerID).Msg("task dispatched")
 	return nil
 }
 
@@ -113,21 +100,4 @@ func (o *Orchestrator) failReadDuplicate(ctx context.Context, task *models.Task,
 	o.bus.Emit(notify.NewEvent(notify.EventTaskFailed, task, notify.WithContainerStatus("", msg, "")))
 	log.Info().Str("task_id", task.ID).Str("url", task.Prompt).Str("existing_reading_id", existing.ID).Msg("read task short-circuited: duplicate URL")
 	return nil
-}
-
-// findAvailableInstance returns the first running instance with spare container capacity.
-func (o *Orchestrator) findAvailableInstance(ctx context.Context) (*models.Instance, error) {
-	running := models.InstanceStatusRunning
-	instances, err := o.store.ListInstances(ctx, &running)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, inst := range instances {
-		if inst.RunningContainers < inst.MaxContainers {
-			return inst, nil
-		}
-	}
-
-	return nil, errNoCapacity
 }

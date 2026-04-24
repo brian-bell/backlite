@@ -68,7 +68,6 @@ type Task struct {
 	AllowedTools    []string          `json:"allowed_tools,omitempty"`
 	ClaudeMD        string            `json:"claude_md,omitempty"`
 	EnvVars         map[string]string `json:"env_vars,omitempty"`
-	InstanceID      string            `json:"instance_id,omitempty"`
 	ContainerID     string            `json:"container_id,omitempty"`
 	RetryCount      int               `json:"retry_count"`
 	UserRetryCount  int               `json:"user_retry_count"`

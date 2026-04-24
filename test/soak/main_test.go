@@ -37,8 +37,6 @@ func TestTruncateTasks_ClearsCurrentSchema(t *testing.T) {
 	})
 
 	if _, err := db.ExecContext(ctx, `
-		INSERT INTO instances (instance_id, status, created_at, updated_at)
-		VALUES ('local', 'running', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 		INSERT INTO tasks (id, status, task_mode, harness, prompt, created_at, updated_at)
 		VALUES ('bf_01TESTSOAK0000000000000001', 'completed', 'read', 'claude_code', 'https://example.com', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 		INSERT INTO api_keys (key_hash, name, permissions, created_at, updated_at)
@@ -51,7 +49,7 @@ func TestTruncateTasks_ClearsCurrentSchema(t *testing.T) {
 
 	truncateTasks(dbPath)
 
-	for _, table := range []string{"readings", "api_keys", "tasks", "instances"} {
+	for _, table := range []string{"readings", "api_keys", "tasks"} {
 		var count int
 		if err := db.QueryRowContext(ctx, "SELECT count(*) FROM "+table).Scan(&count); err != nil {
 			t.Fatalf("count %s: %v", table, err)
@@ -84,7 +82,7 @@ func TestDefaultSoakDatabasePath(t *testing.T) {
 }
 
 func TestBuildSoakServerEnv(t *testing.T) {
-	t.Setenv("BACKFLOW_CONTAINERS_PER_INSTANCE", "4")
+	t.Setenv("BACKFLOW_MAX_CONTAINERS", "4")
 	t.Setenv("BACKFLOW_API_KEY", "secret")
 	t.Setenv("BACKFLOW_WEBHOOK_URL", "https://example.com/webhook")
 	t.Setenv("BACKFLOW_WEBHOOK_EVENTS", "task.completed")
@@ -121,8 +119,8 @@ func TestBuildSoakServerEnv(t *testing.T) {
 	if env["BACKFLOW_DEFAULT_SAVE_AGENT_OUTPUT"] != "false" {
 		t.Fatalf("BACKFLOW_DEFAULT_SAVE_AGENT_OUTPUT = %q, want false", env["BACKFLOW_DEFAULT_SAVE_AGENT_OUTPUT"])
 	}
-	if env["BACKFLOW_CONTAINERS_PER_INSTANCE"] != "4" {
-		t.Fatalf("BACKFLOW_CONTAINERS_PER_INSTANCE = %q, want 4", env["BACKFLOW_CONTAINERS_PER_INSTANCE"])
+	if env["BACKFLOW_MAX_CONTAINERS"] != "4" {
+		t.Fatalf("BACKFLOW_MAX_CONTAINERS = %q, want 4", env["BACKFLOW_MAX_CONTAINERS"])
 	}
 	if env["ANTHROPIC_API_KEY"] != "sk-test-fake" {
 		t.Fatalf("ANTHROPIC_API_KEY = %q, want sk-test-fake", env["ANTHROPIC_API_KEY"])

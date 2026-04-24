@@ -34,8 +34,8 @@ func (o *Orchestrator) monitorCancelled(ctx context.Context) {
 			continue
 		}
 
-		if err := o.docker.StopContainer(ctx, task.InstanceID, task.ContainerID); err != nil {
-			log.Warn().Err(err).Str("task_id", task.ID).Str("instance_id", task.InstanceID).Msg("monitorCancelled: failed to stop container")
+		if err := o.docker.StopContainer(ctx, task.ContainerID); err != nil {
+			log.Warn().Err(err).Str("task_id", task.ID).Msg("monitorCancelled: failed to stop container")
 		}
 		o.releaseSlot(ctx, task)
 
@@ -67,7 +67,7 @@ func (o *Orchestrator) monitorRunning(ctx context.Context) {
 			continue
 		}
 
-		status, err := o.docker.InspectContainer(ctx, task.InstanceID, task.ContainerID)
+		status, err := o.docker.InspectContainer(ctx, task.ContainerID)
 		if err != nil {
 			o.handleInspectError(ctx, task, err)
 			continue
@@ -92,16 +92,9 @@ func (o *Orchestrator) isTimedOut(task *models.Task) bool {
 	return time.Now().UTC().After(deadline)
 }
 
-// handleInspectError processes a container inspect failure, requeuing on instance
-// loss or killing the task after 3 consecutive failures.
+// handleInspectError processes a container inspect failure, killing the task
+// after the configured number of consecutive failures.
 func (o *Orchestrator) handleInspectError(ctx context.Context, task *models.Task, err error) {
-	if IsInstanceGone(err) {
-		log.Warn().Err(err).Str("task_id", task.ID).Str("instance", task.InstanceID).Msg("instance terminated, re-queuing task")
-		delete(o.inspectFailures, task.ID)
-		o.requeueTask(ctx, task, "instance terminated")
-		return
-	}
-
 	o.inspectFailures[task.ID]++
 	count := o.inspectFailures[task.ID]
 	log.Warn().Err(err).Str("task_id", task.ID).Int("consecutive_failures", count).Msg("failed to inspect container")
@@ -299,7 +292,7 @@ func (o *Orchestrator) saveAgentOutput(ctx context.Context, task *models.Task) {
 		return
 	}
 
-	data, err := o.docker.GetAgentOutput(ctx, task.InstanceID, task.ContainerID)
+	data, err := o.docker.GetAgentOutput(ctx, task.ContainerID)
 	if err != nil {
 		log.Warn().Err(err).Str("task_id", task.ID).Msg("failed to extract agent output log")
 		return
@@ -408,8 +401,8 @@ func (o *Orchestrator) markRetryReady(ctx context.Context, task *models.Task, ev
 // killTask stops the container, marks the task as failed, and releases the slot.
 func (o *Orchestrator) killTask(ctx context.Context, task *models.Task, reason string) {
 	if task.ContainerID != "" {
-		if err := o.docker.StopContainer(ctx, task.InstanceID, task.ContainerID); err != nil {
-			log.Warn().Err(err).Str("task_id", task.ID).Str("instance_id", task.InstanceID).Msg("killTask: failed to stop container")
+		if err := o.docker.StopContainer(ctx, task.ContainerID); err != nil {
+			log.Warn().Err(err).Str("task_id", task.ID).Msg("killTask: failed to stop container")
 		}
 	}
 

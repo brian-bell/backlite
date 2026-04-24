@@ -20,7 +20,7 @@ type Config struct {
 	OpenAIAPIKey    string
 
 	// Capacity
-	ContainersPerInst int
+	MaxContainers int
 
 	// Container resources
 	ContainerCPUs  int
@@ -73,7 +73,7 @@ type Config struct {
 
 // MaxConcurrent returns the maximum number of concurrent agent containers.
 func (c *Config) MaxConcurrent() int {
-	return c.ContainersPerInst
+	return c.MaxContainers
 }
 
 func Load() (*Config, error) {
@@ -82,7 +82,7 @@ func Load() (*Config, error) {
 		APIKey:                os.Getenv("BACKFLOW_API_KEY"),
 		AnthropicAPIKey:       os.Getenv("ANTHROPIC_API_KEY"),
 		OpenAIAPIKey:          os.Getenv("OPENAI_API_KEY"),
-		ContainersPerInst:     envInt("BACKFLOW_CONTAINERS_PER_INSTANCE", 1),
+		MaxContainers:         envInt("BACKFLOW_MAX_CONTAINERS", 1),
 		ContainerCPUs:         envInt("BACKFLOW_CONTAINER_CPUS", 2),
 		ContainerMemGB:        envInt("BACKFLOW_CONTAINER_MEMORY_GB", 8),
 		AgentImage:            envOr("BACKFLOW_AGENT_IMAGE", "backlite-agent"),
@@ -117,8 +117,8 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("ANTHROPIC_API_KEY is required")
 	}
 
-	if c.ContainersPerInst > MaxLocalContainers {
-		return nil, fmt.Errorf("BACKFLOW_CONTAINERS_PER_INSTANCE must be <= %d, got %d", MaxLocalContainers, c.ContainersPerInst)
+	if c.MaxContainers > MaxLocalContainers {
+		return nil, fmt.Errorf("BACKFLOW_MAX_CONTAINERS must be <= %d, got %d", MaxLocalContainers, c.MaxContainers)
 	}
 
 	if c.DatabasePath == "" {

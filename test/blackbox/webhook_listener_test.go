@@ -24,7 +24,6 @@ type WebhookEvent struct {
 	Message       string    `json:"message,omitempty"`
 	PRURL         string    `json:"pr_url,omitempty"`
 	AgentLogTail  string    `json:"agent_log_tail,omitempty"`
-	ReplyChannel  string    `json:"reply_channel,omitempty"`
 	ReadyForRetry bool      `json:"ready_for_retry,omitempty"`
 	Timestamp     time.Time `json:"timestamp"`
 }

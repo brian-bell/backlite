@@ -10,12 +10,11 @@ import (
 	"time"
 )
 
-func TestEvent_MarshalJSONRedactsReplyChannel(t *testing.T) {
+func TestEvent_MarshalJSONOmitsLegacyReplyChannel(t *testing.T) {
 	event := Event{
-		Type:         EventTaskCompleted,
-		TaskID:       "bf_123",
-		ReplyChannel: "sms:+15551234567",
-		Timestamp:    time.Now().UTC(),
+		Type:      EventTaskCompleted,
+		TaskID:    "bf_123",
+		Timestamp: time.Now().UTC(),
 	}
 
 	body, err := json.Marshal(event)
@@ -24,18 +23,12 @@ func TestEvent_MarshalJSONRedactsReplyChannel(t *testing.T) {
 	}
 
 	jsonBody := string(body)
-	if strings.Contains(jsonBody, "+15551234567") {
-		t.Fatalf("serialized event leaked phone number: %s", jsonBody)
-	}
-	if !strings.Contains(jsonBody, `"reply_channel":"sms"`) {
-		t.Fatalf("serialized event did not redact reply channel: %s", jsonBody)
-	}
-	if event.ReplyChannel != "sms:+15551234567" {
-		t.Fatalf("event ReplyChannel was mutated: %q", event.ReplyChannel)
+	if strings.Contains(jsonBody, "reply_channel") {
+		t.Fatalf("serialized event still emits reply_channel: %s", jsonBody)
 	}
 }
 
-func TestWebhookNotifier_NotifyRedactsReplyChannel(t *testing.T) {
+func TestWebhookNotifier_NotifyPostsPayload(t *testing.T) {
 	var gotBody string
 	var gotErr error
 
@@ -54,10 +47,9 @@ func TestWebhookNotifier_NotifyRedactsReplyChannel(t *testing.T) {
 
 	notifier := NewWebhookNotifier(server.URL, nil)
 	event := Event{
-		Type:         EventTaskCompleted,
-		TaskID:       "bf_123",
-		ReplyChannel: "sms:+15551234567",
-		Timestamp:    time.Now().UTC(),
+		Type:      EventTaskCompleted,
+		TaskID:    "bf_123",
+		Timestamp: time.Now().UTC(),
 	}
 
 	if err := notifier.Notify(event); err != nil {
@@ -67,13 +59,10 @@ func TestWebhookNotifier_NotifyRedactsReplyChannel(t *testing.T) {
 		t.Fatalf("read webhook body: %v", gotErr)
 	}
 
-	if strings.Contains(gotBody, "+15551234567") {
-		t.Fatalf("webhook payload leaked phone number: %s", gotBody)
+	if !strings.Contains(gotBody, `"task_id":"bf_123"`) {
+		t.Fatalf("webhook payload missing task_id: %s", gotBody)
 	}
-	if !strings.Contains(gotBody, `"reply_channel":"sms"`) {
-		t.Fatalf("webhook payload did not redact reply channel: %s", gotBody)
-	}
-	if event.ReplyChannel != "sms:+15551234567" {
-		t.Fatalf("event ReplyChannel was mutated: %q", event.ReplyChannel)
+	if strings.Contains(gotBody, "reply_channel") {
+		t.Fatalf("webhook payload still emits reply_channel: %s", gotBody)
 	}
 }

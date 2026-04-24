@@ -488,10 +488,10 @@ func newTestOrchestrator(s store.Store, bus *notify.EventBus, opts ...func(*Orch
 		config:          cfg,
 		bus:             bus,
 		docker:          &mockDockerManager{},
-		lifecycle:       lifecycle.New(s, bus),
 		stopCh:          make(chan struct{}),
 		inspectFailures: make(map[string]int),
 	}
+	o.lifecycle = lifecycle.New(s, bus, lifecycle.WithSlots(slotsAdapter{o: o}))
 	for _, opt := range opts {
 		opt(o)
 	}

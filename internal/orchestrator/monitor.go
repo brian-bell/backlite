@@ -95,19 +95,16 @@ func (o *Orchestrator) isTimedOut(task *models.Task) bool {
 // handleInspectError processes a container inspect failure, requeuing on instance
 // loss or killing the task after 3 consecutive failures.
 func (o *Orchestrator) handleInspectError(ctx context.Context, task *models.Task, err error) {
-	if IsInstanceGone(err) {
+	outcome, count := o.classifyInspectFailure(task.ID, err)
+	switch outcome {
+	case inspectInstanceGone:
 		log.Warn().Err(err).Str("task_id", task.ID).Str("instance", task.InstanceID).Msg("instance terminated, re-queuing task")
-		delete(o.inspectFailures, task.ID)
 		o.requeueTask(ctx, task, "instance terminated")
-		return
-	}
-
-	o.inspectFailures[task.ID]++
-	count := o.inspectFailures[task.ID]
-	log.Warn().Err(err).Str("task_id", task.ID).Int("consecutive_failures", count).Msg("failed to inspect container")
-	if count >= maxInspectFailures {
-		delete(o.inspectFailures, task.ID)
+	case inspectExceededThreshold:
+		log.Warn().Err(err).Str("task_id", task.ID).Int("consecutive_failures", count).Msg("inspect threshold reached, killing task")
 		o.killTask(ctx, task, fmt.Sprintf("container unreachable after %d inspect failures: %v", count, err))
+	default:
+		log.Warn().Err(err).Str("task_id", task.ID).Int("consecutive_failures", count).Msg("failed to inspect container")
 	}
 }
 

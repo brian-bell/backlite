@@ -283,7 +283,9 @@ func TestHandleRecoveringInspectError_RequeuesAtMaxFailures(t *testing.T) {
 	}
 }
 
-func TestRequeueRecoveringTask_WasRunning(t *testing.T) {
+func TestRecover_WasRunning_RequeuesAndReleasesSlot(t *testing.T) {
+	// Covers the recovery-requeue path where a task with a container releases
+	// the local running slot before being returned to pending.
 	s := newMockStore()
 	now := time.Now().UTC()
 	s.CreateTask(context.Background(), &models.Task{
@@ -301,7 +303,9 @@ func TestRequeueRecoveringTask_WasRunning(t *testing.T) {
 	o.running = 1
 
 	task, _ := s.GetTask(context.Background(), "bf_rq")
-	o.requeueRecoveringTask(context.Background(), task, "instance gone", true)
+	if err := o.lifecycle.Recover(context.Background(), task, false, "container gone"); err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
 
 	task, _ = s.GetTask(context.Background(), "bf_rq")
 	if task.Status != models.TaskStatusPending {
@@ -318,7 +322,7 @@ func TestRequeueRecoveringTask_WasRunning(t *testing.T) {
 	}
 }
 
-func TestRequeueRecoveringTask_WasProvisioning(t *testing.T) {
+func TestRecover_WasProvisioning_RequeuesWithoutSlotRelease(t *testing.T) {
 	s := newMockStore()
 	s.CreateTask(context.Background(), &models.Task{
 		ID:      "bf_prov_rq",
@@ -333,7 +337,9 @@ func TestRequeueRecoveringTask_WasProvisioning(t *testing.T) {
 	o.running = 0
 
 	task, _ := s.GetTask(context.Background(), "bf_prov_rq")
-	o.requeueRecoveringTask(context.Background(), task, "no container", false)
+	if err := o.lifecycle.Recover(context.Background(), task, false, "no container"); err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
 
 	task, _ = s.GetTask(context.Background(), "bf_prov_rq")
 	if task.Status != models.TaskStatusPending {

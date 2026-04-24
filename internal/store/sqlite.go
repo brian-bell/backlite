@@ -89,7 +89,7 @@ const taskColumns = `id, status, task_mode, harness, repo_url, branch, target_br
 	create_pr, self_review, save_agent_output, pr_title, pr_body, pr_url, output_url,
 	allowed_tools, claude_md, env_vars,
 	container_id, retry_count, user_retry_count, cost_usd, elapsed_time_sec, error,
-	ready_for_retry, reply_channel, agent_image, force,
+	ready_for_retry, agent_image, force,
 	created_at, updated_at, started_at, completed_at`
 
 func (s *SQLiteStore) CreateTask(ctx context.Context, task *models.Task) error {
@@ -110,7 +110,7 @@ func (s *SQLiteStore) CreateTask(ctx context.Context, task *models.Task) error {
 			create_pr, self_review, save_agent_output, pr_title, pr_body, pr_url, output_url,
 			allowed_tools, claude_md, env_vars,
 			container_id, retry_count, user_retry_count, cost_usd, elapsed_time_sec, error,
-			ready_for_retry, reply_channel, agent_image, force,
+			ready_for_retry, agent_image, force,
 			created_at, updated_at, started_at, completed_at
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?,
@@ -119,7 +119,7 @@ func (s *SQLiteStore) CreateTask(ctx context.Context, task *models.Task) error {
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?,
 			?, ?, ?, ?, ?, ?,
-			?, ?, ?, ?,
+			?, ?, ?,
 			?, ?, ?, ?
 		)`,
 		task.ID, task.Status, task.TaskMode, task.Harness, task.RepoURL, task.Branch, task.TargetBranch,
@@ -129,7 +129,7 @@ func (s *SQLiteStore) CreateTask(ctx context.Context, task *models.Task) error {
 		task.PRTitle, task.PRBody, task.PRURL, task.OutputURL,
 		allowedTools, task.ClaudeMD, envVars,
 		task.ContainerID, task.RetryCount, task.UserRetryCount, task.CostUSD, task.ElapsedTimeSec, task.Error,
-		task.ReadyForRetry, task.ReplyChannel, task.AgentImage, task.Force,
+		task.ReadyForRetry, task.AgentImage, task.Force,
 		timeString(task.CreatedAt), timeString(task.UpdatedAt), nullableTimeString(task.StartedAt), nullableTimeString(task.CompletedAt),
 	)
 	return err
@@ -556,7 +556,7 @@ func scanTask(row sqlScanner) (*models.Task, error) {
 		&t.PRTitle, &t.PRBody, &t.PRURL, &t.OutputURL,
 		&allowedToolsJSON, &t.ClaudeMD, &envVarsJSON,
 		&t.ContainerID, &t.RetryCount, &t.UserRetryCount, &t.CostUSD, &t.ElapsedTimeSec, &t.Error,
-		&t.ReadyForRetry, &t.ReplyChannel, &t.AgentImage, &t.Force,
+		&t.ReadyForRetry, &t.AgentImage, &t.Force,
 		&createdAt, &updatedAt, &startedAt, &completedAt,
 	)
 	if err != nil {

@@ -45,13 +45,12 @@ func WithReading(tldr, noveltyVerdict string, tags []string, connections []model
 // NewEvent constructs an Event from a task, populating core fields.
 func NewEvent(eventType EventType, task *models.Task, opts ...EventOption) Event {
 	e := Event{
-		Type:         eventType,
-		TaskID:       task.ID,
-		TaskMode:     task.TaskMode,
-		RepoURL:      task.RepoURL,
-		Prompt:       task.Prompt,
-		ReplyChannel: task.ReplyChannel,
-		Timestamp:    time.Now().UTC(),
+		Type:      eventType,
+		TaskID:    task.ID,
+		TaskMode:  task.TaskMode,
+		RepoURL:   task.RepoURL,
+		Prompt:    task.Prompt,
+		Timestamp: time.Now().UTC(),
 	}
 	for _, opt := range opts {
 		opt(&e)

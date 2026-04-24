@@ -10,6 +10,7 @@ import (
 	"github.com/brian-bell/backlite/internal/embeddings"
 	"github.com/brian-bell/backlite/internal/models"
 	"github.com/brian-bell/backlite/internal/notify"
+	"github.com/brian-bell/backlite/internal/orchestrator/lifecycle"
 	"github.com/brian-bell/backlite/internal/store"
 )
 
@@ -403,6 +404,10 @@ func newTestOrchestrator(s store.Store, bus *notify.EventBus, opts ...func(*Orch
 		stopCh:          make(chan struct{}),
 		inspectFailures: make(map[string]int),
 	}
+	o.lifecycle = lifecycle.New(s, bus,
+		lifecycle.WithSlots(slotsAdapter{o: o}),
+		lifecycle.WithMaxUserRetries(cfg.MaxUserRetries),
+	)
 	for _, opt := range opts {
 		opt(o)
 	}

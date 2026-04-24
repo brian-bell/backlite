@@ -922,7 +922,9 @@ func TestRequeueTask_LocalMode(t *testing.T) {
 		t.Errorf("running = %d, want 0", o.running)
 	}
 
-	// Instance should NOT be terminated in local mode
+	if task.ContainerID != "" {
+		t.Errorf("container ID = %q, want cleared", task.ContainerID)
+	}
 }
 
 // --- monitorRunning integration tests ---

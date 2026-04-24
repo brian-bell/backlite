@@ -6,13 +6,6 @@ Backlite is a Go service that runs coding agents (Claude Code or Codex) in ephem
 
 Three task modes: `code` (default: clone → code → commit → PR), `review` (PR review with inline comments), and `read` (fetch a URL, summarize it via a reader agent, embed the TL;DR, store the result in the `readings` table for later similarity search).
 
-## HANDOFF.md
-
-`HANDOFF.md` at the repo root captures cross-PR tradeoffs and decisions that aren't obvious from the diff alone — what was deferred, what was unblocked for future issues, and why an alternative was rejected.
-
-- **Before writing a plan:** read `HANDOFF.md` and weigh any notes that apply to the current task. Prior decisions may constrain or inform the approach.
-- **When writing a plan:** add brief notes to `HANDOFF.md` about explicit tradeoffs decided for this change — especially any decisions the user expressed directly (e.g. "add Force now vs defer to #175"). Record the decision, the alternatives considered, and the consequence for downstream work. Keep each entry tight; this file is a ledger, not a design doc. Items should be limited to forward-looking constraints or explicit deferrals that a subsequent issue will need to know about.
-
 ## Commands
 
 ```bash
@@ -68,7 +61,7 @@ Two goroutines: chi REST API on `:8080` + polling orchestrator (5s default). The
 ### Key modules (`internal/`)
 
 - **api/** — chi router, handlers, JSON responses, `LogFetcher` interface, `NewTask` shared task-creation helper, `CancelTask` and `RetryTask` shared action helpers
-- **orchestrator/** — Poll loop (`orchestrator.go`), dispatch (`dispatch.go`), monitoring (`monitor.go`, including `handleReadingCompletion` for read-mode tasks), recovery (`recovery.go`). Subpackages: `docker/` (local Docker container management), `outputs/` (filesystem writer for agent logs + task metadata).
+- **orchestrator/** — Poll loop (`orchestrator.go`), dispatch (`dispatch.go`), monitoring (`monitor.go`, including `handleReadingCompletion` for read-mode tasks), recovery (`recovery.go`). Subpackages: `docker/` (local Docker container management), `outputs/` (filesystem writer for agent logs + task metadata), `lifecycle/` (`Coordinator` owning task state transitions, slot accounting, and paired event emission — callers invoke domain verbs like `Dispatch`/`Complete`/`Requeue`/`Cancel` instead of selecting Store methods).
 - **store/** — `Store` interface + SQLite (`database/sql`, goose migrations). Includes `UpsertReading` / `GetReadingByURL` / `FindSimilarReadings` for the `readings` table.
 - **models/** — `Task` and `Reading` (+ `Connection`) structs with status enums. `Task.AgentImage` records which Docker image the orchestrator used (read tasks get `ReaderImage`, others get the default agent image). `FindFirstURL` / `InferReviewMode` auto-detect review mode when a prompt's first URL is a GitHub PR URL.
 - **embeddings/** — Thin `Embedder` interface (`Embed(ctx, text) ([]float32, error)`) with an `OpenAIEmbedder` HTTP client (no SDK). Used by the orchestrator to embed a reading's final TL;DR before writing the `readings` row.

@@ -32,7 +32,6 @@ CREATE TABLE tasks (
     elapsed_time_sec INTEGER NOT NULL DEFAULT 0,
     error            TEXT NOT NULL DEFAULT '',
     ready_for_retry  BOOLEAN NOT NULL DEFAULT false,
-    reply_channel    TEXT NOT NULL DEFAULT '',
     agent_image      TEXT NOT NULL DEFAULT '',
     force            BOOLEAN NOT NULL DEFAULT false,
     created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),

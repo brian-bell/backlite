@@ -11,6 +11,7 @@ import (
 	"github.com/brian-bell/backlite/internal/embeddings"
 	"github.com/brian-bell/backlite/internal/models"
 	"github.com/brian-bell/backlite/internal/notify"
+	"github.com/brian-bell/backlite/internal/orchestrator/lifecycle"
 	"github.com/brian-bell/backlite/internal/store"
 )
 
@@ -18,15 +19,37 @@ import (
 // before a task is killed or requeued.
 const maxInspectFailures = 3
 
+// inspectOutcome is the decision returned by classifyInspectFailure. It is the
+// shared structural skeleton for monitor.go's handleInspectError and
+// recovery.go's handleRecoveringInspectError. Each caller picks its own action
+// per outcome while the counter bookkeeping lives in one place.
+type inspectOutcome int
+
+const (
+	inspectContinue inspectOutcome = iota
+	inspectExceededThreshold
+)
+
+func (o *Orchestrator) classifyInspectFailure(taskID string, err error) (inspectOutcome, int) {
+	o.inspectFailures[taskID]++
+	count := o.inspectFailures[taskID]
+	if count >= maxInspectFailures {
+		delete(o.inspectFailures, taskID)
+		return inspectExceededThreshold, count
+	}
+	return inspectContinue, count
+}
+
 // Orchestrator manages the lifecycle of tasks: dispatching them, monitoring
 // their containers, handling completions, and recovering from restarts.
 type Orchestrator struct {
-	store    store.Store
-	config   *config.Config
-	bus      *notify.EventBus
-	docker   Runner
-	outputs  Writer
-	embedder embeddings.Embedder
+	store     store.Store
+	config    *config.Config
+	bus       *notify.EventBus
+	docker    Runner
+	outputs   Writer
+	embedder  embeddings.Embedder
+	lifecycle *lifecycle.Coordinator
 
 	mu              sync.Mutex
 	running         int
@@ -35,7 +58,7 @@ type Orchestrator struct {
 }
 
 func New(s store.Store, cfg *config.Config, bus *notify.EventBus, runner Runner, outputs Writer, embedder embeddings.Embedder) *Orchestrator {
-	return &Orchestrator{
+	o := &Orchestrator{
 		store:           s,
 		config:          cfg,
 		bus:             bus,
@@ -45,6 +68,28 @@ func New(s store.Store, cfg *config.Config, bus *notify.EventBus, runner Runner,
 		stopCh:          make(chan struct{}),
 		inspectFailures: make(map[string]int),
 	}
+	o.lifecycle = lifecycle.New(s, bus,
+		lifecycle.WithSlots(slotsAdapter{o: o}),
+		lifecycle.WithMaxUserRetries(cfg.MaxUserRetries),
+	)
+
+	return o
+}
+
+// slotsAdapter exposes the orchestrator's running-counter helpers through
+// the narrow lifecycle.Slots interface. Used to break the construction cycle
+// between Orchestrator and Coordinator while keeping the counter logic in
+// one place.
+type slotsAdapter struct {
+	o *Orchestrator
+}
+
+func (a slotsAdapter) Acquire() {
+	a.o.incrementRunning()
+}
+
+func (a slotsAdapter) Release(ctx context.Context, task *models.Task) {
+	a.o.releaseSlot(ctx, task)
 }
 
 // Running returns the current count of running tasks.

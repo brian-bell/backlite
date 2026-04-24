@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -288,12 +289,16 @@ func waitForOrchestratorIdle(t *testing.T, timeout time.Duration) {
 		if err != nil {
 			t.Fatalf("check orchestrator idle state: %v", err)
 		}
-		if activeTasks == 0 {
+		runningTasks, err := orchestratorRunningTaskCount(ctx)
+		if err != nil {
+			t.Fatalf("check orchestrator running state: %v", err)
+		}
+		if activeTasks == 0 && runningTasks == 0 {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("orchestrator did not go idle within %s: %d active tasks",
-				timeout, activeTasks)
+			t.Fatalf("orchestrator did not go idle within %s: %d active tasks, %d running slots",
+				timeout, activeTasks, runningTasks)
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
@@ -318,6 +323,33 @@ func orchestratorActiveTaskCount(ctx context.Context) (int, error) {
 		}
 	}
 	return activeTasks, rows.Err()
+}
+
+func orchestratorRunningTaskCount(ctx context.Context) (int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, backflowURL+"/debug/stats", nil)
+	if err != nil {
+		return 0, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("GET /debug/stats: status %d", resp.StatusCode)
+	}
+
+	var envelope struct {
+		Data struct {
+			Orchestrator struct {
+				RunningTasks int `json:"running_tasks"`
+			} `json:"orchestrator"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		return 0, err
+	}
+	return envelope.Data.Orchestrator.RunningTasks, nil
 }
 
 // dumpLogsOnFailure returns a cleanup function that dumps the Backlite

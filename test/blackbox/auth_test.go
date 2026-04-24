@@ -18,7 +18,7 @@ import (
 func TestAuth_EnvToken_AllowsAndRejects(t *testing.T) {
 	resetBetweenTests(t)
 
-	baseURL, stop := startAuthBackflow(t, "env-secret", "env-secret")
+	baseURL, stop := startAuthBacklite(t, "env-secret", "env-secret")
 	defer stop()
 
 	if got := statusCode(t, baseURL, "/api/v1/health", ""); got != http.StatusUnauthorized {
@@ -34,7 +34,7 @@ func TestAuth_DatabaseKey_AllowsAndRejects(t *testing.T) {
 
 	seedAPIKey(t, "db-valid", []string{"health:read"}, nil)
 
-	baseURL, stop := startAuthBackflow(t, "", "db-valid")
+	baseURL, stop := startAuthBacklite(t, "", "db-valid")
 	defer stop()
 
 	if got := statusCode(t, baseURL, "/api/v1/health", ""); got != http.StatusUnauthorized {
@@ -52,7 +52,7 @@ func TestAuth_DatabaseKey_RejectsExpired(t *testing.T) {
 	expired := time.Now().Add(-time.Hour)
 	seedAPIKey(t, "db-expired", []string{"health:read"}, &expired)
 
-	baseURL, stop := startAuthBackflow(t, "", "db-valid")
+	baseURL, stop := startAuthBacklite(t, "", "db-valid")
 	defer stop()
 
 	if got := statusCode(t, baseURL, "/api/v1/health", "db-expired"); got != http.StatusUnauthorized {
@@ -93,7 +93,7 @@ func seedAPIKey(t *testing.T, token string, permissions []string, expiresAt *tim
 	}
 }
 
-func startAuthBackflow(t *testing.T, envToken, healthToken string) (string, func()) {
+func startAuthBacklite(t *testing.T, envToken, healthToken string) (string, func()) {
 	t.Helper()
 
 	port, err := freePort()
@@ -113,7 +113,7 @@ func startAuthBackflow(t *testing.T, envToken, healthToken string) (string, func
 	}
 
 	if err := cmd.Start(); err != nil {
-		t.Fatalf("start backflow subprocess: %v", err)
+		t.Fatalf("start backlite subprocess: %v", err)
 	}
 
 	if err := waitForHealthWithToken(baseURL, healthToken, 30*time.Second); err != nil {

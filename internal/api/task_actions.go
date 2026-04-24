@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/backflow-labs/backflow/internal/models"
-	"github.com/backflow-labs/backflow/internal/notify"
-	"github.com/backflow-labs/backflow/internal/store"
+	"github.com/brian-bell/backlite/internal/models"
+	"github.com/brian-bell/backlite/internal/notify"
+	"github.com/brian-bell/backlite/internal/store"
 )
 
 // CancelTask validates the task is in a cancellable state, cancels it in the store,

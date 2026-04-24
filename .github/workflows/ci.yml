@@ -46,7 +46,7 @@ jobs:
           cache: true
 
       - name: Build
-        run: go build -trimpath -o bin/backflow ./cmd/backflow
+        run: go build -trimpath -o bin/backlite ./cmd/backlite
 
       - name: Test
         run: go test $(go list ./... | grep -v '/test/blackbox') -race -v -count=1
@@ -86,25 +86,25 @@ jobs:
 
       - name: Run migrations
         run: |
-          rm -f /tmp/backflow-ci.db
-          goose -dir migrations sqlite3 /tmp/backflow-ci.db up
+          rm -f /tmp/backlite-ci.db
+          goose -dir migrations sqlite3 /tmp/backlite-ci.db up
 
       - name: Build
-        run: go build -trimpath -o bin/backflow ./cmd/backflow
+        run: go build -trimpath -o bin/backlite ./cmd/backlite
 
       - name: Start server
         run: |
-          ./bin/backflow &
-          echo $! > /tmp/backflow.pid
+          ./bin/backlite &
+          echo $! > /tmp/backlite.pid
         env:
-          BACKFLOW_DATABASE_PATH: /tmp/backflow-ci.db
+          BACKFLOW_DATABASE_PATH: /tmp/backlite-ci.db
           ANTHROPIC_API_KEY: sk-ant-fuzz-placeholder-not-real
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Wait for server
         run: |
           for i in $(seq 1 15); do
-            if ! kill -0 "$(cat /tmp/backflow.pid)" 2>/dev/null; then
+            if ! kill -0 "$(cat /tmp/backlite.pid)" 2>/dev/null; then
               echo "server process died" && exit 1
             fi
             curl -sf http://localhost:8080/health && break || sleep 1

@@ -28,7 +28,7 @@ func main() {
 		duration     = flag.Duration("duration", 1*time.Hour, "total test duration")
 		short        = flag.Bool("short", false, "run a short soak test (10 minutes)")
 		taskInterval = flag.Duration("task-interval", 3*time.Second, "interval between task submissions")
-		agentImage   = flag.String("agent-image", "backflow-fake-agent:test", "agent image name for container counting")
+		agentImage   = flag.String("agent-image", "backlite-fake-agent:test", "agent image name for container counting")
 		databasePath = flag.String("database-path", defaultDatabasePath, "SQLite database path for the dedicated soak server (default: $BACKFLOW_DATABASE_PATH with -soak.db suffix)")
 		maxRetries   = flag.Int("max-retries", 2, "max user retries (must match server BACKFLOW_MAX_USER_RETRIES)")
 	)
@@ -237,7 +237,7 @@ func main() {
 
 func defaultSoakDatabasePath(base string) string {
 	if base == "" {
-		base = "./backflow.db"
+		base = "./backlite.db"
 	}
 	if strings.HasSuffix(base, "-soak.db") {
 		return base
@@ -254,13 +254,13 @@ func startSoakServer(databasePath, agentImage string) (string, func(), error) {
 		return "", nil, err
 	}
 
-	tempDir, err := os.MkdirTemp("", "backflow-soak-*")
+	tempDir, err := os.MkdirTemp("", "backlite-soak-*")
 	if err != nil {
 		return "", nil, fmt.Errorf("create temp dir: %w", err)
 	}
 
-	binaryPath := filepath.Join(tempDir, "backflow-soak")
-	build := exec.Command("go", "build", "-trimpath", "-o", binaryPath, "./cmd/backflow")
+	binaryPath := filepath.Join(tempDir, "backlite-soak")
+	build := exec.Command("go", "build", "-trimpath", "-o", binaryPath, "./cmd/backlite")
 	build.Dir = repoRoot
 	build.Stdout = os.Stdout
 	build.Stderr = os.Stderr
@@ -275,7 +275,7 @@ func startSoakServer(databasePath, agentImage string) (string, func(), error) {
 		return "", nil, fmt.Errorf("find free port: %w", err)
 	}
 
-	logPath := filepath.Join(tempDir, "backflow-soak.log")
+	logPath := filepath.Join(tempDir, "backlite-soak.log")
 	logFile, err := os.Create(logPath)
 	if err != nil {
 		_ = os.RemoveAll(tempDir)
@@ -428,7 +428,7 @@ type debugStatsResponse struct {
 	} `json:"data"`
 }
 
-// collectMetrics gathers one metric sample from the running Backflow instance.
+// collectMetrics gathers one metric sample from the running Backlite instance.
 func collectMetrics(client *http.Client, apiURL, agentImage string, knownPID int) (MetricSample, int, error) {
 	var sample MetricSample
 

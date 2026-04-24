@@ -16,10 +16,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backflow-labs/backflow/internal/orchestrator"
+	"github.com/brian-bell/backlite/internal/orchestrator"
 )
 
-const imageName = "backflow-fake-agent"
+const imageName = "backlite-fake-agent"
 
 func TestMain(m *testing.M) {
 	_, thisFile, _, ok := runtime.Caller(0)
@@ -101,9 +101,9 @@ func removeContainer(t *testing.T, containerID string) {
 	_ = exec.Command("docker", "rm", "-f", containerID).Run()
 }
 
-// parseBackflowStatusLine finds the BACKFLOW_STATUS_JSON: line in logs and
+// parseBackliteStatusLine finds the BACKFLOW_STATUS_JSON: line in logs and
 // returns the parsed JSON payload. Returns nil if no such line exists.
-func parseBackflowStatusLine(t *testing.T, logs string) []byte {
+func parseBackliteStatusLine(t *testing.T, logs string) []byte {
 	t.Helper()
 	for line := range strings.SplitSeq(logs, "\n") {
 		line = strings.TrimSpace(line)
@@ -214,7 +214,7 @@ func TestFakeAgent(t *testing.T) {
 				}
 
 				// Check BACKFLOW_STATUS_JSON line matches the file
-				logPayload := parseBackflowStatusLine(t, logs)
+				logPayload := parseBackliteStatusLine(t, logs)
 				if logPayload == nil {
 					t.Fatal("expected BACKFLOW_STATUS_JSON: line in stdout, but not found")
 				}
@@ -229,7 +229,7 @@ func TestFakeAgent(t *testing.T) {
 				if statusData != nil {
 					t.Errorf("expected no status.json for outcome %q, but found one: %s", tt.outcome, statusData)
 				}
-				logPayload := parseBackflowStatusLine(t, logs)
+				logPayload := parseBackliteStatusLine(t, logs)
 				if logPayload != nil {
 					t.Errorf("expected no BACKFLOW_STATUS_JSON line for outcome %q, but found: %s", tt.outcome, logPayload)
 				}
@@ -265,7 +265,7 @@ func TestFakeAgentTimeout(t *testing.T) {
 
 	// No BACKFLOW_STATUS_JSON line
 	logs := containerLogs(t, containerID)
-	logPayload := parseBackflowStatusLine(t, logs)
+	logPayload := parseBackliteStatusLine(t, logs)
 	if logPayload != nil {
 		t.Errorf("expected no BACKFLOW_STATUS_JSON line for timeout, but found: %s", logPayload)
 	}

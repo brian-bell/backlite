@@ -17,7 +17,7 @@ import (
 	"github.com/rs/zerolog/log"
 	_ "modernc.org/sqlite"
 
-	"github.com/backflow-labs/backflow/internal/models"
+	"github.com/brian-bell/backlite/internal/models"
 )
 
 type sqliteQuerier interface {

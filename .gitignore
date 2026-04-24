@@ -11,5 +11,5 @@ mise.toml
 .hypothesis/
 .claude/worktrees/
 logs/
-backflow
+backlite
 data/

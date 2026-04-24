@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backflow-labs/backflow/internal/models"
-	"github.com/backflow-labs/backflow/internal/notify"
+	"github.com/brian-bell/backlite/internal/models"
+	"github.com/brian-bell/backlite/internal/notify"
 )
 
 func TestFindAvailableInstance_ReturnsInstanceWithCapacity(t *testing.T) {
@@ -397,7 +397,7 @@ func TestDispatch_ReadTask_OrchestratorMissingReaderImage_Fails(t *testing.T) {
 		Status:     models.TaskStatusPending,
 		TaskMode:   models.TaskModeRead,
 		Prompt:     "https://example.com/post",
-		AgentImage: "backflow-reader", // set by the creating orchestrator
+		AgentImage: "backlite-reader", // set by the creating orchestrator
 	}
 	s.CreateTask(context.Background(), task)
 
@@ -495,7 +495,7 @@ func TestDispatch_ReadDuplicate_NonForce_FailsWithoutContainer(t *testing.T) {
 	}
 	embedder := &mockEmbedder{}
 	o := newTestOrchestrator(s, bus, withDocker(mock), withEmbedder(embedder))
-	o.config.ReaderImage = "backflow-reader"
+	o.config.ReaderImage = "backlite-reader"
 
 	task, _ = s.GetTask(context.Background(), "bf_read_dup_noforce")
 	err := o.dispatch(context.Background(), task)
@@ -574,7 +574,7 @@ func TestDispatch_ReadDuplicate_Force_ProceedsNormally(t *testing.T) {
 		inspectResults: map[string]ContainerStatus{},
 	}
 	o := newTestOrchestrator(s, bus, withDocker(mock), withEmbedder(&mockEmbedder{}))
-	o.config.ReaderImage = "backflow-reader"
+	o.config.ReaderImage = "backlite-reader"
 
 	task, _ = s.GetTask(context.Background(), "bf_read_dup_force")
 	err := o.dispatch(context.Background(), task)
@@ -624,7 +624,7 @@ func TestDispatch_ReadDuplicate_LookupError_ReturnsError(t *testing.T) {
 		inspectResults: map[string]ContainerStatus{},
 	}
 	o := newTestOrchestrator(s, bus, withDocker(mock), withEmbedder(&mockEmbedder{}))
-	o.config.ReaderImage = "backflow-reader"
+	o.config.ReaderImage = "backlite-reader"
 
 	task, _ = s.GetTask(context.Background(), "bf_read_dup_lookuperr")
 	err := o.dispatch(context.Background(), task)

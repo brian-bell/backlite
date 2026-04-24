@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backflow-labs/backflow/internal/config"
-	"github.com/backflow-labs/backflow/internal/models"
-	"github.com/backflow-labs/backflow/internal/orchestrator"
+	"github.com/brian-bell/backlite/internal/config"
+	"github.com/brian-bell/backlite/internal/models"
+	"github.com/brian-bell/backlite/internal/orchestrator"
 )
 
 // Compile-time check: *Manager must satisfy orchestrator.Runner.
@@ -184,7 +184,7 @@ func TestBuildRunCommand(t *testing.T) {
 		AnthropicAPIKey: "sk-test",
 		ContainerCPUs:   2,
 		ContainerMemGB:  8,
-		AgentImage:      "backflow-agent",
+		AgentImage:      "backlite-agent",
 	}
 	dm := NewManager(cfg)
 
@@ -199,7 +199,7 @@ func TestBuildRunCommand(t *testing.T) {
 	if !strings.HasPrefix(cmd, "docker run -d --cpus=2 --memory=8g") {
 		t.Errorf("unexpected command prefix: %s", cmd)
 	}
-	if !strings.HasSuffix(cmd, "backflow-agent") {
+	if !strings.HasSuffix(cmd, "backlite-agent") {
 		t.Errorf("command should end with image name, got: %s", cmd)
 	}
 	if !strings.Contains(cmd, "-e TASK_ID=bf_01ABC") {
@@ -214,7 +214,7 @@ func TestBuildRunCommand_WithEnvFile(t *testing.T) {
 	cfg := &config.Config{
 		ContainerCPUs:  2,
 		ContainerMemGB: 8,
-		AgentImage:     "backflow-agent",
+		AgentImage:     "backlite-agent",
 	}
 	dm := NewManager(cfg)
 
@@ -224,12 +224,12 @@ func TestBuildRunCommand_WithEnvFile(t *testing.T) {
 		Prompt:  "Fix bug",
 	}
 
-	cmd := dm.buildRunCommand(task, "/tmp/backflow-env-12345")
+	cmd := dm.buildRunCommand(task, "/tmp/backlite-env-12345")
 
-	if !strings.Contains(cmd, "--env-file /tmp/backflow-env-12345") {
+	if !strings.Contains(cmd, "--env-file /tmp/backlite-env-12345") {
 		t.Errorf("command should contain --env-file flag, got: %s", cmd)
 	}
-	if !strings.HasSuffix(cmd, "backflow-agent") {
+	if !strings.HasSuffix(cmd, "backlite-agent") {
 		t.Errorf("command should end with image name, got: %s", cmd)
 	}
 }
@@ -300,20 +300,20 @@ func TestBuildRunCommand_UsesTaskAgentImage(t *testing.T) {
 	cfg := &config.Config{
 		ContainerCPUs:  2,
 		ContainerMemGB: 8,
-		AgentImage:     "backflow-agent",
+		AgentImage:     "backlite-agent",
 	}
 	dm := NewManager(cfg)
 	task := &models.Task{
 		ID:         "bf_01ABC",
-		AgentImage: "backflow-reader:v1",
+		AgentImage: "backlite-reader:v1",
 	}
 
 	cmd := dm.buildRunCommand(task, "")
 
-	if !strings.HasSuffix(cmd, "backflow-reader:v1") {
+	if !strings.HasSuffix(cmd, "backlite-reader:v1") {
 		t.Errorf("command should end with task.AgentImage, got: %s", cmd)
 	}
-	if strings.HasSuffix(cmd, "backflow-agent") {
+	if strings.HasSuffix(cmd, "backlite-agent") {
 		t.Errorf("command should not fall back to cfg.AgentImage when task.AgentImage is set, got: %s", cmd)
 	}
 }
@@ -322,7 +322,7 @@ func TestBuildRunCommand_FallsBackToConfigAgentImage(t *testing.T) {
 	cfg := &config.Config{
 		ContainerCPUs:  2,
 		ContainerMemGB: 8,
-		AgentImage:     "backflow-agent",
+		AgentImage:     "backlite-agent",
 	}
 	dm := NewManager(cfg)
 	task := &models.Task{
@@ -332,7 +332,7 @@ func TestBuildRunCommand_FallsBackToConfigAgentImage(t *testing.T) {
 
 	cmd := dm.buildRunCommand(task, "")
 
-	if !strings.HasSuffix(cmd, "backflow-agent") {
+	if !strings.HasSuffix(cmd, "backlite-agent") {
 		t.Errorf("command should fall back to cfg.AgentImage when task.AgentImage is empty, got: %s", cmd)
 	}
 }
@@ -361,7 +361,7 @@ func TestBuildSecretEnvPairs(t *testing.T) {
 	}
 }
 
-func TestBuildSecretEnvPairs_IncludesBackflowAPIKey(t *testing.T) {
+func TestBuildSecretEnvPairs_IncludesBackliteAPIKey(t *testing.T) {
 	cfg := &config.Config{APIKey: "internal-secret"}
 	dm := NewManager(cfg)
 

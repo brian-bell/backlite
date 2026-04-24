@@ -4,9 +4,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
-	"github.com/backflow-labs/backflow/internal/config"
-	"github.com/backflow-labs/backflow/internal/notify"
-	"github.com/backflow-labs/backflow/internal/store"
+	"github.com/brian-bell/backlite/internal/config"
+	"github.com/brian-bell/backlite/internal/notify"
+	"github.com/brian-bell/backlite/internal/store"
 )
 
 func NewServer(s store.Store, cfg *config.Config, logs LogFetcher, bus notify.Emitter) chi.Router {

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backflow-labs/backflow/internal/models"
-	"github.com/backflow-labs/backflow/internal/notify"
+	"github.com/brian-bell/backlite/internal/models"
+	"github.com/brian-bell/backlite/internal/notify"
 )
 
 func TestRecoverOnStartup_NoOrphans(t *testing.T) {

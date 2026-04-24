@@ -11,10 +11,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/backflow-labs/backflow/internal/config"
-	"github.com/backflow-labs/backflow/internal/models"
-	"github.com/backflow-labs/backflow/internal/notify"
-	"github.com/backflow-labs/backflow/internal/store"
+	"github.com/brian-bell/backlite/internal/config"
+	"github.com/brian-bell/backlite/internal/models"
+	"github.com/brian-bell/backlite/internal/notify"
+	"github.com/brian-bell/backlite/internal/store"
 )
 
 func newTestStore(t *testing.T) *store.SQLiteStore {
@@ -259,7 +259,7 @@ func TestCreateReadTask_ViaPOSTTasks(t *testing.T) {
 
 	cfg := &config.Config{
 		AnthropicAPIKey:       "sk-test",
-		ReaderImage:           "backflow-reader:v1",
+		ReaderImage:           "backlite-reader:v1",
 		DefaultHarness:        "claude_code",
 		DefaultClaudeModel:    "claude-sonnet-4-6",
 		DefaultCodexModel:     "gpt-5.4",
@@ -301,7 +301,7 @@ func TestCreateReadTask_ViaPOSTTasks(t *testing.T) {
 	if !resp.Data.Force {
 		t.Error("force = false, want true")
 	}
-	if resp.Data.AgentImage != "backflow-reader:v1" {
+	if resp.Data.AgentImage != "backlite-reader:v1" {
 		t.Errorf("agent_image = %q, want reader image", resp.Data.AgentImage)
 	}
 	if resp.Data.CreatePR {
@@ -450,7 +450,7 @@ func TestDeleteTask_EmitsCancelledEvent(t *testing.T) {
 // TestLookupReading_EmptyResultReturnsDataArray locks in the JSON envelope
 // shape on a miss. The reader container's read-lookup.sh requires
 // `.data | type == "array"`; if `data` is ever omitted on empty results the
-// script fails with "unexpected response from Backflow API".
+// script fails with "unexpected response from Backlite API".
 func TestLookupReading_EmptyResultReturnsDataArray(t *testing.T) {
 	srv := testServer(t)
 

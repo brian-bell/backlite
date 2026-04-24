@@ -4,13 +4,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backflow-labs/backflow/internal/models"
+	"github.com/brian-bell/backlite/internal/models"
 )
 
 func testConfig() *Config {
 	return &Config{
-		AgentImage:            "backflow-agent",
-		ReaderImage:           "backflow-reader",
+		AgentImage:            "backlite-agent",
+		ReaderImage:           "backlite-reader",
 		DefaultHarness:        "claude_code",
 		DefaultClaudeModel:    "claude-sonnet-4-6",
 		DefaultCodexModel:     "gpt-5.4",
@@ -83,8 +83,8 @@ func TestTaskDefaults_ReadMode(t *testing.T) {
 	cfg := testConfig()
 	d := cfg.TaskDefaults(models.TaskModeRead)
 
-	if d.AgentImage != "backflow-reader" {
-		t.Errorf("AgentImage = %q, want %q", d.AgentImage, "backflow-reader")
+	if d.AgentImage != "backlite-reader" {
+		t.Errorf("AgentImage = %q, want %q", d.AgentImage, "backlite-reader")
 	}
 	if d.MaxBudgetUSD != 0.5 {
 		t.Errorf("MaxBudgetUSD = %v, want %v (read cap)", d.MaxBudgetUSD, 0.5)
@@ -103,8 +103,8 @@ func TestTaskDefaults_ReadMode(t *testing.T) {
 func TestTaskDefaults_CodeMode_AgentImage(t *testing.T) {
 	cfg := testConfig()
 	d := cfg.TaskDefaults(models.TaskModeCode)
-	if d.AgentImage != "backflow-agent" {
-		t.Errorf("AgentImage = %q, want %q in code mode", d.AgentImage, "backflow-agent")
+	if d.AgentImage != "backlite-agent" {
+		t.Errorf("AgentImage = %q, want %q in code mode", d.AgentImage, "backlite-agent")
 	}
 }
 
@@ -252,8 +252,8 @@ func TestApply_FillsAgentImage(t *testing.T) {
 
 	d.Apply(task, nil)
 
-	if task.AgentImage != "backflow-reader" {
-		t.Errorf("AgentImage = %q, want %q (from read defaults)", task.AgentImage, "backflow-reader")
+	if task.AgentImage != "backlite-reader" {
+		t.Errorf("AgentImage = %q, want %q (from read defaults)", task.AgentImage, "backlite-reader")
 	}
 }
 

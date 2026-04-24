@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Run the Backflow black-box integration test suite.
+# Run the Backlite black-box integration test suite.
 set -euo pipefail
 
 usage() {
     cat <<EOF
 Usage: $(basename "$0") [options]
 
-Run the Backflow black-box integration test suite.
+Run the Backlite black-box integration test suite.
 
-Builds the Backflow binary and fake agent Docker image, starts the SQLite-backed
+Builds the Backlite binary and fake agent Docker image, starts the SQLite-backed
 black-box harness, and exercises the full task lifecycle.
 
 Prerequisites: Docker daemon must be running.

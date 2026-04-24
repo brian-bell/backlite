@@ -5,13 +5,13 @@ usage() {
     cat <<EOF
 Usage: $(basename "$0") [options]
 
-Run the Backflow soak test (long-running resource leak detector).
+Run the Backlite soak test (long-running resource leak detector).
 Exercises cancel, retry, retry limits, and mixed failure modes.
 
 Requires: BACKFLOW_CONTAINERS_PER_INSTANCE >= 4 (multi-step scenarios
-need concurrent container slots). Set BACKFLOW_AGENT_IMAGE=backflow-fake-agent.
+need concurrent container slots). Set BACKFLOW_AGENT_IMAGE=backlite-fake-agent.
 
-Starts a dedicated Backflow subprocess against the soak SQLite database.
+Starts a dedicated Backlite subprocess against the soak SQLite database.
 WARNING: This will DELETE task data from that soak database.
 
 Options:
@@ -29,7 +29,7 @@ EOF
 default_soak_db_path() {
     local base="${1:-}"
     if [ -z "$base" ]; then
-        base="./backflow.db"
+        base="./backlite.db"
     fi
     case "$base" in
         *-soak.db) printf '%s\n' "$base" ;;
@@ -48,7 +48,7 @@ if [ -f .env ]; then
 fi
 
 cat <<'WARNING'
-WARNING: The soak test starts a dedicated Backflow subprocess against the soak SQLite database.
+WARNING: The soak test starts a dedicated Backlite subprocess against the soak SQLite database.
 That database will be truncated before and after the run.
 All existing soak task records will be deleted.
 WARNING

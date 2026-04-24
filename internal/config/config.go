@@ -85,7 +85,7 @@ func Load() (*Config, error) {
 		ContainersPerInst:     envInt("BACKFLOW_CONTAINERS_PER_INSTANCE", 1),
 		ContainerCPUs:         envInt("BACKFLOW_CONTAINER_CPUS", 2),
 		ContainerMemGB:        envInt("BACKFLOW_CONTAINER_MEMORY_GB", 8),
-		AgentImage:            envOr("BACKFLOW_AGENT_IMAGE", "backflow-agent"),
+		AgentImage:            envOr("BACKFLOW_AGENT_IMAGE", "backlite-agent"),
 		ReaderImage:           os.Getenv("BACKFLOW_READER_IMAGE"),
 		DefaultHarness:        envOr("BACKFLOW_DEFAULT_HARNESS", "claude_code"),
 		DefaultClaudeModel:    envOr("BACKFLOW_DEFAULT_CLAUDE_MODEL", "claude-opus-4-7"),
@@ -102,7 +102,7 @@ func Load() (*Config, error) {
 		GitHubToken:           os.Getenv("GITHUB_TOKEN"),
 		WebhookURL:            os.Getenv("BACKFLOW_WEBHOOK_URL"),
 		LogFile:               os.Getenv("BACKFLOW_LOG_FILE"),
-		DatabasePath:          envOr("BACKFLOW_DATABASE_PATH", "./backflow.db"),
+		DatabasePath:          envOr("BACKFLOW_DATABASE_PATH", "./backlite.db"),
 		MaxUserRetries:        envInt("BACKFLOW_MAX_USER_RETRIES", 2),
 		PollInterval:          time.Duration(envInt("BACKFLOW_POLL_INTERVAL_SEC", 5)) * time.Second,
 	}

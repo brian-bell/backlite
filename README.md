@@ -1,4 +1,4 @@
-# Backflow
+# Backlite
 
 Agent orchestrator that runs coding agents (Claude Code or Codex) in ephemeral containers. POST a task (repo + prompt), get back a branch with commits and a PR. The current runtime is local Docker plus a local SQLite database.
 
@@ -13,13 +13,15 @@ Also supports a `read` task mode that runs a dedicated reader image against a UR
 
 ## Local Development
 
+For a from-scratch single-host setup, see [docs/self-hosting.md](docs/self-hosting.md).
+
 ```bash
 cp .env.example .env
 # Edit .env — at minimum set BACKFLOW_DATABASE_PATH, ANTHROPIC_API_KEY, and GITHUB_TOKEN
 ```
 
 ```bash
-make build          # Compile to bin/backflow
+make build          # Compile to bin/backlite
 make run            # Build + run (auto-sources .env)
 make test           # Run all tests with -tags nocontainers (no cache)
 make lint           # go vet
@@ -204,7 +206,7 @@ make docker-server-build-local   # Single-arch server image
 make docker-server-build         # Multi-arch buildx
 ```
 
-Backflow runs agent containers directly against the local Docker daemon; there is no remote orchestration runtime. A legacy `make teardown-aws` target exists to clean up AWS resources from older deploys — see `scripts/teardown-aws.sh` (dry-run by default; pass `ARGS="--yes"` to actually delete).
+Backlite runs agent containers directly against the local Docker daemon; there is no remote orchestration runtime. A legacy `make teardown-aws` target exists to clean up AWS resources from older deploys — see `scripts/teardown-aws.sh` (dry-run by default; pass `ARGS="--yes"` to actually delete).
 
 ## Configuration
 
@@ -229,7 +231,7 @@ All config via environment variables or `.env` file. See `.env.example` for the 
 | `BACKFLOW_DEFAULT_READ_MAX_BUDGET` | Budget cap for reading tasks |
 | `BACKFLOW_DEFAULT_READ_MAX_RUNTIME_SEC` | Runtime cap for reading tasks |
 | `BACKFLOW_DEFAULT_READ_MAX_TURNS` | Max turns for reading tasks |
-| `BACKFLOW_INTERNAL_API_BASE_URL` | Optional override for the Backflow API base URL that reader containers use for duplicate/similarity lookups |
+| `BACKFLOW_INTERNAL_API_BASE_URL` | Optional override for the Backlite API base URL that reader containers use for duplicate/similarity lookups |
 
 ### Agent Defaults
 

@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/backflow-labs/backflow/internal/config"
-	"github.com/backflow-labs/backflow/internal/models"
-	"github.com/backflow-labs/backflow/internal/notify"
-	"github.com/backflow-labs/backflow/internal/store"
+	"github.com/brian-bell/backlite/internal/config"
+	"github.com/brian-bell/backlite/internal/models"
+	"github.com/brian-bell/backlite/internal/notify"
+	"github.com/brian-bell/backlite/internal/store"
 )
 
 // mockStore implements store.Store for unit tests that need a failing CreateTask.
@@ -78,8 +78,8 @@ func (c *capturingEmitter) Emit(e notify.Event) { c.events = append(c.events, e)
 // the reader image and read-mode caps that TaskDefaults("read") reads from.
 func readTestConfig() *config.Config {
 	return &config.Config{
-		AgentImage:            "backflow-agent",
-		ReaderImage:           "backflow-reader:v1",
+		AgentImage:            "backlite-agent",
+		ReaderImage:           "backlite-reader:v1",
 		DefaultHarness:        "claude_code",
 		DefaultClaudeModel:    "claude-sonnet-4-6",
 		DefaultCodexModel:     "gpt-5.4",
@@ -103,8 +103,8 @@ func TestNewReadTask_SetsReadModeAndReaderImage(t *testing.T) {
 	if task.TaskMode != models.TaskModeRead {
 		t.Errorf("TaskMode = %q, want %q", task.TaskMode, models.TaskModeRead)
 	}
-	if task.AgentImage != "backflow-reader:v1" {
-		t.Errorf("AgentImage = %q, want %q", task.AgentImage, "backflow-reader:v1")
+	if task.AgentImage != "backlite-reader:v1" {
+		t.Errorf("AgentImage = %q, want %q", task.AgentImage, "backlite-reader:v1")
 	}
 	if task.CreatePR {
 		t.Error("CreatePR = true, want false for read mode")
@@ -218,7 +218,7 @@ func TestNewTask_TaskModeRead_DispatchesToNewReadTask(t *testing.T) {
 	if task.TaskMode != models.TaskModeRead {
 		t.Errorf("TaskMode = %q, want %q", task.TaskMode, models.TaskModeRead)
 	}
-	if task.AgentImage != "backflow-reader:v1" {
+	if task.AgentImage != "backlite-reader:v1" {
 		t.Errorf("AgentImage = %q, want reader image", task.AgentImage)
 	}
 	if task.CreatePR {

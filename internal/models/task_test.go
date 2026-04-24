@@ -235,12 +235,12 @@ func TestCreateTaskRequestValidation(t *testing.T) {
 }
 
 func TestTaskAgentImageJSON(t *testing.T) {
-	task := Task{ID: "bf_test", AgentImage: "backflow-reader:v1"}
+	task := Task{ID: "bf_test", AgentImage: "backlite-reader:v1"}
 	data, err := json.Marshal(task)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	if !strings.Contains(string(data), `"agent_image":"backflow-reader:v1"`) {
+	if !strings.Contains(string(data), `"agent_image":"backlite-reader:v1"`) {
 		t.Errorf("missing agent_image in marshaled task: %s", data)
 	}
 
@@ -248,8 +248,8 @@ func TestTaskAgentImageJSON(t *testing.T) {
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	if got.AgentImage != "backflow-reader:v1" {
-		t.Errorf("AgentImage = %q, want %q", got.AgentImage, "backflow-reader:v1")
+	if got.AgentImage != "backlite-reader:v1" {
+		t.Errorf("AgentImage = %q, want %q", got.AgentImage, "backlite-reader:v1")
 	}
 }
 

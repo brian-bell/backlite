@@ -7,7 +7,7 @@ usage() {
     cat <<EOF
 Usage: $(basename "$0") [options]
 
-Run schemathesis fuzz tests against the Backflow OpenAPI spec.
+Run schemathesis fuzz tests against the Backlite OpenAPI spec.
 
 Creates a temporary SQLite database, builds and runs the server, then fuzzes
 all endpoints using schemathesis.
@@ -31,7 +31,7 @@ esac
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-DB_PATH="$ROOT_DIR/.cache/backflow-schema-test.db"
+DB_PATH="$ROOT_DIR/.cache/backlite-schema-test.db"
 SERVER_PID=""
 
 cleanup() {
@@ -59,12 +59,12 @@ rm -f "$DB_PATH"
 $GOOSE -dir "$ROOT_DIR/migrations" sqlite3 "$DB_PATH" up
 
 echo "Building..."
-(cd "$ROOT_DIR" && go build -trimpath -o bin/backflow ./cmd/backflow)
+(cd "$ROOT_DIR" && go build -trimpath -o bin/backlite ./cmd/backlite)
 
 echo "Starting server..."
 BACKFLOW_DATABASE_PATH="$DB_PATH" \
 ANTHROPIC_API_KEY=sk-ant-fuzz-placeholder-not-real \
-    "$ROOT_DIR/bin/backflow" &
+    "$ROOT_DIR/bin/backlite" &
 SERVER_PID=$!
 
 echo "Waiting for server..."

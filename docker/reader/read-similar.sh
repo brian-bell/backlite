@@ -46,12 +46,12 @@ RESPONSE=$(curl -fsS \
     -H "Content-Type: application/json" \
     -d "$REQUEST_BODY" \
     "${BACKFLOW_API_BASE_URL}/api/v1/readings/similar") || {
-    echo "read-similar: Backflow similarity request failed" >&2
+    echo "read-similar: Backlite similarity request failed" >&2
     exit 1
 }
 
 if ! printf '%s' "$RESPONSE" | jq -e '.data | type == "array"' >/dev/null 2>&1; then
-    echo "read-similar: unexpected response from Backflow API: $RESPONSE" >&2
+    echo "read-similar: unexpected response from Backlite API: $RESPONSE" >&2
     exit 1
 fi
 

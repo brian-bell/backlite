@@ -26,12 +26,12 @@ fi
 RESPONSE=$(curl -fsS \
     "${AUTH_ARGS[@]}" \
     "${BACKFLOW_API_BASE_URL}/api/v1/readings/lookup?url=${ENCODED}") || {
-    echo "read-lookup: Backflow API request failed" >&2
+    echo "read-lookup: Backlite API request failed" >&2
     exit 1
 }
 
 if ! printf '%s' "$RESPONSE" | jq -e '.data | type == "array"' >/dev/null 2>&1; then
-    echo "read-lookup: unexpected response from Backflow API: $RESPONSE" >&2
+    echo "read-lookup: unexpected response from Backlite API: $RESPONSE" >&2
     exit 1
 fi
 

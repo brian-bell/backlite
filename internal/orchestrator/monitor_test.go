@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backflow-labs/backflow/internal/models"
-	"github.com/backflow-labs/backflow/internal/notify"
-	"github.com/backflow-labs/backflow/internal/orchestrator/outputs"
+	"github.com/brian-bell/backlite/internal/models"
+	"github.com/brian-bell/backlite/internal/notify"
+	"github.com/brian-bell/backlite/internal/orchestrator/outputs"
 )
 
 func TestMonitorCancelled_DecrementsRunning(t *testing.T) {

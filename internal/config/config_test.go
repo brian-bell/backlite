@@ -9,7 +9,7 @@ import (
 func setBaseEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("ANTHROPIC_API_KEY", "test-key")
-	t.Setenv("BACKFLOW_DATABASE_PATH", "/tmp/backflow-test.db")
+	t.Setenv("BACKFLOW_DATABASE_PATH", "/tmp/backlite-test.db")
 }
 
 func TestLoad_UsesDefaultDatabasePath(t *testing.T) {
@@ -20,8 +20,8 @@ func TestLoad_UsesDefaultDatabasePath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() returned error: %v", err)
 	}
-	if cfg.DatabasePath != "./backflow.db" {
-		t.Fatalf("DatabasePath = %q, want ./backflow.db", cfg.DatabasePath)
+	if cfg.DatabasePath != "./backlite.db" {
+		t.Fatalf("DatabasePath = %q, want ./backlite.db", cfg.DatabasePath)
 	}
 }
 
@@ -68,14 +68,14 @@ func TestLoad_DataDir_Default(t *testing.T) {
 
 func TestLoad_DataDir_Set(t *testing.T) {
 	setBaseEnv(t)
-	t.Setenv("BACKFLOW_DATA_DIR", "/var/lib/backflow")
+	t.Setenv("BACKFLOW_DATA_DIR", "/var/lib/backlite")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load() returned error: %v", err)
 	}
-	if cfg.DataDir != "/var/lib/backflow" {
-		t.Errorf("DataDir = %q, want %q", cfg.DataDir, "/var/lib/backflow")
+	if cfg.DataDir != "/var/lib/backlite" {
+		t.Errorf("DataDir = %q, want %q", cfg.DataDir, "/var/lib/backlite")
 	}
 }
 
@@ -93,20 +93,20 @@ func TestLoad_LogFile_DefaultEmpty(t *testing.T) {
 
 func TestLoad_LogFile_Set(t *testing.T) {
 	setBaseEnv(t)
-	t.Setenv("BACKFLOW_LOG_FILE", "/tmp/backflow.log")
+	t.Setenv("BACKFLOW_LOG_FILE", "/tmp/backlite.log")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load() returned error: %v", err)
 	}
-	if cfg.LogFile != "/tmp/backflow.log" {
-		t.Errorf("LogFile = %q, want %q", cfg.LogFile, "/tmp/backflow.log")
+	if cfg.LogFile != "/tmp/backlite.log" {
+		t.Errorf("LogFile = %q, want %q", cfg.LogFile, "/tmp/backlite.log")
 	}
 }
 
 func TestLoad_ReaderConfig(t *testing.T) {
 	setBaseEnv(t)
-	t.Setenv("BACKFLOW_READER_IMAGE", "backflow-reader:v1")
+	t.Setenv("BACKFLOW_READER_IMAGE", "backlite-reader:v1")
 	t.Setenv("BACKFLOW_DEFAULT_READ_MAX_BUDGET", "0.5")
 	t.Setenv("BACKFLOW_DEFAULT_READ_MAX_RUNTIME_SEC", "300")
 	t.Setenv("BACKFLOW_DEFAULT_READ_MAX_TURNS", "20")
@@ -116,8 +116,8 @@ func TestLoad_ReaderConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() returned error: %v", err)
 	}
-	if cfg.ReaderImage != "backflow-reader:v1" {
-		t.Errorf("ReaderImage = %q, want %q", cfg.ReaderImage, "backflow-reader:v1")
+	if cfg.ReaderImage != "backlite-reader:v1" {
+		t.Errorf("ReaderImage = %q, want %q", cfg.ReaderImage, "backlite-reader:v1")
 	}
 	if cfg.DefaultReadMaxBudget != 0.5 {
 		t.Errorf("DefaultReadMaxBudget = %v, want %v", cfg.DefaultReadMaxBudget, 0.5)
@@ -160,7 +160,7 @@ func TestLoad_ReaderConfig_UnsetDefaults(t *testing.T) {
 func setReaderEnv(t *testing.T) {
 	t.Helper()
 	setBaseEnv(t)
-	t.Setenv("BACKFLOW_READER_IMAGE", "backflow-reader:v1")
+	t.Setenv("BACKFLOW_READER_IMAGE", "backlite-reader:v1")
 	t.Setenv("BACKFLOW_DEFAULT_READ_MAX_BUDGET", "0.5")
 	t.Setenv("BACKFLOW_DEFAULT_READ_MAX_RUNTIME_SEC", "300")
 	t.Setenv("BACKFLOW_DEFAULT_READ_MAX_TURNS", "20")

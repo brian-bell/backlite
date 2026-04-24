@@ -206,7 +206,7 @@ make docker-server-build-local   # Single-arch server image
 make docker-server-build         # Multi-arch buildx
 ```
 
-Backlite runs agent containers directly against the local Docker daemon; there is no remote orchestration runtime. A legacy `make teardown-aws` target exists to clean up AWS resources from older deploys — see `scripts/teardown-aws.sh` (dry-run by default; pass `ARGS="--yes"` to actually delete).
+Backlite runs agent containers directly against the local Docker daemon; there is no remote orchestration runtime.
 
 ## Configuration
 

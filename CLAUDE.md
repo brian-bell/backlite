@@ -37,7 +37,6 @@ make docker-server-build       # Buildx multi-platform server image (amd64+arm64
 make docker-server-build-local # Single-architecture server build
 make docker-reader-build       # Buildx multi-platform reader image (amd64+arm64)
 make docker-reader-build-local # Single-architecture reader build
-make teardown-aws       # Remove any AWS resources previously provisioned by this repo (dry-run by default; pass ARGS="--yes" to delete)
 goose -dir migrations status # Show pending/applied migrations
 goose -dir migrations up     # Apply the next migration(s)
 goose -dir migrations down   # Roll back the last migration
@@ -155,10 +154,6 @@ PR comments include actual cost for `claude_code` (extracted from `total_cost_us
 - `api_keys` — SQLite-backed bearer tokens with named scopes (`tasks:read`, `tasks:write`, `health:read`, `stats:read`) and optional expiration
 
 When API keys are configured, bearer auth applies to `/api/v1/*` and `/debug/stats`. Root `/health` remains public.
-
-## AWS teardown
-
-Backlite no longer provisions or depends on AWS. If a prior deploy ran `make setup-aws`, use `make teardown-aws` to remove the leftover ECS cluster, EC2 launch template / security group, S3 bucket (versions + delete markers), IAM roles/policies/instance profile, CloudWatch log group, and ECR repositories. The script defaults to dry-run — pass `ARGS="--yes"` to actually delete, and `ARGS="--yes --include-fly-user"` if the optional `backflow-fly` IAM user was provisioned. Resource identifiers are sourced from `scripts/aws-resource-names.sh`, shared with `scripts/setup-aws.sh` so the two scripts can't drift.
 
 ## Documentation guidelines
 

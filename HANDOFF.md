@@ -16,4 +16,4 @@ Ledger of cross-PR tradeoffs. Each entry is a forward-looking constraint or an e
 
 ## AWS runtime removal
 
-- **If AWS execution is ever wanted again, rebuild from scratch — don't try to revive it from git history.** The Fargate and EC2 runners were deeply entangled with ECS task overrides, SSM, and spot-interruption handling that the simplified orchestrator no longer models, and `go list -deps ./... | grep aws-sdk-go-v2` is empty. The leftover teardown helper scripts are tracked for eventual deletion in issue #36.
+- **If AWS execution is ever wanted again, rebuild from scratch — don't try to revive it from git history.** The Fargate and EC2 runners were deeply entangled with ECS task overrides, SSM, and spot-interruption handling that the simplified orchestrator no longer models, and `go list -deps ./... | grep aws-sdk-go-v2` is empty. The repo no longer keeps operator teardown/setup helpers in-tree; recover them from git history only if an old deploy still needs manual cleanup.

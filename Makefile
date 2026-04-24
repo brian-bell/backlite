@@ -4,7 +4,7 @@
        docker-server-build docker-server-build-local \
        docker-fake-agent-build test-fake-agent test-blackbox test-schema test-soak \
        db-pending db-provisioning db-running db-completed db-failed db-interrupted db-cancelled db-recovering \
-       teardown-aws deps test-docker-status-writer test-reader-status-writer \
+       deps test-docker-status-writer test-reader-status-writer \
        test-reader-scripts
 
 BINARY := backlite
@@ -111,9 +111,6 @@ db-cancelled:
 
 db-recovering:
 	$(DB_QUERY) "SELECT id, repo_url, branch, harness, instance_id, container_id, updated_at FROM tasks WHERE status = 'recovering' ORDER BY updated_at ASC;"
-
-teardown-aws:
-	@bash scripts/teardown-aws.sh $(ARGS)
 
 deps:
 	go mod tidy

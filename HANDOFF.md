@@ -25,7 +25,8 @@ Ledger of cross-PR tradeoffs. Each entry: decision → consequence for downstrea
 
 ## Schema consolidation
 
-- **Migrations collapsed to a single `001_initial_schema.sql`.** The SQLite migration folded every prior migration into one fresh-start schema: `tasks`, `instances`, `api_keys`, `readings`. The orphaned integration tables (`allowed_senders`, `discord_installs`, `discord_task_threads`) and the latent `readings.is_available` column were dropped rather than preserved. `reply_channel` remains on `tasks`; dropping that legacy field is a future-migration concern if it becomes worth the churn. Any new schema change goes in `002_*.sql`.
+- **Migrations collapsed to a single `001_initial_schema.sql`.** The SQLite migration folded every prior migration into one fresh-start schema: `tasks`, `instances`, `api_keys`, `readings`. The orphaned integration tables (`allowed_senders`, `discord_installs`, `discord_task_threads`) and the latent `readings.is_available` column were dropped rather than preserved. Any new schema change goes in `002_*.sql`.
+- **`tasks.reply_channel` removed (issue #24, part 1).** The legacy SMS/Discord reply-channel column and its `Task.ReplyChannel` / `RedactReplyChannel` / `Event.ReplyChannel` / `redactReplyChannel` plumbing are gone. The `nocontainers` test suite asserts webhook payloads never emit `reply_channel`. Since the schema now consists of `001_initial_schema.sql` only, the column was deleted in place rather than via a follow-up migration.
 
 ## Static site removal
 

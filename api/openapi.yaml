@@ -767,10 +767,6 @@ components:
           type: integer
           minimum: 0
           example: 120
-        reply_channel:
-          type: string
-          description: Redacted to channel type only (e.g. "sms") in API responses
-          example: "sms"
         error:
           type: string
           example: "container exited with code 1"

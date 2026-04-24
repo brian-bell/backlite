@@ -12,6 +12,7 @@ import (
 	"github.com/brian-bell/backlite/internal/embeddings"
 	"github.com/brian-bell/backlite/internal/models"
 	"github.com/brian-bell/backlite/internal/notify"
+	"github.com/brian-bell/backlite/internal/orchestrator/lifecycle"
 	"github.com/brian-bell/backlite/internal/store"
 )
 
@@ -27,12 +28,13 @@ const localInstanceID = "local"
 // Orchestrator manages the lifecycle of tasks: dispatching them to instances,
 // monitoring their containers, handling completions, and recovering from restarts.
 type Orchestrator struct {
-	store    store.Store
-	config   *config.Config
-	bus      *notify.EventBus
-	docker   Runner
-	outputs  Writer
-	embedder embeddings.Embedder
+	store     store.Store
+	config    *config.Config
+	bus       *notify.EventBus
+	docker    Runner
+	outputs   Writer
+	embedder  embeddings.Embedder
+	lifecycle *lifecycle.Coordinator
 
 	mu              sync.Mutex
 	running         int
@@ -48,6 +50,7 @@ func New(s store.Store, cfg *config.Config, bus *notify.EventBus, runner Runner,
 		docker:          runner,
 		outputs:         outputs,
 		embedder:        embedder,
+		lifecycle:       lifecycle.New(s, bus),
 		stopCh:          make(chan struct{}),
 		inspectFailures: make(map[string]int),
 	}

@@ -392,7 +392,7 @@ func taskMetadataFrom(task *models.Task) taskMetadata {
 // this task on subsequent ticks. The retry cap is enforced by the atomic
 // store.RetryTask WHERE clause, not by this flag.
 func (o *Orchestrator) markRetryReady(ctx context.Context, task *models.Task, eventType notify.EventType, extraOpts ...notify.EventOption) {
-	if err := o.store.MarkReadyForRetry(ctx, task.ID); err != nil {
+	if err := o.lifecycle.MarkReadyForRetry(ctx, task.ID); err != nil {
 		log.Warn().Err(err).Str("task_id", task.ID).Msg("markRetryReady: failed to mark task ready for retry")
 	}
 

@@ -10,6 +10,7 @@ import (
 	"github.com/brian-bell/backlite/internal/embeddings"
 	"github.com/brian-bell/backlite/internal/models"
 	"github.com/brian-bell/backlite/internal/notify"
+	"github.com/brian-bell/backlite/internal/orchestrator/lifecycle"
 	"github.com/brian-bell/backlite/internal/store"
 )
 
@@ -487,6 +488,7 @@ func newTestOrchestrator(s store.Store, bus *notify.EventBus, opts ...func(*Orch
 		config:          cfg,
 		bus:             bus,
 		docker:          &mockDockerManager{},
+		lifecycle:       lifecycle.New(s, bus),
 		stopCh:          make(chan struct{}),
 		inspectFailures: make(map[string]int),
 	}

@@ -498,7 +498,7 @@ func TestRequeue_Interrupted_ReleasesBothSlotsAndEmits(t *testing.T) {
 		t.Errorf("status = %q, want pending", got.Status)
 	}
 	if got.OutputURL != "" {
-		t.Errorf("output_url = %q, want empty after requeue (HANDOFF 'retry output gating')", got.OutputURL)
+		t.Errorf("output_url = %q, want empty after requeue (gated per current-attempt state — stale artifacts must not leak through /output endpoints)", got.OutputURL)
 	}
 	if got.InstanceID != "" || got.ContainerID != "" {
 		t.Errorf("assignment not cleared: instance=%q container=%q", got.InstanceID, got.ContainerID)

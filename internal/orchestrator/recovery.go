@@ -7,7 +7,6 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/brian-bell/backlite/internal/models"
-	"github.com/brian-bell/backlite/internal/notify"
 	"github.com/brian-bell/backlite/internal/store"
 )
 
@@ -35,24 +34,15 @@ func (o *Orchestrator) recoverOnStartup(ctx context.Context) {
 	log.Info().Int("running", len(runningTasks)).Int("provisioning", len(provTasks)).Int("already_recovering", previouslyRunning).Msg("recovery: found orphaned tasks")
 
 	// Provisioning tasks: mark recovering, clear instance/container
-	// (dispatch never incremented o.running for these)
+	// (dispatch never incremented o.running for these).
 	for _, task := range provTasks {
-		if err := o.store.UpdateTaskStatus(ctx, task.ID, models.TaskStatusRecovering, ""); err != nil {
-			log.Warn().Err(err).Str("task_id", task.ID).Msg("recovery: failed to mark provisioning task as recovering")
-		}
-		if err := o.store.ClearTaskAssignment(ctx, task.ID); err != nil {
-			log.Warn().Err(err).Str("task_id", task.ID).Msg("recovery: failed to clear task assignment during recovery")
-		}
-		o.bus.Emit(notify.NewEvent(notify.EventTaskRecovering, task, notify.WithContainerStatus("", "recovering after server restart (was provisioning)", "")))
+		o.lifecycle.MarkRecovering(ctx, task, true, "recovering after server restart (was provisioning)")
 	}
 
-	// Running tasks: mark recovering, preserve instance/container for inspection
+	// Running tasks: mark recovering, preserve instance/container for inspection.
 	instanceContainers := make(map[string]int)
 	for _, task := range runningTasks {
-		if err := o.store.UpdateTaskStatus(ctx, task.ID, models.TaskStatusRecovering, ""); err != nil {
-			log.Warn().Err(err).Str("task_id", task.ID).Msg("recovery: failed to mark running task as recovering")
-		}
-		o.bus.Emit(notify.NewEvent(notify.EventTaskRecovering, task, notify.WithContainerStatus("", "recovering after server restart (was running)", "")))
+		o.lifecycle.MarkRecovering(ctx, task, false, "recovering after server restart (was running)")
 		if task.InstanceID != "" {
 			instanceContainers[task.InstanceID]++
 		}
@@ -97,13 +87,15 @@ func (o *Orchestrator) monitorRecovering(ctx context.Context) {
 
 	for _, task := range tasks {
 		if task.ContainerID == "" {
-			// Was provisioning — no container to inspect, re-queue immediately
+			// Was provisioning — no container to inspect, re-queue immediately.
 			log.Info().Str("task_id", task.ID).Msg("recovery: re-queuing task (was provisioning)")
-			o.requeueRecoveringTask(ctx, task, "no container (was provisioning)", false)
+			if err := o.lifecycle.Recover(ctx, task, false, "no container (was provisioning)"); err != nil {
+				log.Error().Err(err).Str("task_id", task.ID).Msg("failed to re-queue recovering task")
+			}
 			continue
 		}
 
-		// Was running — try to inspect the container
+		// Was running — try to inspect the container.
 		status, err := o.docker.InspectContainer(ctx, task.InstanceID, task.ContainerID)
 		if err != nil {
 			o.handleRecoveringInspectError(ctx, task, err)
@@ -116,10 +108,11 @@ func (o *Orchestrator) monitorRecovering(ctx context.Context) {
 			log.Info().Str("task_id", task.ID).Msg("recovery: container exited, handling completion")
 			o.handleCompletion(ctx, task, status)
 		} else {
-			// Container still running — promote back to running
+			// Container still running — promote back to running.
 			log.Info().Str("task_id", task.ID).Msg("recovery: container still running, promoting to running")
-			o.store.UpdateTaskStatus(ctx, task.ID, models.TaskStatusRunning, "")
-			o.bus.Emit(notify.NewEvent(notify.EventTaskRunning, task, notify.WithContainerStatus("", "recovered: container still running", "")))
+			if err := o.lifecycle.Recover(ctx, task, true, ""); err != nil {
+				log.Warn().Err(err).Str("task_id", task.ID).Msg("recovery: failed to promote to running")
+			}
 		}
 	}
 }
@@ -127,30 +120,19 @@ func (o *Orchestrator) monitorRecovering(ctx context.Context) {
 // handleRecoveringInspectError handles inspect failures for recovering tasks,
 // requeuing on instance loss or after repeated failures.
 func (o *Orchestrator) handleRecoveringInspectError(ctx context.Context, task *models.Task, err error) {
-	if IsInstanceGone(err) {
+	outcome, count := o.classifyInspectFailure(task.ID, err)
+	switch outcome {
+	case inspectInstanceGone:
 		log.Warn().Str("task_id", task.ID).Msg("recovery: instance gone, re-queuing")
-		delete(o.inspectFailures, task.ID)
-		o.requeueRecoveringTask(ctx, task, "instance gone", true)
-		return
-	}
-
-	o.inspectFailures[task.ID]++
-	count := o.inspectFailures[task.ID]
-	log.Warn().Err(err).Str("task_id", task.ID).Int("consecutive_failures", count).Msg("recovery: inspect failed")
-	if count >= maxInspectFailures {
-		delete(o.inspectFailures, task.ID)
-		o.requeueRecoveringTask(ctx, task, fmt.Sprintf("inspect error after %d failures: %v", count, err), true)
-	}
-}
-
-// requeueRecoveringTask resets a recovering task back to pending. If wasRunning
-// is true, it decrements o.running (since recoverOnStartup counted it).
-func (o *Orchestrator) requeueRecoveringTask(ctx context.Context, task *models.Task, reason string, wasRunning bool) {
-	if wasRunning {
-		o.decrementRunning()
-	}
-
-	if err := o.store.RequeueTask(ctx, task.ID, reason); err != nil {
-		log.Error().Err(err).Str("task_id", task.ID).Msg("failed to re-queue recovering task")
+		if err := o.lifecycle.Recover(ctx, task, false, "instance gone"); err != nil {
+			log.Error().Err(err).Str("task_id", task.ID).Msg("failed to re-queue recovering task")
+		}
+	case inspectExceededThreshold:
+		log.Warn().Err(err).Str("task_id", task.ID).Int("consecutive_failures", count).Msg("recovery: inspect failed repeatedly, re-queuing")
+		if err := o.lifecycle.Recover(ctx, task, false, fmt.Sprintf("inspect error after %d failures: %v", count, err)); err != nil {
+			log.Error().Err(err).Str("task_id", task.ID).Msg("failed to re-queue recovering task")
+		}
+	default:
+		log.Warn().Err(err).Str("task_id", task.ID).Int("consecutive_failures", count).Msg("recovery: inspect failed")
 	}
 }

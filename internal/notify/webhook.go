@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/backflow-labs/backflow/internal/models"
+	"github.com/brian-bell/backlite/internal/models"
 	"github.com/rs/zerolog/log"
 )
 
@@ -141,7 +141,7 @@ func (w *WebhookNotifier) Notify(event Event) error {
 			return fmt.Errorf("create request: %w", err)
 		}
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("User-Agent", "backflow-webhook/1.0")
+		req.Header.Set("User-Agent", "backlite-webhook/1.0")
 
 		resp, err := w.httpClient.Do(req)
 		if err != nil {

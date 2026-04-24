@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backflow-labs/backflow/internal/models"
+	"github.com/brian-bell/backlite/internal/models"
 )
 
 // sqliteTestTask creates a minimal task and inserts it.
@@ -23,7 +23,7 @@ func sqliteTestTask(t *testing.T, s *SQLiteStore) *models.Task {
 		TaskMode:  models.TaskModeCode,
 		Harness:   models.HarnessClaudeCode,
 		RepoURL:   "https://github.com/test/repo",
-		Branch:    "backflow/test",
+		Branch:    "backlite/test",
 		Prompt:    "Fix the bug",
 		Model:     "claude-sonnet-4-6",
 		CreatePR:  true,
@@ -89,11 +89,11 @@ func TestSQLite_TaskRoundTrip(t *testing.T) {
 		TaskMode:        models.TaskModeCode,
 		Harness:         models.HarnessClaudeCode,
 		RepoURL:         "https://github.com/test/repo",
-		Branch:          "backflow/test",
+		Branch:          "backlite/test",
 		TargetBranch:    "main",
 		Prompt:          "Fix the bug",
 		Model:           "claude-sonnet-4-6",
-		AgentImage:      "backflow-agent:v2",
+		AgentImage:      "backlite-agent:v2",
 		MaxBudgetUSD:    10.0,
 		MaxTurns:        200,
 		CreatePR:        true,
@@ -150,8 +150,8 @@ func TestSQLite_TaskRoundTrip(t *testing.T) {
 	if got.EnvVars["FOO"] != "bar" {
 		t.Errorf("EnvVars[FOO] = %q, want bar", got.EnvVars["FOO"])
 	}
-	if got.AgentImage != "backflow-agent:v2" {
-		t.Errorf("AgentImage = %q, want %q", got.AgentImage, "backflow-agent:v2")
+	if got.AgentImage != "backlite-agent:v2" {
+		t.Errorf("AgentImage = %q, want %q", got.AgentImage, "backlite-agent:v2")
 	}
 	if !got.CreatedAt.Equal(now) {
 		t.Errorf("CreatedAt = %v, want %v", got.CreatedAt, now)

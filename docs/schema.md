@@ -1,6 +1,6 @@
 # Database Schema
 
-Backflow uses a local SQLite database. Migrations are managed by [goose](https://github.com/pressly/goose) and live in `migrations/`. The database path is set via `BACKFLOW_DATABASE_PATH`.
+Backlite uses a local SQLite database. Migrations are managed by [goose](https://github.com/pressly/goose) and live in `migrations/`. The database path is set via `BACKFLOW_DATABASE_PATH`.
 
 ## Tables
 

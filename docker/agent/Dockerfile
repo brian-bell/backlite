@@ -37,8 +37,8 @@ USER agent
 WORKDIR /home/agent
 
 # Configure git
-RUN git config --global user.name "backflow-agent" \
-    && git config --global user.email "backflow-agent@noreply.github.com" \
+RUN git config --global user.name "backlite-agent" \
+    && git config --global user.email "backlite-agent@noreply.github.com" \
     && git config --global init.defaultBranch main
 
 COPY --chown=agent:agent entrypoint.sh status_writer.sh /home/agent/

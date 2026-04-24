@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Submit a URL for reading-mode summarization via the Backflow API.
+# Submit a URL for reading-mode summarization via the Backlite API.
 #
 # The reader container fetches the URL, drafts a TL;DR, and persists a row
 # in the `readings` table (embedded via OpenAI). A duplicate URL is rejected

@@ -1,6 +1,6 @@
 package config
 
-import "github.com/backflow-labs/backflow/internal/models"
+import "github.com/brian-bell/backlite/internal/models"
 
 // TaskDefaults holds resolved default values for new tasks.
 type TaskDefaults struct {

@@ -10,9 +10,9 @@ import (
 
 	"github.com/rs/zerolog/log"
 
-	"github.com/backflow-labs/backflow/internal/config"
-	"github.com/backflow-labs/backflow/internal/models"
-	"github.com/backflow-labs/backflow/internal/orchestrator"
+	"github.com/brian-bell/backlite/internal/config"
+	"github.com/brian-bell/backlite/internal/models"
+	"github.com/brian-bell/backlite/internal/orchestrator"
 )
 
 // Manager manages agent containers on the local Docker host.
@@ -196,7 +196,7 @@ func writeEnvFile(pairs []string) (string, error) {
 	if len(pairs) == 0 {
 		return "", nil
 	}
-	f, err := os.CreateTemp("", "backflow-env-*")
+	f, err := os.CreateTemp("", "backlite-env-*")
 	if err != nil {
 		return "", err
 	}

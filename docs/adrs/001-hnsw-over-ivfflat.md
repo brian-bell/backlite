@@ -7,7 +7,7 @@ Superseded by the SQLite migration
 ## Context
 
 This ADR described the former Postgres + pgvector design for `readings` similarity search.
-Backflow now stores embeddings as JSON text in SQLite and ranks cosine similarity in Go, so
+Backlite now stores embeddings as JSON text in SQLite and ranks cosine similarity in Go, so
 the pgvector index decision is no longer part of the active architecture.
 
 ## Historical decision

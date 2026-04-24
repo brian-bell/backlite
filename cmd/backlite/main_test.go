@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backflow-labs/backflow/internal/config"
-	"github.com/backflow-labs/backflow/internal/notify"
-	"github.com/backflow-labs/backflow/internal/store"
+	"github.com/brian-bell/backlite/internal/config"
+	"github.com/brian-bell/backlite/internal/notify"
+	"github.com/brian-bell/backlite/internal/store"
 )
 
 func TestSetupLogger_StderrOnly(t *testing.T) {

@@ -67,7 +67,7 @@ if [ "$HARNESS" = "codex" ]; then
     echo "$OPENAI_API_KEY" | codex login --with-api-key
 fi
 
-# --- Backflow API + OpenAI access for helper scripts ---
+# --- Backlite API + OpenAI access for helper scripts ---
 if [ -z "${BACKFLOW_API_BASE_URL:-}" ]; then
     echo "WARNING: BACKFLOW_API_BASE_URL is not set; read-lookup.sh and read-similar.sh will fail." >&2
 fi

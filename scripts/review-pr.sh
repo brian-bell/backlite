@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Review an existing PR via the Backflow API
+# Review an existing PR via the Backlite API
 #
 # Usage:
 #   ./scripts/review-pr.sh <pr_url> [options]

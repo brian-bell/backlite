@@ -3,7 +3,7 @@ package notify
 import (
 	"time"
 
-	"github.com/backflow-labs/backflow/internal/models"
+	"github.com/brian-bell/backlite/internal/models"
 )
 
 // EventOption is a functional option for NewEvent.

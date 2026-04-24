@@ -9,7 +9,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/backflow-labs/backflow/internal/store"
+	"github.com/brian-bell/backlite/internal/store"
 )
 
 func TestTruncateTasks_ClearsCurrentSchema(t *testing.T) {
@@ -68,10 +68,10 @@ func TestDefaultSoakDatabasePath(t *testing.T) {
 		base string
 		want string
 	}{
-		{name: "empty", base: "", want: "./backflow-soak.db"},
-		{name: "sqlite file", base: "./backflow.db", want: "./backflow-soak.db"},
-		{name: "already soak file", base: "./backflow-soak.db", want: "./backflow-soak.db"},
-		{name: "non db path", base: "./tmp/backflow", want: "./tmp/backflow-soak.db"},
+		{name: "empty", base: "", want: "./backlite-soak.db"},
+		{name: "sqlite file", base: "./backlite.db", want: "./backlite-soak.db"},
+		{name: "already soak file", base: "./backlite-soak.db", want: "./backlite-soak.db"},
+		{name: "non db path", base: "./tmp/backlite", want: "./tmp/backlite-soak.db"},
 	}
 
 	for _, tt := range tests {
@@ -92,16 +92,16 @@ func TestBuildSoakServerEnv(t *testing.T) {
 	t.Setenv("HOME", "/tmp/home")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 
-	env := envSliceToMap(buildSoakServerEnv(18080, "/tmp/backflow-soak.db", "backflow-fake-agent:test"))
+	env := envSliceToMap(buildSoakServerEnv(18080, "/tmp/backlite-soak.db", "backlite-fake-agent:test"))
 
-	if env["BACKFLOW_DATABASE_PATH"] != "/tmp/backflow-soak.db" {
-		t.Fatalf("BACKFLOW_DATABASE_PATH = %q, want /tmp/backflow-soak.db", env["BACKFLOW_DATABASE_PATH"])
+	if env["BACKFLOW_DATABASE_PATH"] != "/tmp/backlite-soak.db" {
+		t.Fatalf("BACKFLOW_DATABASE_PATH = %q, want /tmp/backlite-soak.db", env["BACKFLOW_DATABASE_PATH"])
 	}
 	if env["BACKFLOW_LISTEN_ADDR"] != ":18080" {
 		t.Fatalf("BACKFLOW_LISTEN_ADDR = %q, want :18080", env["BACKFLOW_LISTEN_ADDR"])
 	}
-	if env["BACKFLOW_AGENT_IMAGE"] != "backflow-fake-agent:test" {
-		t.Fatalf("BACKFLOW_AGENT_IMAGE = %q, want backflow-fake-agent:test", env["BACKFLOW_AGENT_IMAGE"])
+	if env["BACKFLOW_AGENT_IMAGE"] != "backlite-fake-agent:test" {
+		t.Fatalf("BACKFLOW_AGENT_IMAGE = %q, want backlite-fake-agent:test", env["BACKFLOW_AGENT_IMAGE"])
 	}
 	if env["BACKFLOW_API_KEY"] != "" {
 		t.Fatalf("BACKFLOW_API_KEY = %q, want empty", env["BACKFLOW_API_KEY"])

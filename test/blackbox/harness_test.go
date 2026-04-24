@@ -20,14 +20,14 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/backflow-labs/backflow/internal/store"
+	"github.com/brian-bell/backlite/internal/store"
 )
 
 // Shared state initialized by TestMain and used by all tests.
 var (
 	backflowURL        string
 	backflowBinaryPath string
-	client             *BackflowClient
+	client             *BackliteClient
 	listener           *WebhookListener
 	dbPool             *sql.DB
 	dbPath             string
@@ -66,11 +66,11 @@ func TestMain(m *testing.M) {
 
 	ctx := context.Background()
 
-	// --- Step 1: Build the Backflow binary ---
-	binaryPath := filepath.Join(repoRoot, "bin", "backflow-test")
+	// --- Step 1: Build the Backlite binary ---
+	binaryPath := filepath.Join(repoRoot, "bin", "backlite-test")
 	backflowBinaryPath = binaryPath
-	fmt.Println("==> Building Backflow binary...")
-	build := exec.Command("go", "build", "-trimpath", "-o", binaryPath, "./cmd/backflow")
+	fmt.Println("==> Building Backlite binary...")
+	build := exec.Command("go", "build", "-trimpath", "-o", binaryPath, "./cmd/backlite")
 	build.Dir = repoRoot
 	build.Stdout = os.Stdout
 	build.Stderr = os.Stderr
@@ -82,7 +82,7 @@ func TestMain(m *testing.M) {
 	// --- Step 2: Build the fake agent Docker image ---
 	fakeAgentDir := filepath.Join(repoRoot, "test", "blackbox", "fake-agent")
 	fmt.Println("==> Building fake agent Docker image...")
-	dockerBuild := exec.Command("docker", "build", "-t", "backflow-fake-agent:test", fakeAgentDir)
+	dockerBuild := exec.Command("docker", "build", "-t", "backlite-fake-agent:test", fakeAgentDir)
 	dockerBuild.Stdout = os.Stdout
 	dockerBuild.Stderr = os.Stderr
 	if err := dockerBuild.Run(); err != nil {
@@ -91,7 +91,7 @@ func TestMain(m *testing.M) {
 	}
 
 	// --- Step 3: Create and migrate the SQLite test DB ---
-	dbPath = filepath.Join(repoRoot, "test", "blackbox", "backflow-blackbox-test.db")
+	dbPath = filepath.Join(repoRoot, "test", "blackbox", "backlite-blackbox-test.db")
 	_ = os.Remove(dbPath)
 	bootstrapStore, err := store.NewSQLite(ctx, dbPath, filepath.Join(repoRoot, "migrations"))
 	if err != nil {
@@ -117,7 +117,7 @@ func TestMain(m *testing.M) {
 	fmt.Println("==> Starting webhook listener...")
 	listener = newWebhookListener()
 
-	// --- Step 5: Find a free port for Backflow ---
+	// --- Step 5: Find a free port for Backlite ---
 	port, err := freePort()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "find free port: %v\n", err)
@@ -125,8 +125,8 @@ func TestMain(m *testing.M) {
 	}
 	backflowURL = fmt.Sprintf("http://localhost:%d", port)
 
-	// --- Step 6: Start the Backflow subprocess ---
-	fmt.Printf("==> Starting Backflow subprocess on :%d...\n", port)
+	// --- Step 6: Start the Backlite subprocess ---
+	fmt.Printf("==> Starting Backlite subprocess on :%d...\n", port)
 	stderrBuf = &syncBuffer{}
 
 	backflowCmd = exec.Command(binaryPath)
@@ -136,24 +136,24 @@ func TestMain(m *testing.M) {
 	backflowCmd.Env = buildSubprocessEnv(port, dbPath, listener.URL())
 
 	if err := backflowCmd.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "start backflow subprocess: %v\n", err)
+		fmt.Fprintf(os.Stderr, "start backlite subprocess: %v\n", err)
 		os.Exit(1)
 	}
 
 	// --- Step 7: Create client and wait for health ---
-	client = newBackflowClient(backflowURL)
+	client = newBackliteClient(backflowURL)
 
-	fmt.Println("==> Waiting for Backflow health check...")
+	fmt.Println("==> Waiting for Backlite health check...")
 	if err := waitForHealth(backflowURL, 30*time.Second); err != nil {
 		fmt.Fprintf(os.Stderr, "health check failed: %v\n", err)
-		fmt.Fprintln(os.Stderr, "--- Backflow stderr ---")
+		fmt.Fprintln(os.Stderr, "--- Backlite stderr ---")
 		fmt.Fprintln(os.Stderr, stderrBuf.String())
 		fmt.Fprintln(os.Stderr, "--- end ---")
 		backflowCmd.Process.Kill()
 		os.Exit(1)
 	}
 
-	fmt.Println("==> Backflow is ready, running tests...")
+	fmt.Println("==> Backlite is ready, running tests...")
 
 	// --- Run tests ---
 	code := m.Run()
@@ -181,12 +181,12 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// buildSubprocessEnv constructs a clean environment for the Backflow subprocess,
+// buildSubprocessEnv constructs a clean environment for the Backlite subprocess,
 // avoiding interference from inherited env vars (e.g., BACKFLOW_DISCORD_APP_ID).
 func buildSubprocessEnv(port int, dbPath, webhookURL string) []string {
 	env := []string{
 		"BACKFLOW_POLL_INTERVAL_SEC=1",
-		"BACKFLOW_AGENT_IMAGE=backflow-fake-agent:test",
+		"BACKFLOW_AGENT_IMAGE=backlite-fake-agent:test",
 		fmt.Sprintf("BACKFLOW_LISTEN_ADDR=:%d", port),
 		fmt.Sprintf("BACKFLOW_DATABASE_PATH=%s", dbPath),
 		fmt.Sprintf("BACKFLOW_WEBHOOK_URL=%s", webhookURL),
@@ -343,12 +343,12 @@ func orchestratorState(ctx context.Context) (int, int, error) {
 	return activeTasks, runningContainers, nil
 }
 
-// dumpLogsOnFailure returns a cleanup function that dumps the Backflow
+// dumpLogsOnFailure returns a cleanup function that dumps the Backlite
 // subprocess stderr if the test failed. Register via t.Cleanup.
 func dumpLogsOnFailure(t *testing.T) func() {
 	return func() {
 		if t.Failed() {
-			t.Logf("--- Backflow subprocess stderr ---\n%s\n--- end ---", stderrBuf.String())
+			t.Logf("--- Backlite subprocess stderr ---\n%s\n--- end ---", stderrBuf.String())
 		}
 	}
 }

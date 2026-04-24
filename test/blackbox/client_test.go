@@ -12,22 +12,22 @@ import (
 	"time"
 )
 
-// BackflowClient wraps net/http calls to the Backflow REST API. All methods
+// BackliteClient wraps net/http calls to the Backlite REST API. All methods
 // accept a *testing.T and fatal on unexpected errors, keeping test code concise.
-type BackflowClient struct {
+type BackliteClient struct {
 	baseURL string
 	http    *http.Client
 }
 
-func newBackflowClient(baseURL string) *BackflowClient {
-	return &BackflowClient{
+func newBackliteClient(baseURL string) *BackliteClient {
+	return &BackliteClient{
 		baseURL: baseURL,
 		http:    &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
 // CreateTask POSTs a new task and returns the unwrapped data object.
-func (c *BackflowClient) CreateTask(t *testing.T, req map[string]any) map[string]any {
+func (c *BackliteClient) CreateTask(t *testing.T, req map[string]any) map[string]any {
 	t.Helper()
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -51,7 +51,7 @@ func (c *BackflowClient) CreateTask(t *testing.T, req map[string]any) map[string
 // CreateTaskRaw POSTs a new task and returns the raw status code and response
 // body. Unlike CreateTask, it does not fatal on non-201 responses, making it
 // suitable for testing validation errors.
-func (c *BackflowClient) CreateTaskRaw(t *testing.T, req map[string]any) (int, map[string]any) {
+func (c *BackliteClient) CreateTaskRaw(t *testing.T, req map[string]any) (int, map[string]any) {
 	t.Helper()
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -83,7 +83,7 @@ func (c *BackflowClient) CreateTaskRaw(t *testing.T, req map[string]any) (int, m
 }
 
 // GetTask retrieves a task by ID.
-func (c *BackflowClient) GetTask(t *testing.T, id string) map[string]any {
+func (c *BackliteClient) GetTask(t *testing.T, id string) map[string]any {
 	t.Helper()
 	resp, err := c.http.Get(c.baseURL + "/api/v1/tasks/" + id)
 	if err != nil {
@@ -100,7 +100,7 @@ func (c *BackflowClient) GetTask(t *testing.T, id string) map[string]any {
 }
 
 // ListTasks lists tasks with optional query parameters.
-func (c *BackflowClient) ListTasks(t *testing.T, params url.Values) []map[string]any {
+func (c *BackliteClient) ListTasks(t *testing.T, params url.Values) []map[string]any {
 	t.Helper()
 	u := c.baseURL + "/api/v1/tasks"
 	if len(params) > 0 {
@@ -122,7 +122,7 @@ func (c *BackflowClient) ListTasks(t *testing.T, params url.Values) []map[string
 }
 
 // DeleteTask cancels/deletes a task by ID.
-func (c *BackflowClient) DeleteTask(t *testing.T, id string) {
+func (c *BackliteClient) DeleteTask(t *testing.T, id string) {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodDelete, c.baseURL+"/api/v1/tasks/"+id, nil)
 	if err != nil {
@@ -142,7 +142,7 @@ func (c *BackflowClient) DeleteTask(t *testing.T, id string) {
 }
 
 // RetryTask retries a task by ID via POST /api/v1/tasks/{id}/retry.
-func (c *BackflowClient) RetryTask(t *testing.T, id string) map[string]any {
+func (c *BackliteClient) RetryTask(t *testing.T, id string) map[string]any {
 	t.Helper()
 	resp, err := c.http.Post(c.baseURL+"/api/v1/tasks/"+id+"/retry", "application/json", nil)
 	if err != nil {
@@ -159,7 +159,7 @@ func (c *BackflowClient) RetryTask(t *testing.T, id string) map[string]any {
 }
 
 // WaitForReadyForRetry polls GetTask until ready_for_retry is true.
-func (c *BackflowClient) WaitForReadyForRetry(t *testing.T, id string, timeout time.Duration) {
+func (c *BackliteClient) WaitForReadyForRetry(t *testing.T, id string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -173,7 +173,7 @@ func (c *BackflowClient) WaitForReadyForRetry(t *testing.T, id string, timeout t
 }
 
 // GetLogs retrieves the logs for a task as plain text.
-func (c *BackflowClient) GetLogs(t *testing.T, id string) string {
+func (c *BackliteClient) GetLogs(t *testing.T, id string) string {
 	t.Helper()
 	resp, err := c.http.Get(c.baseURL + "/api/v1/tasks/" + id + "/logs")
 	if err != nil {
@@ -195,7 +195,7 @@ const stuckStateTimeout = 15 * time.Second
 
 // WaitForStatus polls GetTask until the task reaches the desired status or the
 // timeout expires. Returns the final task state.
-func (c *BackflowClient) WaitForStatus(t *testing.T, id, status string, timeout time.Duration) map[string]any {
+func (c *BackliteClient) WaitForStatus(t *testing.T, id, status string, timeout time.Duration) map[string]any {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	var lastStatus string
@@ -225,7 +225,7 @@ func (c *BackflowClient) WaitForStatus(t *testing.T, id, status string, timeout 
 }
 
 // HealthCheck asserts the health endpoint returns 200.
-func (c *BackflowClient) HealthCheck(t *testing.T) {
+func (c *BackliteClient) HealthCheck(t *testing.T) {
 	t.Helper()
 	resp, err := c.http.Get(c.baseURL + "/api/v1/health")
 	if err != nil {
@@ -240,7 +240,7 @@ func (c *BackflowClient) HealthCheck(t *testing.T) {
 
 // unwrapData reads a JSON response with {"data": ...} envelope and returns the
 // data as map[string]any.
-func (c *BackflowClient) unwrapData(t *testing.T, resp *http.Response) map[string]any {
+func (c *BackliteClient) unwrapData(t *testing.T, resp *http.Response) map[string]any {
 	t.Helper()
 	var envelope struct {
 		Data  json.RawMessage `json:"data"`
@@ -261,7 +261,7 @@ func (c *BackflowClient) unwrapData(t *testing.T, resp *http.Response) map[strin
 }
 
 // unwrapDataList reads a JSON response with {"data": [...]} envelope.
-func (c *BackflowClient) unwrapDataList(t *testing.T, resp *http.Response) []map[string]any {
+func (c *BackliteClient) unwrapDataList(t *testing.T, resp *http.Response) []map[string]any {
 	t.Helper()
 	var envelope struct {
 		Data  json.RawMessage `json:"data"`

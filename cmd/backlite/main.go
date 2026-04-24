@@ -14,15 +14,15 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
-	"github.com/backflow-labs/backflow/internal/api"
-	"github.com/backflow-labs/backflow/internal/config"
-	"github.com/backflow-labs/backflow/internal/debug"
-	"github.com/backflow-labs/backflow/internal/embeddings"
-	"github.com/backflow-labs/backflow/internal/notify"
-	"github.com/backflow-labs/backflow/internal/orchestrator"
-	orchdocker "github.com/backflow-labs/backflow/internal/orchestrator/docker"
-	"github.com/backflow-labs/backflow/internal/orchestrator/outputs"
-	"github.com/backflow-labs/backflow/internal/store"
+	"github.com/brian-bell/backlite/internal/api"
+	"github.com/brian-bell/backlite/internal/config"
+	"github.com/brian-bell/backlite/internal/debug"
+	"github.com/brian-bell/backlite/internal/embeddings"
+	"github.com/brian-bell/backlite/internal/notify"
+	"github.com/brian-bell/backlite/internal/orchestrator"
+	orchdocker "github.com/brian-bell/backlite/internal/orchestrator/docker"
+	"github.com/brian-bell/backlite/internal/orchestrator/outputs"
+	"github.com/brian-bell/backlite/internal/store"
 )
 
 const (

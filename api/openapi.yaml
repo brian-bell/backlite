@@ -1,11 +1,11 @@
 openapi: "3.0.3"
 info:
-  title: Backflow API
+  title: Backlite API
   version: "1.0.0"
   description: >
-    Backflow runs coding agents (Claude Code or Codex) in ephemeral containers.
-    Tasks come in via REST API; the orchestrator provisions infrastructure, runs
-    agents, and cleans up.
+    Backlite is a self-hostable Backlite fork that runs coding agents (Claude
+    Code or Codex) in ephemeral local Docker containers. Tasks come in via REST
+    API; the orchestrator runs agents, persists artifacts, and cleans up.
 
 servers:
   - url: http://localhost:8080
@@ -633,7 +633,7 @@ components:
 
     Task:
       type: object
-      description: A coding or review task managed by the Backflow orchestrator.
+      description: A coding or review task managed by the Backlite orchestrator.
       required:
         - id
         - status
@@ -687,7 +687,7 @@ components:
         agent_image:
           type: string
           description: Docker image used by the orchestrator for this task (reader image for read mode, default agent image otherwise).
-          example: "backflow-agent:v1"
+          example: "backlite-agent:v1"
         force:
           type: boolean
           description: For read-mode tasks, signals the agent to skip duplicate-detection and the completion handler to upsert instead of insert. No effect for code/review tasks.

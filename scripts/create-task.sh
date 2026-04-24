@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Create a task via the Backflow API
+# Create a task via the Backlite API
 #
 # The prompt must include a GitHub URL — the agent's prep stage infers
 # repo_url, target_branch, and task_type from the prompt text.

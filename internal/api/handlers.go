@@ -12,13 +12,13 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/backflow-labs/backflow/internal/config"
-	"github.com/backflow-labs/backflow/internal/models"
-	"github.com/backflow-labs/backflow/internal/notify"
-	"github.com/backflow-labs/backflow/internal/store"
+	"github.com/brian-bell/backlite/internal/config"
+	"github.com/brian-bell/backlite/internal/models"
+	"github.com/brian-bell/backlite/internal/notify"
+	"github.com/brian-bell/backlite/internal/store"
 )
 
-// taskIDPattern matches Backflow task IDs: `bf_` prefix + 26-char ULID body.
+// taskIDPattern matches Backlite task IDs: `bf_` prefix + 26-char ULID body.
 // Mirrors the OpenAPI schema pattern. Used to reject malformed IDs before
 // they reach code paths (like filesystem joins) where an unsafe value could
 // be harmful.

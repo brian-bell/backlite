@@ -7,8 +7,8 @@
        teardown-aws deps test-docker-status-writer test-reader-status-writer \
        test-reader-scripts
 
-BINARY := backflow
-PKG := github.com/backflow-labs/backflow
+BINARY := backlite
+PKG := github.com/brian-bell/backlite
 GOFLAGS := -trimpath
 export PATH := $(HOME)/.local/go/bin:$(HOME)/go/bin:$(PATH)
 
@@ -18,7 +18,7 @@ DOCKER ?= docker
 ENV = if [ -f .env ]; then set -a; . ./.env; set +a; fi
 
 build:
-	go build $(GOFLAGS) -o bin/$(BINARY) ./cmd/backflow
+	go build $(GOFLAGS) -o bin/$(BINARY) ./cmd/backlite
 
 run: build
 	@set -e; \
@@ -39,7 +39,7 @@ test-reader-scripts:
 	bash docker/reader/test_entrypoint.sh
 
 docker-fake-agent-build:
-	$(DOCKER) build -t backflow-fake-agent test/blackbox/fake-agent/
+	$(DOCKER) build -t backlite-fake-agent test/blackbox/fake-agent/
 
 test-fake-agent: docker-fake-agent-build
 	go test ./test/blackbox/fake-agent/ -v -count=1
@@ -62,29 +62,29 @@ clean:
 docker-agent-build:
 	$(DOCKER) buildx build \
 		--platform linux/amd64,linux/arm64 \
-		-t backflow-agent \
+		-t backlite-agent \
 		docker/agent/
 
 docker-agent-build-local:
-	$(DOCKER) build -t backflow-agent docker/agent/
+	$(DOCKER) build -t backlite-agent docker/agent/
 
 docker-reader-build:
 	$(DOCKER) buildx build \
 		--platform linux/amd64,linux/arm64 \
-		-t backflow-reader \
+		-t backlite-reader \
 		docker/reader/
 
 docker-reader-build-local:
-	$(DOCKER) build -t backflow-reader docker/reader/
+	$(DOCKER) build -t backlite-reader docker/reader/
 
 docker-server-build:
 	$(DOCKER) buildx build \
 		--platform linux/amd64,linux/arm64 \
-		-t backflow-server \
+		-t backlite-server \
 		-f docker/server/Dockerfile .
 
 docker-server-build-local:
-	$(DOCKER) build -t backflow-server -f docker/server/Dockerfile .
+	$(DOCKER) build -t backlite-server -f docker/server/Dockerfile .
 
 DB_QUERY = @$(ENV); sqlite3 -json "$$BACKFLOW_DATABASE_PATH"
 

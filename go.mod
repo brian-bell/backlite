@@ -1,4 +1,4 @@
-module github.com/backflow-labs/backflow
+module github.com/brian-bell/backlite
 
 go 1.25.0
 

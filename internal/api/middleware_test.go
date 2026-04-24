@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/backflow-labs/backflow/internal/config"
-	"github.com/backflow-labs/backflow/internal/models"
-	"github.com/backflow-labs/backflow/internal/store"
+	"github.com/brian-bell/backlite/internal/config"
+	"github.com/brian-bell/backlite/internal/models"
+	"github.com/brian-bell/backlite/internal/store"
 )
 
 func TestAPIAuth_RequiresBearerToken(t *testing.T) {
@@ -280,7 +280,7 @@ func TestAPIHealthAccessible(t *testing.T) {
 func TestRestrictAPIEnvVar_NoLongerBlocksAPI(t *testing.T) {
 	t.Setenv("BACKFLOW_RESTRICT_API", "true")
 	t.Setenv("ANTHROPIC_API_KEY", "test-key")
-	t.Setenv("BACKFLOW_DATABASE_PATH", "/tmp/backflow-test.db")
+	t.Setenv("BACKFLOW_DATABASE_PATH", "/tmp/backlite-test.db")
 
 	cfg, err := config.Load()
 	if err != nil {

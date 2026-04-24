@@ -318,7 +318,7 @@ GIT_INSTRUCTIONS="
 
 After completing the coding task, you MUST do the following git operations:
 
-1. Create a new branch with a descriptive name prefixed with 'backflow/' (e.g. backflow/fix-auth-bug).
+1. Create a new branch with a descriptive name prefixed with 'backlite/' (e.g. backlite/fix-auth-bug).
 2. Stage and commit all your changes with a descriptive commit message.
 3. Push your branch to origin."
 
@@ -326,14 +326,14 @@ if [ "$CREATE_PR" = "true" ]; then
     GIT_INSTRUCTIONS="${GIT_INSTRUCTIONS}
 4. Create a pull request using the gh CLI:
    - Base branch: ${TARGET_BRANCH}
-   - Head branch: your new backflow/ branch"
+   - Head branch: your new backlite/ branch"
 
     if [ -n "$PR_TITLE" ]; then
         GIT_INSTRUCTIONS="${GIT_INSTRUCTIONS}
    - Title: ${PR_TITLE}"
     else
         GIT_INSTRUCTIONS="${GIT_INSTRUCTIONS}
-   - Title: [backflow] <generate a concise, descriptive title based on the changes you made>"
+   - Title: [backlite] <generate a concise, descriptive title based on the changes you made>"
     fi
 
     if [ -n "$PR_BODY" ]; then
@@ -516,7 +516,7 @@ if [ -n "$PR_URL" ]; then
 
     QUOTED_PROMPT=$(echo "$PROMPT" | sed 's/^/> /')
 
-    COMMENT_BODY="## Backflow Task
+    COMMENT_BODY="## Backlite Task
 
 ${QUOTED_PROMPT}
 

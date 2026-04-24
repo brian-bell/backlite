@@ -2,7 +2,7 @@
 
 ## What This Is
 
-Backflow is a Go service that runs coding agents (Claude Code or Codex) in ephemeral containers. Tasks come in via REST API; the orchestrator provisions infrastructure, runs agents, and cleans up.
+Backlite is a Go service that runs coding agents (Claude Code or Codex) in ephemeral containers. Tasks come in via REST API; the orchestrator provisions infrastructure, runs agents, and cleans up.
 
 Three task modes: `code` (default: clone → code → commit → PR), `review` (PR review with inline comments), and `read` (fetch a URL, summarize it via a reader agent, embed the TL;DR, store the result in the `readings` table for later similarity search).
 
@@ -16,7 +16,7 @@ Three task modes: `code` (default: clone → code → commit → PR), `review` (
 ## Commands
 
 ```bash
-make build              # Build to bin/backflow
+make build              # Build to bin/backlite
 make run                # Build + run (sources .env if present)
 make test               # Unit/integration tests with -tags nocontainers (excludes blackbox; see make test-blackbox)
 make lint               # go vet ./...
@@ -82,7 +82,7 @@ Minimal Alpine image used by black-box and soak tests. Reads `FAKE_OUTCOME` env 
 
 ### Soak test (`test/soak/`)
 
-Long-running resource leak detector. Submits tasks at intervals, collects RSS, pool stats, and container counts, then analyzes for memory growth and container accumulation. Run via `make test-soak` (10-min short mode). It derives a sibling `-soak.db` path from `BACKFLOW_DATABASE_PATH`, starts a dedicated Backflow subprocess against that database, truncates the soak tables there, and prunes stale containers at start and end. The wrapper script (`scripts/test-soak.sh`) warns before truncating and asks for confirmation.
+Long-running resource leak detector. Submits tasks at intervals, collects RSS, pool stats, and container counts, then analyzes for memory growth and container accumulation. Run via `make test-soak` (10-min short mode). It derives a sibling `-soak.db` path from `BACKFLOW_DATABASE_PATH`, starts a dedicated Backlite subprocess against that database, truncates the soak tables there, and prunes stale containers at start and end. The wrapper script (`scripts/test-soak.sh`) warns before truncating and asks for confirmation.
 
 ### Agent container (`docker/agent/`)
 
@@ -117,8 +117,8 @@ The reading agent image and reader-side shell scripts live in `docker/reader/`:
 
 - `reader-entrypoint.sh` — Image entrypoint: runs the harness, extracts JSON via `reader_helpers.sh`, writes `status.json` via `status_writer.sh`.
 - `read-embed.sh` — Embeds text via OpenAI `text-embedding-3-small`. Used by the agent to embed a draft TL;DR for similarity search.
-- `read-similar.sh` — Semantic similarity search: embeds input text, calls Backflow's `/api/v1/readings/similar` endpoint.
-- `read-lookup.sh` — Exact-URL duplicate check via Backflow's `/api/v1/readings/lookup` endpoint.
+- `read-similar.sh` — Semantic similarity search: embeds input text, calls Backlite's `/api/v1/readings/similar` endpoint.
+- `read-lookup.sh` — Exact-URL duplicate check via Backlite's `/api/v1/readings/lookup` endpoint.
 - `reader_helpers.sh` — JSON extraction helpers (pulls the first JSON object from the agent transcript).
 - `status_writer.sh` — Shared helper for writing `status.json`.
 
@@ -127,7 +127,7 @@ Reading-mode env vars:
 - `BACKFLOW_READER_IMAGE` — Docker image for reading-mode containers
 - `BACKFLOW_DEFAULT_READ_MAX_BUDGET` / `BACKFLOW_DEFAULT_READ_MAX_RUNTIME_SEC` / `BACKFLOW_DEFAULT_READ_MAX_TURNS` — Tighter defaults applied by `TaskDefaults("read")`
 - `OPENAI_API_KEY` — Required for the orchestrator's embeddings client (and for the reader container's `read-embed.sh`)
-- `BACKFLOW_INTERNAL_API_BASE_URL` — Optional override for the Backflow API base URL used by reader containers; defaults to `http://host.docker.internal:<listen-port>`
+- `BACKFLOW_INTERNAL_API_BASE_URL` — Optional override for the Backlite API base URL used by reader containers; defaults to `http://host.docker.internal:<listen-port>`
 
 The `tasks` table carries a `force` boolean column. REST callers can set `force` on `POST /api/v1/tasks`; `Force=true` bypasses the dispatch-time duplicate check and allows an existing reading row to be overwritten on completion.
 
@@ -158,7 +158,7 @@ When API keys are configured, bearer auth applies to `/api/v1/*` and `/debug/sta
 
 ## AWS teardown
 
-Backflow no longer provisions or depends on AWS. If a prior deploy ran `make setup-aws`, use `make teardown-aws` to remove the leftover ECS cluster, EC2 launch template / security group, S3 bucket (versions + delete markers), IAM roles/policies/instance profile, CloudWatch log group, and ECR repositories. The script defaults to dry-run — pass `ARGS="--yes"` to actually delete, and `ARGS="--yes --include-fly-user"` if the optional `backflow-fly` IAM user was provisioned. Resource identifiers are sourced from `scripts/aws-resource-names.sh`, shared with `scripts/setup-aws.sh` so the two scripts can't drift.
+Backlite no longer provisions or depends on AWS. If a prior deploy ran `make setup-aws`, use `make teardown-aws` to remove the leftover ECS cluster, EC2 launch template / security group, S3 bucket (versions + delete markers), IAM roles/policies/instance profile, CloudWatch log group, and ECR repositories. The script defaults to dry-run — pass `ARGS="--yes"` to actually delete, and `ARGS="--yes --include-fly-user"` if the optional `backflow-fly` IAM user was provisioned. Resource identifiers are sourced from `scripts/aws-resource-names.sh`, shared with `scripts/setup-aws.sh` so the two scripts can't drift.
 
 ## Documentation guidelines
 

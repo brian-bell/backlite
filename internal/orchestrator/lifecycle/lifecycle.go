@@ -11,6 +11,7 @@ package lifecycle
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/rs/zerolog/log"
 
@@ -39,21 +40,26 @@ type noopSlots struct{}
 
 func (noopSlots) Release(context.Context, *models.Task) {}
 
-// Result is the terminal outcome of a running task, passed to Complete.
+// Result is the terminal outcome of a running task, passed to Complete. The
+// caller supplies both the persisted fields (Status, Error, PRURL, …) and the
+// event-shape fields (EventType + EventOpts) — Complete writes the DB row,
+// reloads it, releases slots, optionally flips ready_for_retry (for
+// non-success terminals), and emits exactly one event.
 type Result struct {
 	Status         models.TaskStatus
+	EventType      notify.EventType
 	Error          string
 	PRURL          string
 	OutputURL      string
-	LogTail        string
 	CostUSD        float64
 	ElapsedTimeSec int
 	RepoURL        string
 	TargetBranch   string
 	TaskMode       string
-	// ReadingOpt, when non-nil, is applied to the emitted task.completed event
-	// to populate reading-specific fields (populated by the reading pipeline).
-	ReadingOpt notify.EventOption
+	// EventOpts are applied to the emitted event (e.g. WithContainerStatus,
+	// WithReading). The retry-gate option (WithReadyForRetry or
+	// WithRetryLimitReached) is applied automatically for non-success terminals.
+	EventOpts []notify.EventOption
 }
 
 // RequeueKind selects the event emitted when a task is returned to pending.
@@ -72,9 +78,10 @@ const (
 // emission. See the package docstring for the full method set; methods land
 // in the Coordinator phase by phase and callers migrate file by file.
 type Coordinator struct {
-	store   store.Store
-	emitter Emitter
-	slots   Slots
+	store          store.Store
+	emitter        Emitter
+	slots          Slots
+	maxUserRetries int
 }
 
 // Option customises a Coordinator at construction.
@@ -85,6 +92,13 @@ type Option func(*Coordinator)
 // Omit in tests that don't care about slot accounting.
 func WithSlots(s Slots) Option {
 	return func(c *Coordinator) { c.slots = s }
+}
+
+// WithMaxUserRetries sets the user-retry cap used by Complete to decide
+// whether to emit WithReadyForRetry or WithRetryLimitReached on non-success
+// terminals. Defaults to zero (every failure emits RetryLimitReached).
+func WithMaxUserRetries(n int) Option {
+	return func(c *Coordinator) { c.maxUserRetries = n }
 }
 
 // New constructs a Coordinator.
@@ -118,6 +132,89 @@ func (c *Coordinator) MarkRecovering(ctx context.Context, task *models.Task, cle
 		}
 	}
 	c.emitter.Emit(notify.NewEvent(notify.EventTaskRecovering, task, notify.WithContainerStatus("", message, "")))
+}
+
+// Complete finishes a running task with a terminal result: writes CompleteTask,
+// reloads the row into the supplied task pointer, releases slots, flips the
+// ready_for_retry gate for non-success terminals, and emits exactly one
+// event carrying the caller's EventType + EventOpts (plus the retry-gate
+// option, if applicable). A DB failure on the CompleteTask write is logged
+// but still runs the slot release and event emission — matching the
+// pre-refactor behavior where users still get a notification even when a
+// momentary DB hiccup skips the status write.
+func (c *Coordinator) Complete(ctx context.Context, task *models.Task, r Result) error {
+	now := time.Now().UTC()
+	storeResult := store.TaskResult{
+		Status:         r.Status,
+		Error:          r.Error,
+		PRURL:          r.PRURL,
+		OutputURL:      r.OutputURL,
+		CostUSD:        r.CostUSD,
+		ElapsedTimeSec: r.ElapsedTimeSec,
+		RepoURL:        r.RepoURL,
+		TargetBranch:   r.TargetBranch,
+		TaskMode:       r.TaskMode,
+	}
+
+	var writeErr error
+	if err := c.store.CompleteTask(ctx, task.ID, storeResult); err != nil {
+		log.Error().Err(err).Str("task_id", task.ID).Msg("lifecycle.Complete: failed to complete task in store")
+		applyTaskResult(task, storeResult, now)
+		writeErr = err
+	} else {
+		c.refreshTask(ctx, task, storeResult, now)
+	}
+
+	c.slots.Release(ctx, task)
+
+	opts := append([]notify.EventOption{}, r.EventOpts...)
+	if r.Status != models.TaskStatusCompleted {
+		if err := c.store.MarkReadyForRetry(ctx, task.ID); err != nil {
+			log.Warn().Err(err).Str("task_id", task.ID).Msg("lifecycle.Complete: failed to mark ready for retry")
+		}
+		if task.UserRetryCount < c.maxUserRetries {
+			opts = append([]notify.EventOption{notify.WithReadyForRetry()}, opts...)
+		} else {
+			opts = append([]notify.EventOption{notify.WithRetryLimitReached()}, opts...)
+		}
+	}
+	c.emitter.Emit(notify.NewEvent(r.EventType, task, opts...))
+	return writeErr
+}
+
+// refreshTask reloads the task row from the store so the caller's pointer
+// reflects persisted fields. Falls back to patching the pointer from the
+// result on reload failure.
+func (c *Coordinator) refreshTask(ctx context.Context, task *models.Task, r store.TaskResult, completedAt time.Time) {
+	fresh, err := c.store.GetTask(ctx, task.ID)
+	if err != nil {
+		log.Warn().Err(err).Str("task_id", task.ID).Msg("lifecycle.Complete: failed to reload completed task")
+		applyTaskResult(task, r, completedAt)
+		return
+	}
+	*task = *fresh
+}
+
+// applyTaskResult patches an in-memory task pointer with a completion result
+// when the DB reload fails. Keeps the event payload and any downstream
+// consumers consistent with the intended terminal state.
+func applyTaskResult(task *models.Task, r store.TaskResult, completedAt time.Time) {
+	task.Status = r.Status
+	task.Error = r.Error
+	task.PRURL = r.PRURL
+	task.OutputURL = r.OutputURL
+	task.CostUSD = r.CostUSD
+	task.ElapsedTimeSec = r.ElapsedTimeSec
+	if r.RepoURL != "" {
+		task.RepoURL = r.RepoURL
+	}
+	if r.TargetBranch != "" {
+		task.TargetBranch = r.TargetBranch
+	}
+	if r.TaskMode != "" {
+		task.TaskMode = r.TaskMode
+	}
+	task.CompletedAt = &completedAt
 }
 
 // Recover handles a recovering-state task after startup has classified it.

@@ -80,7 +80,10 @@ func New(s store.Store, cfg *config.Config, bus *notify.EventBus, runner Runner,
 		stopCh:          make(chan struct{}),
 		inspectFailures: make(map[string]int),
 	}
-	o.lifecycle = lifecycle.New(s, bus, lifecycle.WithSlots(slotsAdapter{o: o}))
+	o.lifecycle = lifecycle.New(s, bus,
+		lifecycle.WithSlots(slotsAdapter{o: o}),
+		lifecycle.WithMaxUserRetries(cfg.MaxUserRetries),
+	)
 
 	o.initInstance()
 

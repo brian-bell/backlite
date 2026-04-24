@@ -11,6 +11,7 @@ import (
 
 	"github.com/brian-bell/backlite/internal/models"
 	"github.com/brian-bell/backlite/internal/notify"
+	"github.com/brian-bell/backlite/internal/orchestrator/lifecycle"
 	"github.com/brian-bell/backlite/internal/store"
 )
 
@@ -118,7 +119,7 @@ func (o *Orchestrator) handleCompletion(ctx context.Context, task *models.Task, 
 		elapsed = int(now.Sub(*task.StartedAt).Seconds())
 	}
 
-	result := store.TaskResult{
+	result := lifecycle.Result{
 		PRURL:          status.PRURL,
 		OutputURL:      task.OutputURL,
 		CostUSD:        status.CostUSD,
@@ -131,12 +132,15 @@ func (o *Orchestrator) handleCompletion(ctx context.Context, task *models.Task, 
 	switch {
 	case status.Complete || (status.ExitCode == 0 && !status.NeedsInput):
 		result.Status = models.TaskStatusCompleted
+		result.EventType = notify.EventTaskCompleted
 	case status.NeedsInput:
 		result.Status = models.TaskStatusFailed
 		result.Error = "agent needs input"
+		result.EventType = notify.EventTaskNeedsInput
 	default:
 		result.Status = models.TaskStatusFailed
 		result.Error = status.Error
+		result.EventType = notify.EventTaskFailed
 	}
 
 	// Reading-mode completion: embed TL;DR and write the reading row synchronously.
@@ -147,64 +151,32 @@ func (o *Orchestrator) handleCompletion(ctx context.Context, task *models.Task, 
 		if err != nil {
 			log.Error().Err(err).Str("task_id", task.ID).Msg("handleReadingCompletion: reading pipeline failed")
 			result.Status = models.TaskStatusFailed
+			result.EventType = notify.EventTaskFailed
 			result.Error = err.Error()
 		} else {
 			readingOpt = opt
 		}
 	}
 
-	if err := o.store.CompleteTask(ctx, task.ID, result); err != nil {
-		log.Error().Err(err).Str("task_id", task.ID).Msg("handleCompletion: failed to complete task in store")
-		applyTaskResult(task, result, now)
-	} else {
-		o.refreshCompletedTask(ctx, task, result, now)
-	}
-	o.releaseSlot(ctx, task)
-
-	// Emit exactly one event per completion.
-	switch {
-	case result.Status == models.TaskStatusCompleted:
-		opts := []notify.EventOption{notify.WithContainerStatus(status.PRURL, "", status.LogTail)}
+	switch result.EventType {
+	case notify.EventTaskCompleted:
+		result.EventOpts = []notify.EventOption{notify.WithContainerStatus(status.PRURL, "", status.LogTail)}
 		if readingOpt != nil {
-			opts = append(opts, readingOpt)
+			result.EventOpts = append(result.EventOpts, readingOpt)
 		}
-		o.bus.Emit(notify.NewEvent(notify.EventTaskCompleted, task, opts...))
-	case status.NeedsInput:
-		o.markRetryReady(ctx, task, notify.EventTaskNeedsInput, notify.WithContainerStatus("", status.Question, status.LogTail))
+	case notify.EventTaskNeedsInput:
+		result.EventOpts = []notify.EventOption{notify.WithContainerStatus("", status.Question, status.LogTail)}
 	default:
-		o.markRetryReady(ctx, task, notify.EventTaskFailed, notify.WithContainerStatus("", result.Error, status.LogTail))
+		result.EventOpts = []notify.EventOption{notify.WithContainerStatus("", result.Error, status.LogTail)}
+	}
+
+	if err := o.lifecycle.Complete(ctx, task, result); err != nil {
+		// Complete already logs; nothing else to do here — it still released
+		// the slot and emitted the event via its fallback path.
+		_ = err
 	}
 
 	log.Info().Str("task_id", task.ID).Str("status", string(result.Status)).Msg("task completed")
-}
-
-func (o *Orchestrator) refreshCompletedTask(ctx context.Context, task *models.Task, result store.TaskResult, completedAt time.Time) {
-	storedTask, err := o.store.GetTask(ctx, task.ID)
-	if err != nil {
-		log.Warn().Err(err).Str("task_id", task.ID).Msg("handleCompletion: failed to reload completed task")
-		applyTaskResult(task, result, completedAt)
-		return
-	}
-	*task = *storedTask
-}
-
-func applyTaskResult(task *models.Task, result store.TaskResult, completedAt time.Time) {
-	task.Status = result.Status
-	task.Error = result.Error
-	task.PRURL = result.PRURL
-	task.OutputURL = result.OutputURL
-	task.CostUSD = result.CostUSD
-	task.ElapsedTimeSec = result.ElapsedTimeSec
-	if result.RepoURL != "" {
-		task.RepoURL = result.RepoURL
-	}
-	if result.TargetBranch != "" {
-		task.TargetBranch = result.TargetBranch
-	}
-	if result.TaskMode != "" {
-		task.TaskMode = result.TaskMode
-	}
-	task.CompletedAt = &completedAt
 }
 
 // handleReadingCompletion embeds the agent's final TL;DR and writes the reading
@@ -414,17 +386,15 @@ func (o *Orchestrator) killTask(ctx context.Context, task *models.Task, reason s
 	if task.StartedAt != nil {
 		elapsed = int(time.Since(*task.StartedAt).Seconds())
 	}
-	if err := o.store.CompleteTask(ctx, task.ID, store.TaskResult{
+	if err := o.lifecycle.Complete(ctx, task, lifecycle.Result{
 		Status:         models.TaskStatusFailed,
+		EventType:      notify.EventTaskFailed,
 		Error:          reason,
 		ElapsedTimeSec: elapsed,
+		EventOpts:      []notify.EventOption{notify.WithContainerStatus("", reason, "")},
 	}); err != nil {
-		log.Error().Err(err).Str("task_id", task.ID).Msg("killTask: failed to complete task in store")
+		_ = err
 	}
-
-	o.releaseSlot(ctx, task)
-
-	o.markRetryReady(ctx, task, notify.EventTaskFailed, notify.WithContainerStatus("", reason, ""))
 }
 
 // requeueTask resets a running task back to pending so it will be dispatched

@@ -297,3 +297,196 @@ func TestRecover_WasRunning_ReleasesBothCounters(t *testing.T) {
 		t.Errorf("slots.Release calls = %v, want [%q]", got, task.ID)
 	}
 }
+
+// seedRunningTask creates a task already in the running state with instance +
+// container set, mirroring what Dispatch leaves behind before Complete fires.
+func seedRunningTask(t *testing.T, s store.Store, id string) *models.Task {
+	t.Helper()
+	ctx := context.Background()
+	task := seedTask(t, s, id, models.TaskStatusPending)
+	if err := s.AssignTask(ctx, task.ID, "local"); err != nil {
+		t.Fatalf("AssignTask: %v", err)
+	}
+	if err := s.StartTask(ctx, task.ID, "cont_"+id); err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+	got, err := s.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	return got
+}
+
+func TestComplete_SuccessPath(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedInstance(t, s, "local", 1)
+	task := seedRunningTask(t, s, "bf_COMP_OK")
+
+	emitter := &captureEmitter{}
+	slots := &trackingSlots{}
+	c := New(s, emitter, WithSlots(slots), WithMaxUserRetries(2))
+
+	err := c.Complete(ctx, task, Result{
+		Status:         models.TaskStatusCompleted,
+		EventType:      notify.EventTaskCompleted,
+		PRURL:          "https://github.com/test/repo/pull/42",
+		CostUSD:        0.15,
+		ElapsedTimeSec: 120,
+		EventOpts: []notify.EventOption{
+			notify.WithContainerStatus("https://github.com/test/repo/pull/42", "", "log tail"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	got, _ := s.GetTask(ctx, task.ID)
+	if got.Status != models.TaskStatusCompleted {
+		t.Errorf("status = %q, want completed", got.Status)
+	}
+	if got.PRURL != "https://github.com/test/repo/pull/42" {
+		t.Errorf("PRURL = %q", got.PRURL)
+	}
+	// In-memory task pointer must be refreshed from DB.
+	if task.Status != models.TaskStatusCompleted {
+		t.Errorf("in-memory task.Status = %q, want refreshed to completed", task.Status)
+	}
+	if got.ReadyForRetry {
+		t.Errorf("completed task must not be marked ready for retry")
+	}
+	evs := emitter.Events()
+	if len(evs) != 1 || evs[0].Type != notify.EventTaskCompleted {
+		t.Fatalf("events = %+v, want one task.completed", evs)
+	}
+	if evs[0].PRURL != "https://github.com/test/repo/pull/42" {
+		t.Errorf("event PRURL = %q", evs[0].PRURL)
+	}
+	if evs[0].AgentLogTail != "log tail" {
+		t.Errorf("event AgentLogTail = %q", evs[0].AgentLogTail)
+	}
+	if evs[0].ReadyForRetry || evs[0].RetryLimitReached {
+		t.Errorf("success event must not carry a retry-gate flag: %+v", evs[0])
+	}
+	if n := len(slots.Released()); n != 1 {
+		t.Errorf("slots.Release calls = %d, want 1", n)
+	}
+}
+
+func TestComplete_FailurePath_UnderRetryCap(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedInstance(t, s, "local", 1)
+	task := seedRunningTask(t, s, "bf_COMP_FAIL")
+
+	emitter := &captureEmitter{}
+	slots := &trackingSlots{}
+	c := New(s, emitter, WithSlots(slots), WithMaxUserRetries(2))
+
+	err := c.Complete(ctx, task, Result{
+		Status:    models.TaskStatusFailed,
+		EventType: notify.EventTaskFailed,
+		Error:     "something broke",
+		EventOpts: []notify.EventOption{notify.WithContainerStatus("", "something broke", "tail")},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	got, _ := s.GetTask(ctx, task.ID)
+	if got.Status != models.TaskStatusFailed {
+		t.Errorf("status = %q, want failed", got.Status)
+	}
+	if !got.ReadyForRetry {
+		t.Errorf("ReadyForRetry = false, want true (failures mark ready for retry)")
+	}
+	evs := emitter.Events()
+	if len(evs) != 1 || evs[0].Type != notify.EventTaskFailed {
+		t.Fatalf("events = %+v, want one task.failed", evs)
+	}
+	if !evs[0].ReadyForRetry {
+		t.Errorf("event ReadyForRetry = false, want true (user_retry_count=0 < max=2)")
+	}
+	if evs[0].RetryLimitReached {
+		t.Errorf("event RetryLimitReached = true, want false")
+	}
+	if evs[0].Message != "something broke" {
+		t.Errorf("event Message = %q", evs[0].Message)
+	}
+}
+
+func TestComplete_FailurePath_RetryCapReached(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedInstance(t, s, "local", 1)
+
+	// Seed a task that already sits at the user-retry cap.
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	seed := &models.Task{
+		ID:             "bf_COMP_LIMIT",
+		Status:         models.TaskStatusPending,
+		TaskMode:       models.TaskModeCode,
+		Harness:        models.HarnessClaudeCode,
+		RepoURL:        "https://github.com/test/repo",
+		Branch:         "backlite/test",
+		Prompt:         "prompt",
+		Model:          "claude-sonnet-4-6",
+		UserRetryCount: 2,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if err := s.CreateTask(ctx, seed); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	_ = s.AssignTask(ctx, seed.ID, "local")
+	_ = s.StartTask(ctx, seed.ID, "cont_limit")
+	task, _ := s.GetTask(ctx, seed.ID)
+
+	emitter := &captureEmitter{}
+	c := New(s, emitter, WithSlots(&trackingSlots{}), WithMaxUserRetries(2))
+
+	if err := c.Complete(ctx, task, Result{
+		Status:    models.TaskStatusFailed,
+		EventType: notify.EventTaskFailed,
+		Error:     "terminal",
+		EventOpts: []notify.EventOption{notify.WithContainerStatus("", "terminal", "")},
+	}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	evs := emitter.Events()
+	if len(evs) != 1 || evs[0].Type != notify.EventTaskFailed {
+		t.Fatalf("events = %+v", evs)
+	}
+	if !evs[0].RetryLimitReached {
+		t.Errorf("event RetryLimitReached = false, want true (user_retry_count=2, max=2)")
+	}
+	if evs[0].ReadyForRetry {
+		t.Errorf("event ReadyForRetry = true, want false when cap is reached")
+	}
+}
+
+func TestComplete_NeedsInputEmitsDistinctEventType(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedInstance(t, s, "local", 1)
+	task := seedRunningTask(t, s, "bf_COMP_NI")
+
+	emitter := &captureEmitter{}
+	c := New(s, emitter, WithSlots(&trackingSlots{}), WithMaxUserRetries(2))
+
+	err := c.Complete(ctx, task, Result{
+		Status:    models.TaskStatusFailed,
+		EventType: notify.EventTaskNeedsInput,
+		Error:     "agent needs input",
+		EventOpts: []notify.EventOption{notify.WithContainerStatus("", "please clarify X", "tail")},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	evs := emitter.Events()
+	if len(evs) != 1 || evs[0].Type != notify.EventTaskNeedsInput {
+		t.Fatalf("events = %+v, want one task.needs_input", evs)
+	}
+}

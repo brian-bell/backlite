@@ -219,10 +219,10 @@ func applyTaskResult(task *models.Task, r store.TaskResult, completedAt time.Tim
 
 // Recover handles a recovering-state task after startup has classified it.
 // If containerAlive is true, the task is promoted back to running and
-// task.running is emitted. Otherwise the task is returned to pending; any
-// orphan that held a container (ContainerID != "") gets both counters
-// released before the requeue write, which also fixes the pre-refactor drift
-// where recovery-requeue only released the local counter.
+// task.running is emitted. Otherwise the task is returned to pending via
+// Requeue(RequeueRecovering) — any orphan that held a container gets both
+// counters released before the requeue write, which fixes the pre-refactor
+// drift where recovery-requeue only released the local counter.
 func (c *Coordinator) Recover(ctx context.Context, task *models.Task, containerAlive bool, reason string) error {
 	if containerAlive {
 		if err := c.store.UpdateTaskStatus(ctx, task.ID, models.TaskStatusRunning, ""); err != nil {
@@ -231,12 +231,26 @@ func (c *Coordinator) Recover(ctx context.Context, task *models.Task, containerA
 		c.emitter.Emit(notify.NewEvent(notify.EventTaskRunning, task, notify.WithContainerStatus("", "recovered: container still running", "")))
 		return nil
 	}
+	return c.Requeue(ctx, task, reason, RequeueRecovering)
+}
 
+// Requeue returns a task to pending for another attempt. It clears output_url
+// (already part of store.RequeueTask), releases both slot counters if the
+// task held a container, and emits task.interrupted (RequeueInterrupted) or
+// task.recovering (RequeueRecovering). This is the sole requeue path now
+// that both the monitor and recovery loops route through the coordinator.
+func (c *Coordinator) Requeue(ctx context.Context, task *models.Task, reason string, kind RequeueKind) error {
 	if task.ContainerID != "" {
 		c.slots.Release(ctx, task)
 	}
 	if err := c.store.RequeueTask(ctx, task.ID, reason); err != nil {
 		return fmt.Errorf("requeue: %w", err)
 	}
+
+	eventType := notify.EventTaskInterrupted
+	if kind == RequeueRecovering {
+		eventType = notify.EventTaskRecovering
+	}
+	c.emitter.Emit(notify.NewEvent(eventType, task, notify.WithContainerStatus("", reason, "")))
 	return nil
 }

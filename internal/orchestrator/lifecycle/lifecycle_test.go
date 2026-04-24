@@ -466,6 +466,86 @@ func TestComplete_FailurePath_RetryCapReached(t *testing.T) {
 	}
 }
 
+func TestRequeue_Interrupted_ReleasesBothSlotsAndEmits(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedInstance(t, s, "local", 1)
+	task := seedRunningTask(t, s, "bf_RQ_INT")
+
+	emitter := &captureEmitter{}
+	slots := &trackingSlots{}
+	c := New(s, emitter, WithSlots(slots), WithMaxUserRetries(2))
+
+	if err := c.Requeue(ctx, task, "instance terminated", RequeueInterrupted); err != nil {
+		t.Fatalf("Requeue: %v", err)
+	}
+
+	got, _ := s.GetTask(ctx, task.ID)
+	if got.Status != models.TaskStatusPending {
+		t.Errorf("status = %q, want pending", got.Status)
+	}
+	if got.OutputURL != "" {
+		t.Errorf("output_url = %q, want empty after requeue (HANDOFF 'retry output gating')", got.OutputURL)
+	}
+	if got.InstanceID != "" || got.ContainerID != "" {
+		t.Errorf("assignment not cleared: instance=%q container=%q", got.InstanceID, got.ContainerID)
+	}
+	if n := len(slots.Released()); n != 1 {
+		t.Errorf("slots.Release calls = %d, want 1 (both counters must release)", n)
+	}
+	evs := emitter.Events()
+	if len(evs) != 1 || evs[0].Type != notify.EventTaskInterrupted {
+		t.Fatalf("events = %+v, want one task.interrupted", evs)
+	}
+	if evs[0].Message != "instance terminated" {
+		t.Errorf("event Message = %q", evs[0].Message)
+	}
+}
+
+func TestRequeue_Recovering_EmitsRecoveringEvent(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedInstance(t, s, "local", 1)
+	task := seedRunningTask(t, s, "bf_RQ_REC")
+
+	emitter := &captureEmitter{}
+	slots := &trackingSlots{}
+	c := New(s, emitter, WithSlots(slots), WithMaxUserRetries(2))
+
+	if err := c.Requeue(ctx, task, "instance gone", RequeueRecovering); err != nil {
+		t.Fatalf("Requeue: %v", err)
+	}
+
+	evs := emitter.Events()
+	if len(evs) != 1 || evs[0].Type != notify.EventTaskRecovering {
+		t.Fatalf("events = %+v, want one task.recovering", evs)
+	}
+}
+
+func TestRequeue_NoContainer_DoesNotReleaseSlots(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedInstance(t, s, "local", 0)
+	task := seedTask(t, s, "bf_RQ_NOC", models.TaskStatusRecovering)
+	// No instance / container assignment.
+
+	emitter := &captureEmitter{}
+	slots := &trackingSlots{}
+	c := New(s, emitter, WithSlots(slots), WithMaxUserRetries(2))
+
+	if err := c.Requeue(ctx, task, "no container", RequeueRecovering); err != nil {
+		t.Fatalf("Requeue: %v", err)
+	}
+
+	if n := len(slots.Released()); n != 0 {
+		t.Errorf("slots.Release calls = %d, want 0 (no container to release)", n)
+	}
+	got, _ := s.GetTask(ctx, task.ID)
+	if got.Status != models.TaskStatusPending {
+		t.Errorf("status = %q, want pending", got.Status)
+	}
+}
+
 func TestComplete_NeedsInputEmitsDistinctEventType(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

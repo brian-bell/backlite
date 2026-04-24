@@ -398,11 +398,10 @@ func (o *Orchestrator) killTask(ctx context.Context, task *models.Task, reason s
 }
 
 // requeueTask resets a running task back to pending so it will be dispatched
-// to a fresh container on the next tick.
+// to a fresh container on the next tick. Thin wrapper around the coordinator —
+// retained for callers inside monitor.go so the error-log context stays here.
 func (o *Orchestrator) requeueTask(ctx context.Context, task *models.Task, reason string) {
-	o.decrementRunning()
-
-	if err := o.store.RequeueTask(ctx, task.ID, reason); err != nil {
+	if err := o.lifecycle.Requeue(ctx, task, reason, lifecycle.RequeueInterrupted); err != nil {
 		log.Error().Err(err).Str("task_id", task.ID).Msg("failed to re-queue task")
 	}
 }

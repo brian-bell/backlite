@@ -114,11 +114,18 @@ func TestMarkReadyForRetry_UnknownTaskIsNoop(t *testing.T) {
 	}
 }
 
-// trackingSlots records every Release call so tests can assert the coordinator
-// pairs DB writes with the local counter + instance-slot decrement.
+// trackingSlots records Acquire + Release calls so tests can assert the
+// coordinator pairs DB writes with the local counter + instance-slot updates.
 type trackingSlots struct {
 	mu       sync.Mutex
+	acquired int
 	released []string // task IDs in release order
+}
+
+func (s *trackingSlots) Acquire() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.acquired++
 }
 
 func (s *trackingSlots) Release(_ context.Context, task *models.Task) {
@@ -133,6 +140,12 @@ func (s *trackingSlots) Released() []string {
 	out := make([]string, len(s.released))
 	copy(out, s.released)
 	return out
+}
+
+func (s *trackingSlots) Acquired() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.acquired
 }
 
 func seedInstance(t *testing.T, s store.Store, id string, running int) {
@@ -519,6 +532,97 @@ func TestRequeue_Recovering_EmitsRecoveringEvent(t *testing.T) {
 	evs := emitter.Events()
 	if len(evs) != 1 || evs[0].Type != notify.EventTaskRecovering {
 		t.Fatalf("events = %+v, want one task.recovering", evs)
+	}
+}
+
+func TestAssign_PendingToProvisioning(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedInstance(t, s, "local", 0)
+	task := seedTask(t, s, "bf_DISP_ASSIGN", models.TaskStatusPending)
+
+	emitter := &captureEmitter{}
+	c := New(s, emitter, WithSlots(&trackingSlots{}), WithMaxUserRetries(2))
+
+	if err := c.Assign(ctx, task.ID, "local"); err != nil {
+		t.Fatalf("Assign: %v", err)
+	}
+	got, _ := s.GetTask(ctx, task.ID)
+	if got.Status != models.TaskStatusProvisioning {
+		t.Errorf("status = %q, want provisioning", got.Status)
+	}
+	if got.InstanceID != "local" {
+		t.Errorf("instance_id = %q, want local", got.InstanceID)
+	}
+	if len(emitter.Events()) != 0 {
+		t.Errorf("events emitted = %d, want 0 (task.running fires on Start)", len(emitter.Events()))
+	}
+}
+
+func TestStart_ProvisioningToRunning(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedInstance(t, s, "local", 0)
+	task := seedTask(t, s, "bf_DISP_START", models.TaskStatusPending)
+	_ = s.AssignTask(ctx, task.ID, "local")
+	task, _ = s.GetTask(ctx, task.ID)
+
+	emitter := &captureEmitter{}
+	slots := &trackingSlots{}
+	c := New(s, emitter, WithSlots(slots), WithMaxUserRetries(2))
+
+	if err := c.Start(ctx, task, "local", "cont_start"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	got, _ := s.GetTask(ctx, task.ID)
+	if got.Status != models.TaskStatusRunning {
+		t.Errorf("status = %q, want running", got.Status)
+	}
+	if got.ContainerID != "cont_start" {
+		t.Errorf("container_id = %q", got.ContainerID)
+	}
+	inst, _ := s.GetInstance(ctx, "local")
+	if inst.RunningContainers != 1 {
+		t.Errorf("instance RunningContainers = %d, want 1", inst.RunningContainers)
+	}
+	if n := slots.Acquired(); n != 1 {
+		t.Errorf("slots.Acquire calls = %d, want 1", n)
+	}
+	evs := emitter.Events()
+	if len(evs) != 1 || evs[0].Type != notify.EventTaskRunning {
+		t.Fatalf("events = %+v, want one task.running", evs)
+	}
+}
+
+func TestFailDispatch_EmitsFailedWithoutRetryGate(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	task := seedTask(t, s, "bf_DISP_FAIL", models.TaskStatusPending)
+
+	emitter := &captureEmitter{}
+	c := New(s, emitter, WithSlots(&trackingSlots{}), WithMaxUserRetries(2))
+
+	if err := c.FailDispatch(ctx, task, "no capacity"); err != nil {
+		t.Fatalf("FailDispatch: %v", err)
+	}
+
+	got, _ := s.GetTask(ctx, task.ID)
+	if got.Status != models.TaskStatusFailed {
+		t.Errorf("status = %q, want failed", got.Status)
+	}
+	if got.ReadyForRetry {
+		t.Errorf("ReadyForRetry = true, want false (dispatch failures are not user-retryable)")
+	}
+	evs := emitter.Events()
+	if len(evs) != 1 || evs[0].Type != notify.EventTaskFailed {
+		t.Fatalf("events = %+v, want one task.failed", evs)
+	}
+	if evs[0].ReadyForRetry || evs[0].RetryLimitReached {
+		t.Errorf("dispatch-failure event must not carry a retry-gate flag: %+v", evs[0])
+	}
+	if evs[0].Message != "no capacity" {
+		t.Errorf("event Message = %q", evs[0].Message)
 	}
 }
 

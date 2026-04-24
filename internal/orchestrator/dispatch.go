@@ -8,7 +8,6 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/brian-bell/backlite/internal/models"
-	"github.com/brian-bell/backlite/internal/notify"
 	"github.com/brian-bell/backlite/internal/store"
 )
 
@@ -36,10 +35,9 @@ func (o *Orchestrator) dispatchPending(ctx context.Context) {
 	for _, task := range tasks {
 		if err := o.dispatch(ctx, task); err != nil {
 			log.Error().Err(err).Str("task_id", task.ID).Msg("failed to dispatch task")
-			if err := o.store.UpdateTaskStatus(ctx, task.ID, models.TaskStatusFailed, err.Error()); err != nil {
-				log.Warn().Err(err).Str("task_id", task.ID).Msg("dispatchPending: failed to mark task as failed")
+			if ferr := o.lifecycle.FailDispatch(ctx, task, err.Error()); ferr != nil {
+				log.Warn().Err(ferr).Str("task_id", task.ID).Msg("dispatchPending: FailDispatch returned error")
 			}
-			o.bus.Emit(notify.NewEvent(notify.EventTaskFailed, task, notify.WithContainerStatus("", "Failed to dispatch: "+err.Error(), "")))
 			continue
 		}
 	}
@@ -74,7 +72,7 @@ func (o *Orchestrator) dispatch(ctx context.Context, task *models.Task) error {
 		return fmt.Errorf("find available instance: %w", err)
 	}
 
-	if err := o.store.AssignTask(ctx, task.ID, instance.InstanceID); err != nil {
+	if err := o.lifecycle.Assign(ctx, task.ID, instance.InstanceID); err != nil {
 		return err
 	}
 
@@ -83,18 +81,9 @@ func (o *Orchestrator) dispatch(ctx context.Context, task *models.Task) error {
 		return err
 	}
 
-	if err := o.store.WithTx(ctx, func(tx store.Store) error {
-		if err := tx.StartTask(ctx, task.ID, containerID); err != nil {
-			return err
-		}
-		return tx.IncrementRunningContainers(ctx, instance.InstanceID)
-	}); err != nil {
+	if err := o.lifecycle.Start(ctx, task, instance.InstanceID, containerID); err != nil {
 		return err
 	}
-
-	o.incrementRunning()
-
-	o.bus.Emit(notify.NewEvent(notify.EventTaskRunning, task))
 
 	log.Info().Str("task_id", task.ID).Str("container", containerID).Str("instance", instance.InstanceID).Msg("task dispatched")
 	return nil
@@ -107,10 +96,9 @@ func (o *Orchestrator) dispatch(ctx context.Context, task *models.Task) error {
 // error (the task is already in its terminal state and the event is emitted).
 func (o *Orchestrator) failReadDuplicate(ctx context.Context, task *models.Task, existing *models.Reading) error {
 	msg := fmt.Sprintf("reading already exists for url %q (id=%s); resubmit with force=true to overwrite", task.Prompt, existing.ID)
-	if err := o.store.UpdateTaskStatus(ctx, task.ID, models.TaskStatusFailed, msg); err != nil {
-		log.Warn().Err(err).Str("task_id", task.ID).Msg("failReadDuplicate: failed to mark task failed")
+	if err := o.lifecycle.FailDispatch(ctx, task, msg); err != nil {
+		log.Warn().Err(err).Str("task_id", task.ID).Msg("failReadDuplicate: FailDispatch returned error")
 	}
-	o.bus.Emit(notify.NewEvent(notify.EventTaskFailed, task, notify.WithContainerStatus("", msg, "")))
 	log.Info().Str("task_id", task.ID).Str("url", task.Prompt).Str("existing_reading_id", existing.ID).Msg("read task short-circuited: duplicate URL")
 	return nil
 }

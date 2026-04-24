@@ -90,11 +90,16 @@ func New(s store.Store, cfg *config.Config, bus *notify.EventBus, runner Runner,
 	return o
 }
 
-// slotsAdapter exposes the orchestrator's releaseSlot through the narrow
-// lifecycle.Slots interface. Used to break the construction cycle between
-// Orchestrator and Coordinator while keeping the counter logic in one place.
+// slotsAdapter exposes the orchestrator's running-counter helpers through
+// the narrow lifecycle.Slots interface. Used to break the construction cycle
+// between Orchestrator and Coordinator while keeping the counter logic in
+// one place.
 type slotsAdapter struct {
 	o *Orchestrator
+}
+
+func (a slotsAdapter) Acquire() {
+	a.o.incrementRunning()
 }
 
 func (a slotsAdapter) Release(ctx context.Context, task *models.Task) {

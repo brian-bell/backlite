@@ -26,10 +26,15 @@ type Emitter interface {
 	Emit(notify.Event)
 }
 
-// Slots releases the orchestrator's in-memory running-task counter together
-// with the instance's DB-backed running_containers slot. The orchestrator's
-// releaseSlot method satisfies this implicitly.
+// Slots exposes the orchestrator's in-memory running-task counter so the
+// coordinator can pair its DB writes with the local accounting update.
+//   - Acquire is called after a successful Start transition.
+//   - Release decrements both the local counter and the instance's DB-backed
+//     running_containers slot.
+//
+// The orchestrator's incrementRunning + releaseSlot methods satisfy this.
 type Slots interface {
+	Acquire()
 	Release(ctx context.Context, task *models.Task)
 }
 
@@ -38,6 +43,7 @@ type Slots interface {
 // and don't care about slot accounting.
 type noopSlots struct{}
 
+func (noopSlots) Acquire()                              {}
 func (noopSlots) Release(context.Context, *models.Task) {}
 
 // Result is the terminal outcome of a running task, passed to Complete. The
@@ -115,6 +121,47 @@ func New(s store.Store, emitter Emitter, opts ...Option) *Coordinator {
 // the orchestrator's markRetryReady helper this phase; later phases absorb it.
 func (c *Coordinator) MarkReadyForRetry(ctx context.Context, taskID string) error {
 	return c.store.MarkReadyForRetry(ctx, taskID)
+}
+
+// Assign transitions a task pending → provisioning and records the task's
+// assignment to an instance. Used as the first step of dispatch before the
+// caller triggers the external RunAgent side-effect.
+func (c *Coordinator) Assign(ctx context.Context, taskID, instanceID string) error {
+	if err := c.store.AssignTask(ctx, taskID, instanceID); err != nil {
+		return fmt.Errorf("assign task: %w", err)
+	}
+	return nil
+}
+
+// Start atomically transitions a task provisioning → running: writes StartTask
+// and IncrementRunningContainers under WithTx, bumps the local running
+// counter, and emits task.running. The caller is responsible for invoking
+// docker.RunAgent between Assign and Start.
+func (c *Coordinator) Start(ctx context.Context, task *models.Task, instanceID, containerID string) error {
+	if err := c.store.WithTx(ctx, func(tx store.Store) error {
+		if err := tx.StartTask(ctx, task.ID, containerID); err != nil {
+			return err
+		}
+		return tx.IncrementRunningContainers(ctx, instanceID)
+	}); err != nil {
+		return fmt.Errorf("start task: %w", err)
+	}
+	c.slots.Acquire()
+	c.emitter.Emit(notify.NewEvent(notify.EventTaskRunning, task))
+	return nil
+}
+
+// FailDispatch marks a task as failed during the dispatch phase (before it
+// reaches running) and emits task.failed. Unlike Complete, no slot release
+// happens and ready_for_retry is not flipped — dispatch failures are
+// systematic (missing config, duplicate read, no capacity) and callers
+// should resubmit rather than retry.
+func (c *Coordinator) FailDispatch(ctx context.Context, task *models.Task, reason string) error {
+	if err := c.store.UpdateTaskStatus(ctx, task.ID, models.TaskStatusFailed, reason); err != nil {
+		log.Warn().Err(err).Str("task_id", task.ID).Msg("lifecycle.FailDispatch: update status failed")
+	}
+	c.emitter.Emit(notify.NewEvent(notify.EventTaskFailed, task, notify.WithContainerStatus("", reason, "")))
+	return nil
 }
 
 // MarkRecovering transitions a task to recovering, optionally clears its

@@ -40,9 +40,8 @@ type Config struct {
 	DefaultReadMaxRuntime time.Duration
 	DefaultReadMaxTurns   int
 
-	// Supabase (passed through to reader containers)
-	SupabaseURL     string
-	SupabaseAnonKey string
+	// Internal API used by reader containers to query local readings.
+	InternalAPIBaseURL string
 
 	// Boolean defaults
 	DefaultCreatePR   bool
@@ -63,7 +62,7 @@ type Config struct {
 	LogFile string
 
 	// Database
-	DatabaseURL string
+	DatabasePath string
 
 	// Retry
 	MaxUserRetries int
@@ -98,13 +97,12 @@ func Load() (*Config, error) {
 		DefaultReadMaxBudget:  envFloat("BACKFLOW_DEFAULT_READ_MAX_BUDGET", 0),
 		DefaultReadMaxRuntime: time.Duration(envInt("BACKFLOW_DEFAULT_READ_MAX_RUNTIME_SEC", 0)) * time.Second,
 		DefaultReadMaxTurns:   envInt("BACKFLOW_DEFAULT_READ_MAX_TURNS", 0),
-		SupabaseURL:           os.Getenv("SUPABASE_URL"),
-		SupabaseAnonKey:       os.Getenv("SUPABASE_ANON_KEY"),
+		InternalAPIBaseURL:    os.Getenv("BACKFLOW_INTERNAL_API_BASE_URL"),
 		DataDir:               envOr("BACKFLOW_DATA_DIR", "./data"),
 		GitHubToken:           os.Getenv("GITHUB_TOKEN"),
 		WebhookURL:            os.Getenv("BACKFLOW_WEBHOOK_URL"),
 		LogFile:               os.Getenv("BACKFLOW_LOG_FILE"),
-		DatabaseURL:           os.Getenv("BACKFLOW_DATABASE_URL"),
+		DatabasePath:          envOr("BACKFLOW_DATABASE_PATH", "./backflow.db"),
 		MaxUserRetries:        envInt("BACKFLOW_MAX_USER_RETRIES", 2),
 		PollInterval:          time.Duration(envInt("BACKFLOW_POLL_INTERVAL_SEC", 5)) * time.Second,
 	}
@@ -123,8 +121,8 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("BACKFLOW_CONTAINERS_PER_INSTANCE must be <= %d, got %d", MaxLocalContainers, c.ContainersPerInst)
 	}
 
-	if c.DatabaseURL == "" {
-		return nil, fmt.Errorf("BACKFLOW_DATABASE_URL is required")
+	if c.DatabasePath == "" {
+		return nil, fmt.Errorf("BACKFLOW_DATABASE_PATH is required")
 	}
 
 	if c.ContainerCPUs < 1 {
@@ -142,10 +140,6 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("BACKFLOW_DEFAULT_READ_MAX_RUNTIME_SEC must be > 0 when BACKFLOW_READER_IMAGE is set")
 		case c.DefaultReadMaxTurns <= 0:
 			return nil, fmt.Errorf("BACKFLOW_DEFAULT_READ_MAX_TURNS must be > 0 when BACKFLOW_READER_IMAGE is set")
-		case c.SupabaseURL == "":
-			return nil, fmt.Errorf("SUPABASE_URL is required when BACKFLOW_READER_IMAGE is set")
-		case c.SupabaseAnonKey == "":
-			return nil, fmt.Errorf("SUPABASE_ANON_KEY is required when BACKFLOW_READER_IMAGE is set")
 		}
 	}
 

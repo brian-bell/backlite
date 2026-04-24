@@ -21,6 +21,8 @@ func NewServer(s store.Store, cfg *config.Config, logs LogFetcher, bus notify.Em
 	h := NewHandlers(s, cfg, logs, bus)
 
 	r.Get("/health", h.HealthCheck)
+	r.Get("/api/v1/readings/lookup", h.LookupReading)
+	r.Post("/api/v1/readings/similar", h.FindSimilarReadings)
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(AuthMiddleware(s, cfg.APIKey))

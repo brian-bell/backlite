@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# End-to-end smoke test for the reader image. Hits real OpenAI + Supabase +
-# Anthropic APIs, so it reads credentials from the repo's .env file.
+# End-to-end smoke test for the reader image. Hits real OpenAI + Anthropic APIs
+# plus a running Backflow server, so it reads credentials from the repo's .env file.
 # Required keys in .env:
-#   OPENAI_API_KEY, ANTHROPIC_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY
+#   OPENAI_API_KEY, ANTHROPIC_API_KEY, BACKFLOW_INTERNAL_API_BASE_URL
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ENV_FILE="${ROOT_DIR}/.env"
@@ -19,7 +19,7 @@ set -a
 . "$ENV_FILE"
 set +a
 
-for var in OPENAI_API_KEY ANTHROPIC_API_KEY SUPABASE_URL SUPABASE_ANON_KEY; do
+for var in OPENAI_API_KEY ANTHROPIC_API_KEY BACKFLOW_INTERNAL_API_BASE_URL; do
     if [ -z "${!var:-}" ]; then
         echo "test_reader_e2e: ${var} is not set in ${ENV_FILE}" >&2
         exit 1
@@ -31,18 +31,16 @@ docker run --rm -e OPENAI_API_KEY="$OPENAI_API_KEY" \
   --entrypoint /home/agent/read-embed.sh backflow-reader \
   "hello world" | jq 'length'   # ~1536
 
-# Exact-URL lookup (real Supabase call)
+# Exact-URL lookup (real Backflow API call)
 docker run --rm \
-  -e SUPABASE_URL="$SUPABASE_URL" \
-  -e SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY" \
+  -e BACKFLOW_API_BASE_URL="$BACKFLOW_INTERNAL_API_BASE_URL" \
   --entrypoint /home/agent/read-lookup.sh backflow-reader \
   "https://example.com/non-existent" | jq .   # []
 
-# Similarity search (real OpenAI + Supabase calls)
+# Similarity search (real OpenAI + Backflow API calls)
 docker run --rm \
   -e OPENAI_API_KEY="$OPENAI_API_KEY" \
-  -e SUPABASE_URL="$SUPABASE_URL" \
-  -e SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY" \
+  -e BACKFLOW_API_BASE_URL="$BACKFLOW_INTERNAL_API_BASE_URL" \
   --entrypoint /home/agent/read-similar.sh backflow-reader \
   "attention mechanisms in transformers" 3 | jq .
 
@@ -51,8 +49,7 @@ docker run --rm \
   -e PROMPT="https://example.com/article" \
   -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
   -e OPENAI_API_KEY="$OPENAI_API_KEY" \
-  -e SUPABASE_URL="$SUPABASE_URL" \
-  -e SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY" \
+  -e BACKFLOW_API_BASE_URL="$BACKFLOW_INTERNAL_API_BASE_URL" \
   backflow-reader 2>&1 | tail -20
 # Expect: a single `BACKFLOW_STATUS_JSON:{...}` line with
 # `.task_mode == "read"` and a populated `.reading` object.

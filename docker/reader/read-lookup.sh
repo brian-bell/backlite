@@ -5,13 +5,8 @@ set -euo pipefail
 # Usage: read-lookup.sh <url>
 # Output: JSON array (empty = no match, single element = duplicate).
 
-if [ -z "${SUPABASE_URL:-}" ]; then
-    echo "read-lookup: SUPABASE_URL is not set" >&2
-    exit 1
-fi
-
-if [ -z "${SUPABASE_ANON_KEY:-}" ]; then
-    echo "read-lookup: SUPABASE_ANON_KEY is not set" >&2
+if [ -z "${BACKFLOW_API_BASE_URL:-}" ]; then
+    echo "read-lookup: BACKFLOW_API_BASE_URL is not set" >&2
     exit 1
 fi
 
@@ -23,17 +18,21 @@ fi
 URL="$1"
 ENCODED=$(printf '%s' "$URL" | jq -sRr @uri)
 
+AUTH_ARGS=()
+if [ -n "${BACKFLOW_API_KEY:-}" ]; then
+    AUTH_ARGS=(-H "Authorization: Bearer ${BACKFLOW_API_KEY}")
+fi
+
 RESPONSE=$(curl -fsS \
-    -H "apikey: ${SUPABASE_ANON_KEY}" \
-    -H "Accept-Profile: reader" \
-    "${SUPABASE_URL}/rest/v1/readings?url=eq.${ENCODED}&select=id,url,title,tldr") || {
-    echo "read-lookup: Supabase REST request failed" >&2
+    "${AUTH_ARGS[@]}" \
+    "${BACKFLOW_API_BASE_URL}/api/v1/readings/lookup?url=${ENCODED}") || {
+    echo "read-lookup: Backflow API request failed" >&2
     exit 1
 }
 
-if ! printf '%s' "$RESPONSE" | jq -e 'type == "array"' >/dev/null 2>&1; then
-    echo "read-lookup: unexpected response from Supabase: $RESPONSE" >&2
+if ! printf '%s' "$RESPONSE" | jq -e '.data | type == "array"' >/dev/null 2>&1; then
+    echo "read-lookup: unexpected response from Backflow API: $RESPONSE" >&2
     exit 1
 fi
 
-printf '%s\n' "$RESPONSE" | jq -c .
+printf '%s\n' "$RESPONSE" | jq -c '.data'

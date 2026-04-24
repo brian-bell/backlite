@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -202,6 +203,49 @@ func TestAPIAuth_RejectsExpiredDatabaseBearerToken(t *testing.T) {
 	}
 }
 
+func TestReadingsLookup_RemainsAccessibleWhenDBKeysExist(t *testing.T) {
+	cfg := &config.Config{}
+	s := &apiKeyStoreMock{
+		Store:   newTestStore(t),
+		hasKeys: true,
+	}
+	router := NewServer(s, cfg, noopLogFetcher{}, noopEmitter{})
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/readings/lookup?url="+url.QueryEscape("https://example.com/article"),
+		nil,
+	)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /api/v1/readings/lookup: got status %d, want %d", rr.Code, http.StatusOK)
+	}
+}
+
+func TestReadingsSimilar_RemainsAccessibleWhenDBKeysExist(t *testing.T) {
+	cfg := &config.Config{}
+	s := &apiKeyStoreMock{
+		Store:   newTestStore(t),
+		hasKeys: true,
+	}
+	router := NewServer(s, cfg, noopLogFetcher{}, noopEmitter{})
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/readings/similar",
+		strings.NewReader(`{"query_embedding":[1,0,0],"match_count":3}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("POST /api/v1/readings/similar: got status %d, want %d", rr.Code, http.StatusOK)
+	}
+}
+
 func TestRootHealthAccessible(t *testing.T) {
 	cfg := &config.Config{}
 	router := NewServer(&mockStore{}, cfg, noopLogFetcher{}, noopEmitter{})
@@ -236,7 +280,7 @@ func TestAPIHealthAccessible(t *testing.T) {
 func TestRestrictAPIEnvVar_NoLongerBlocksAPI(t *testing.T) {
 	t.Setenv("BACKFLOW_RESTRICT_API", "true")
 	t.Setenv("ANTHROPIC_API_KEY", "test-key")
-	t.Setenv("BACKFLOW_DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	t.Setenv("BACKFLOW_DATABASE_PATH", "/tmp/backflow-test.db")
 
 	cfg, err := config.Load()
 	if err != nil {

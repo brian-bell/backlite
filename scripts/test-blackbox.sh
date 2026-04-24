@@ -8,8 +8,8 @@ Usage: $(basename "$0") [options]
 
 Run the Backflow black-box integration test suite.
 
-Builds the Backflow binary and fake agent Docker image, starts Postgres via
-testcontainers, and exercises the full task lifecycle.
+Builds the Backflow binary and fake agent Docker image, starts the SQLite-backed
+black-box harness, and exercises the full task lifecycle.
 
 Prerequisites: Docker daemon must be running.
 

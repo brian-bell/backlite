@@ -1,6 +1,6 @@
 package store
 
-// PoolStats holds a snapshot of connection pool statistics.
+// PoolStats holds a snapshot of database connection statistics.
 type PoolStats struct {
 	AcquiredConns int32
 	IdleConns     int32
@@ -8,13 +8,13 @@ type PoolStats struct {
 	MaxConns      int32
 }
 
-// PoolStats returns a snapshot of the underlying connection pool statistics.
-func (s *PostgresStore) PoolStats() PoolStats {
-	st := s.pool.Stat()
+// PoolStats returns a snapshot of the underlying database handle statistics.
+func (s *SQLiteStore) PoolStats() PoolStats {
+	st := s.db.Stats()
 	return PoolStats{
-		AcquiredConns: st.AcquiredConns(),
-		IdleConns:     st.IdleConns(),
-		TotalConns:    st.TotalConns(),
-		MaxConns:      st.MaxConns(),
+		AcquiredConns: int32(st.InUse),
+		IdleConns:     int32(st.Idle),
+		TotalConns:    int32(st.OpenConnections),
+		MaxConns:      int32(st.MaxOpenConnections),
 	}
 }

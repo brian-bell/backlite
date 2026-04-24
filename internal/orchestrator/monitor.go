@@ -268,7 +268,7 @@ func (o *Orchestrator) handleReadingCompletion(ctx context.Context, task *models
 
 // agentStatusFromContainer reconstructs the reading-relevant portion of the
 // agent's status output from the parsed ContainerStatus. Used to populate the
-// reading's raw_output JSONB losslessly without depending on the original bytes.
+// reading's raw_output JSON text losslessly without depending on the original bytes.
 func agentStatusFromContainer(s ContainerStatus) AgentStatus {
 	return AgentStatus{
 		Complete:        s.Complete,

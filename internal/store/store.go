@@ -30,6 +30,15 @@ type TaskFilter struct {
 	Offset int
 }
 
+// ReadingMatch is a similarity-search result for an existing reading.
+type ReadingMatch struct {
+	ID         string  `json:"id"`
+	Title      string  `json:"title"`
+	TLDR       string  `json:"tldr"`
+	URL        string  `json:"url"`
+	Similarity float64 `json:"similarity"`
+}
+
 // Store is the persistence interface for tasks and instances.
 type Store interface {
 	// Tasks
@@ -58,7 +67,6 @@ type Store interface {
 	UpdateInstanceStatus(ctx context.Context, id string, status models.InstanceStatus) error
 	IncrementRunningContainers(ctx context.Context, id string) error
 	DecrementRunningContainers(ctx context.Context, id string) error
-	UpdateInstanceDetails(ctx context.Context, id string, privateIP, az string) error
 	ResetRunningContainers(ctx context.Context, id string) error
 
 	// API keys
@@ -69,6 +77,7 @@ type Store interface {
 	// Readings
 	UpsertReading(ctx context.Context, r *models.Reading) error
 	GetReadingByURL(ctx context.Context, url string) (*models.Reading, error)
+	FindSimilarReadings(ctx context.Context, queryEmbedding []float32, limit int) ([]ReadingMatch, error)
 
 	// Transactions
 	WithTx(ctx context.Context, fn func(Store) error) error

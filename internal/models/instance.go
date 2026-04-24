@@ -13,9 +13,6 @@ const (
 
 type Instance struct {
 	InstanceID        string         `json:"instance_id"`
-	InstanceType      string         `json:"instance_type"`
-	AvailabilityZone  string         `json:"availability_zone"`
-	PrivateIP         string         `json:"private_ip"`
 	Status            InstanceStatus `json:"status"`
 	MaxContainers     int            `json:"max_containers"`
 	RunningContainers int            `json:"running_containers"`

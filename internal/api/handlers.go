@@ -36,6 +36,11 @@ type Handlers struct {
 	bus    notify.Emitter
 }
 
+type findSimilarReadingsRequest struct {
+	QueryEmbedding []float32 `json:"query_embedding"`
+	MatchCount     int       `json:"match_count"`
+}
+
 func NewHandlers(s store.Store, cfg *config.Config, logs LogFetcher, bus notify.Emitter) *Handlers {
 	return &Handlers{store: s, config: cfg, logs: logs, bus: bus}
 }
@@ -204,6 +209,56 @@ func (h *Handlers) GetTaskOutput(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) GetTaskOutputJSON(w http.ResponseWriter, r *http.Request) {
 	h.serveOutputFile(w, r, "task.json", "application/json")
+}
+
+func (h *Handlers) LookupReading(w http.ResponseWriter, r *http.Request) {
+	url := r.URL.Query().Get("url")
+	if url == "" {
+		writeError(w, http.StatusBadRequest, "url is required")
+		return
+	}
+
+	reading, err := h.store.GetReadingByURL(r.Context(), url)
+	if errors.Is(err, store.ErrNotFound) {
+		writeJSON(w, http.StatusOK, []map[string]any{})
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to look up reading")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, []map[string]any{{
+		"id":    reading.ID,
+		"url":   reading.URL,
+		"title": reading.Title,
+		"tldr":  reading.TLDR,
+	}})
+}
+
+func (h *Handlers) FindSimilarReadings(w http.ResponseWriter, r *http.Request) {
+	var req findSimilarReadingsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	if len(req.QueryEmbedding) == 0 {
+		writeError(w, http.StatusBadRequest, "query_embedding is required")
+		return
+	}
+	if req.MatchCount <= 0 {
+		req.MatchCount = 5
+	}
+
+	matches, err := h.store.FindSimilarReadings(r.Context(), req.QueryEmbedding, req.MatchCount)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to find similar readings")
+		return
+	}
+	if matches == nil {
+		matches = []store.ReadingMatch{}
+	}
+	writeJSON(w, http.StatusOK, matches)
 }
 
 // serveOutputFile streams a single file from {DataDir}/tasks/{id}/{name}.

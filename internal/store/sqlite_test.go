@@ -1,28 +1,19 @@
-//go:build !nocontainers
-
 package store
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
-	"os"
 	"path/filepath"
-	"runtime"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/backflow-labs/backflow/internal/models"
-	"github.com/jackc/pgx/v5/pgxpool"
-	pgvector "github.com/pgvector/pgvector-go"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-// pgTestTask creates a minimal task and inserts it.
-func pgTestTask(t *testing.T, s *PostgresStore) *models.Task {
+// sqliteTestTask creates a minimal task and inserts it.
+func sqliteTestTask(t *testing.T, s *SQLiteStore) *models.Task {
 	t.Helper()
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
@@ -45,16 +36,13 @@ func pgTestTask(t *testing.T, s *PostgresStore) *models.Task {
 	return task
 }
 
-// pgTestInstance creates a minimal instance and inserts it.
-func pgTestInstance(t *testing.T, s *PostgresStore) *models.Instance {
+// sqliteTestInstance creates a minimal instance and inserts it.
+func sqliteTestInstance(t *testing.T, s *SQLiteStore) *models.Instance {
 	t.Helper()
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	inst := &models.Instance{
 		InstanceID:        "i-test123",
-		InstanceType:      "m7g.xlarge",
-		AvailabilityZone:  "us-east-1a",
-		PrivateIP:         "10.0.1.5",
 		Status:            models.InstanceStatusRunning,
 		MaxContainers:     4,
 		RunningContainers: 0,
@@ -67,66 +55,31 @@ func pgTestInstance(t *testing.T, s *PostgresStore) *models.Instance {
 	return inst
 }
 
-var sharedConnStr string
-
-func TestMain(m *testing.M) {
-	ctx := context.Background()
-
-	pgContainer, err := postgres.Run(ctx, "pgvector/pgvector:pg16",
-		postgres.WithDatabase("backflow_test"),
-		postgres.WithUsername("test"),
-		postgres.WithPassword("test"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(30*time.Second),
-		),
-	)
-	if err != nil {
-		log.Fatalf("start postgres container: %v", err)
-	}
-
-	sharedConnStr, err = pgContainer.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		log.Fatalf("get connection string: %v", err)
-	}
-
-	// Run migrations once.
-	_, thisFile, _, _ := runtime.Caller(0)
-	migrationsDir := filepath.Join(filepath.Dir(thisFile), "..", "..", "migrations")
-	s, err := NewPostgres(ctx, sharedConnStr, migrationsDir)
-	if err != nil {
-		log.Fatalf("NewPostgres: %v", err)
-	}
-	s.Close()
-
-	code := m.Run()
-
-	pgContainer.Terminate(ctx)
-	os.Exit(code)
-}
-
-func testPostgresStore(t *testing.T) *PostgresStore {
+func testSQLiteStore(t *testing.T) *SQLiteStore {
 	t.Helper()
 	ctx := context.Background()
-
-	pool, err := pgxpool.New(ctx, sharedConnStr)
+	migrationsDir := filepath.Join("..", "..", "migrations")
+	dbPath := filepath.Join(t.TempDir(), sanitizeTestName(t.Name())+"-test.db")
+	s, err := NewSQLite(ctx, dbPath, migrationsDir)
 	if err != nil {
-		t.Fatalf("pgxpool.New: %v", err)
+		t.Fatalf("NewSQLite: %v", err)
 	}
-	t.Cleanup(func() { pool.Close() })
-
-	s := &PostgresStore{pool: pool, q: pool}
-
-	// Clean slate for test isolation.
-	if _, err := s.pool.Exec(ctx, "TRUNCATE tasks, instances, api_keys CASCADE"); err != nil {
-		t.Fatalf("truncate: %v", err)
-	}
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	})
 	return s
 }
 
-func TestPG_TaskRoundTrip(t *testing.T) {
-	s := testPostgresStore(t)
+func sanitizeTestName(name string) string {
+	name = strings.ReplaceAll(name, "/", "-")
+	name = strings.ReplaceAll(name, " ", "-")
+	return name
+}
+
+func TestSQLite_TaskRoundTrip(t *testing.T) {
+	s := testSQLiteStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 
@@ -205,8 +158,8 @@ func TestPG_TaskRoundTrip(t *testing.T) {
 	}
 }
 
-func TestPG_TaskRoundTrip_DefaultAgentImage(t *testing.T) {
-	s := testPostgresStore(t)
+func TestSQLite_TaskRoundTrip_DefaultAgentImage(t *testing.T) {
+	s := testSQLiteStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 
@@ -235,8 +188,8 @@ func TestPG_TaskRoundTrip_DefaultAgentImage(t *testing.T) {
 	}
 }
 
-func TestPG_CreateTask_PersistsForce(t *testing.T) {
-	s := testPostgresStore(t)
+func TestSQLite_CreateTask_PersistsForce(t *testing.T) {
+	s := testSQLiteStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 
@@ -263,8 +216,8 @@ func TestPG_CreateTask_PersistsForce(t *testing.T) {
 	}
 }
 
-func TestPG_APIKeyRoundTrip(t *testing.T) {
-	s := testPostgresStore(t)
+func TestSQLite_APIKeyRoundTrip(t *testing.T) {
+	s := testSQLiteStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	expiresAt := now.Add(2 * time.Hour)
@@ -305,8 +258,8 @@ func TestPG_APIKeyRoundTrip(t *testing.T) {
 	}
 }
 
-func TestPG_WithTx_Commit(t *testing.T) {
-	s := testPostgresStore(t)
+func TestSQLite_WithTx_Commit(t *testing.T) {
+	s := testSQLiteStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 
@@ -326,11 +279,10 @@ func TestPG_WithTx_Commit(t *testing.T) {
 	}
 
 	inst := &models.Instance{
-		InstanceID:   "i-tx01",
-		InstanceType: "m7g.xlarge",
-		Status:       models.InstanceStatusRunning,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		InstanceID: "i-tx01",
+		Status:     models.InstanceStatusRunning,
+		CreatedAt:  now,
+		UpdatedAt:  now,
 	}
 	if err := s.CreateInstance(ctx, inst); err != nil {
 		t.Fatalf("CreateInstance: %v", err)
@@ -362,8 +314,8 @@ func TestPG_WithTx_Commit(t *testing.T) {
 	}
 }
 
-func TestPG_WithTx_Rollback(t *testing.T) {
-	s := testPostgresStore(t)
+func TestSQLite_WithTx_Rollback(t *testing.T) {
+	s := testSQLiteStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 
@@ -382,11 +334,10 @@ func TestPG_WithTx_Rollback(t *testing.T) {
 	}
 
 	inst := &models.Instance{
-		InstanceID:   "i-tx02",
-		InstanceType: "m7g.xlarge",
-		Status:       models.InstanceStatusRunning,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		InstanceID: "i-tx02",
+		Status:     models.InstanceStatusRunning,
+		CreatedAt:  now,
+		UpdatedAt:  now,
 	}
 	if err := s.CreateInstance(ctx, inst); err != nil {
 		t.Fatalf("CreateInstance: %v", err)
@@ -416,8 +367,8 @@ func TestPG_WithTx_Rollback(t *testing.T) {
 
 // --- ErrNotFound ---
 
-func TestPG_GetTaskNotFound(t *testing.T) {
-	s := testPostgresStore(t)
+func TestSQLite_GetTaskNotFound(t *testing.T) {
+	s := testSQLiteStore(t)
 	got, err := s.GetTask(context.Background(), "nonexistent")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
@@ -427,8 +378,8 @@ func TestPG_GetTaskNotFound(t *testing.T) {
 	}
 }
 
-func TestPG_GetInstanceNotFound(t *testing.T) {
-	s := testPostgresStore(t)
+func TestSQLite_GetInstanceNotFound(t *testing.T) {
+	s := testSQLiteStore(t)
 	got, err := s.GetInstance(context.Background(), "nonexistent")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
@@ -440,10 +391,10 @@ func TestPG_GetInstanceNotFound(t *testing.T) {
 
 // --- ListTasks ---
 
-func TestPG_ListTasks(t *testing.T) {
-	s := testPostgresStore(t)
+func TestSQLite_ListTasks(t *testing.T) {
+	s := testSQLiteStore(t)
 	ctx := context.Background()
-	pgTestTask(t, s)
+	sqliteTestTask(t, s)
 
 	// Start the task so it becomes running
 	s.StartTask(ctx, "bf_TEST001", "container-1")
@@ -467,10 +418,10 @@ func TestPG_ListTasks(t *testing.T) {
 
 // --- DeleteTask ---
 
-func TestPG_DeleteTask(t *testing.T) {
-	s := testPostgresStore(t)
+func TestSQLite_DeleteTask(t *testing.T) {
+	s := testSQLiteStore(t)
 	ctx := context.Background()
-	pgTestTask(t, s)
+	sqliteTestTask(t, s)
 
 	if err := s.DeleteTask(ctx, "bf_TEST001"); err != nil {
 		t.Fatalf("DeleteTask: %v", err)
@@ -487,10 +438,10 @@ func TestPG_DeleteTask(t *testing.T) {
 
 // --- Named task updates ---
 
-func TestPG_UpdateTaskStatus(t *testing.T) {
-	s := testPostgresStore(t)
+func TestSQLite_UpdateTaskStatus(t *testing.T) {
+	s := testSQLiteStore(t)
 	ctx := context.Background()
-	task := pgTestTask(t, s)
+	task := sqliteTestTask(t, s)
 
 	if err := s.UpdateTaskStatus(ctx, task.ID, models.TaskStatusFailed, "something broke"); err != nil {
 		t.Fatalf("UpdateTaskStatus: %v", err)
@@ -512,10 +463,10 @@ func TestPG_UpdateTaskStatus(t *testing.T) {
 	}
 }
 
-func TestPG_AssignTask(t *testing.T) {
-	s := testPostgresStore(t)
+func TestSQLite_AssignTask(t *testing.T) {
+	s := testSQLiteStore(t)
 	ctx := context.Background()
-	pgTestTask(t, s)
+	sqliteTestTask(t, s)
 
 	if err := s.AssignTask(ctx, "bf_TEST001", "i-abc123"); err != nil {
 		t.Fatalf("AssignTask: %v", err)
@@ -533,10 +484,10 @@ func TestPG_AssignTask(t *testing.T) {
 	}
 }
 
-func TestPG_StartTask(t *testing.T) {
-	s := testPostgresStore(t)
+func TestSQLite_StartTask(t *testing.T) {
+	s := testSQLiteStore(t)
 	ctx := context.Background()
-	pgTestTask(t, s)
+	sqliteTestTask(t, s)
 
 	if err := s.StartTask(ctx, "bf_TEST001", "container-abc"); err != nil {
 		t.Fatalf("StartTask: %v", err)
@@ -557,10 +508,10 @@ func TestPG_StartTask(t *testing.T) {
 	}
 }
 
-func TestPG_CompleteTask(t *testing.T) {
-	s := testPostgresStore(t)
+func TestSQLite_CompleteTask(t *testing.T) {
+	s := testSQLiteStore(t)
 	ctx := context.Background()
-	pgTestTask(t, s)
+	sqliteTestTask(t, s)
 
 	result := TaskResult{
 		Status:         models.TaskStatusCompleted,
@@ -594,10 +545,10 @@ func TestPG_CompleteTask(t *testing.T) {
 	}
 }
 
-func TestPG_CompleteTask_InferredFields(t *testing.T) {
-	s := testPostgresStore(t)
+func TestSQLite_CompleteTask_InferredFields(t *testing.T) {
+	s := testSQLiteStore(t)
 	ctx := context.Background()
-	pgTestTask(t, s) // creates with RepoURL="https://github.com/test/repo", TaskMode="code"
+	sqliteTestTask(t, s) // creates with RepoURL="https://github.com/test/repo", TaskMode="code"
 
 	result := TaskResult{
 		Status:       models.TaskStatusCompleted,
@@ -621,10 +572,10 @@ func TestPG_CompleteTask_InferredFields(t *testing.T) {
 	}
 }
 
-func TestPG_CompleteTask_InferredFieldsCoalesce(t *testing.T) {
-	s := testPostgresStore(t)
+func TestSQLite_CompleteTask_InferredFieldsCoalesce(t *testing.T) {
+	s := testSQLiteStore(t)
 	ctx := context.Background()
-	pgTestTask(t, s) // creates with RepoURL="https://github.com/test/repo"
+	sqliteTestTask(t, s) // creates with RepoURL="https://github.com/test/repo"
 
 	// Complete with empty inferred fields — should NOT overwrite existing values
 	result := TaskResult{
@@ -643,12 +594,12 @@ func TestPG_CompleteTask_InferredFieldsCoalesce(t *testing.T) {
 	}
 }
 
-func TestPG_RequeueTask(t *testing.T) {
-	s := testPostgresStore(t)
+func TestSQLite_RequeueTask(t *testing.T) {
+	s := testSQLiteStore(t)
 	ctx := context.Background()
-	task := pgTestTask(t, s)
+	task := sqliteTestTask(t, s)
 
-	if _, err := s.q.Exec(ctx, "UPDATE tasks SET output_url=$1 WHERE id=$2", "/api/v1/tasks/"+task.ID+"/output", task.ID); err != nil {
+	if _, err := s.q.ExecContext(ctx, "UPDATE tasks SET output_url=? WHERE id=?", "/api/v1/tasks/"+task.ID+"/output", task.ID); err != nil {
 		t.Fatalf("seed output_url: %v", err)
 	}
 
@@ -683,10 +634,10 @@ func TestPG_RequeueTask(t *testing.T) {
 	}
 }
 
-func TestPG_CancelTask(t *testing.T) {
-	s := testPostgresStore(t)
+func TestSQLite_CancelTask(t *testing.T) {
+	s := testSQLiteStore(t)
 	ctx := context.Background()
-	pgTestTask(t, s)
+	sqliteTestTask(t, s)
 
 	if err := s.CancelTask(ctx, "bf_TEST001"); err != nil {
 		t.Fatalf("CancelTask: %v", err)
@@ -701,10 +652,10 @@ func TestPG_CancelTask(t *testing.T) {
 	}
 }
 
-func TestPG_ClearTaskAssignment(t *testing.T) {
-	s := testPostgresStore(t)
+func TestSQLite_ClearTaskAssignment(t *testing.T) {
+	s := testSQLiteStore(t)
 	ctx := context.Background()
-	pgTestTask(t, s)
+	sqliteTestTask(t, s)
 
 	s.AssignTask(ctx, "bf_TEST001", "i-abc123")
 	s.StartTask(ctx, "bf_TEST001", "container-abc")
@@ -724,17 +675,17 @@ func TestPG_ClearTaskAssignment(t *testing.T) {
 
 // --- Instance CRUD ---
 
-func TestPG_InstanceCRUD(t *testing.T) {
-	s := testPostgresStore(t)
+func TestSQLite_InstanceCRUD(t *testing.T) {
+	s := testSQLiteStore(t)
 	ctx := context.Background()
-	pgTestInstance(t, s)
+	sqliteTestInstance(t, s)
 
 	got, err := s.GetInstance(ctx, "i-test123")
 	if err != nil {
 		t.Fatalf("GetInstance: %v", err)
 	}
-	if got.InstanceType != "m7g.xlarge" {
-		t.Errorf("InstanceType = %q, want m7g.xlarge", got.InstanceType)
+	if got.InstanceID != "i-test123" {
+		t.Errorf("InstanceID = %q, want i-test123", got.InstanceID)
 	}
 	if got.MaxContainers != 4 {
 		t.Errorf("MaxContainers = %d, want 4", got.MaxContainers)
@@ -753,10 +704,10 @@ func TestPG_InstanceCRUD(t *testing.T) {
 
 // --- Named instance updates ---
 
-func TestPG_UpdateInstanceStatus(t *testing.T) {
-	s := testPostgresStore(t)
+func TestSQLite_UpdateInstanceStatus(t *testing.T) {
+	s := testSQLiteStore(t)
 	ctx := context.Background()
-	pgTestInstance(t, s)
+	sqliteTestInstance(t, s)
 
 	s.IncrementRunningContainers(ctx, "i-test123")
 
@@ -771,15 +722,12 @@ func TestPG_UpdateInstanceStatus(t *testing.T) {
 	if got.RunningContainers != 0 {
 		t.Errorf("RunningContainers = %d, want 0 (should zero on terminate)", got.RunningContainers)
 	}
-	if got.InstanceType != "m7g.xlarge" {
-		t.Errorf("InstanceType was clobbered: %q", got.InstanceType)
-	}
 }
 
-func TestPG_IncrementDecrementRunningContainers(t *testing.T) {
-	s := testPostgresStore(t)
+func TestSQLite_IncrementDecrementRunningContainers(t *testing.T) {
+	s := testSQLiteStore(t)
 	ctx := context.Background()
-	pgTestInstance(t, s)
+	sqliteTestInstance(t, s)
 
 	s.IncrementRunningContainers(ctx, "i-test123")
 	got, _ := s.GetInstance(ctx, "i-test123")
@@ -808,36 +756,10 @@ func TestPG_IncrementDecrementRunningContainers(t *testing.T) {
 	}
 }
 
-func TestPG_UpdateInstanceDetails(t *testing.T) {
-	s := testPostgresStore(t)
+func TestSQLite_ResetRunningContainers(t *testing.T) {
+	s := testSQLiteStore(t)
 	ctx := context.Background()
-	now := time.Now().UTC().Truncate(time.Microsecond)
-	inst := &models.Instance{
-		InstanceID:   "i-new",
-		InstanceType: "m7g.xlarge",
-		Status:       models.InstanceStatusPending,
-		CreatedAt:    now,
-		UpdatedAt:    now,
-	}
-	s.CreateInstance(ctx, inst)
-
-	if err := s.UpdateInstanceDetails(ctx, "i-new", "10.0.1.99", "us-west-2b"); err != nil {
-		t.Fatalf("UpdateInstanceDetails: %v", err)
-	}
-
-	got, _ := s.GetInstance(ctx, "i-new")
-	if got.PrivateIP != "10.0.1.99" {
-		t.Errorf("PrivateIP = %q, want 10.0.1.99", got.PrivateIP)
-	}
-	if got.AvailabilityZone != "us-west-2b" {
-		t.Errorf("AvailabilityZone = %q, want us-west-2b", got.AvailabilityZone)
-	}
-}
-
-func TestPG_ResetRunningContainers(t *testing.T) {
-	s := testPostgresStore(t)
-	ctx := context.Background()
-	inst := pgTestInstance(t, s)
+	inst := sqliteTestInstance(t, s)
 
 	s.IncrementRunningContainers(ctx, inst.InstanceID)
 	s.IncrementRunningContainers(ctx, inst.InstanceID)
@@ -854,8 +776,8 @@ func TestPG_ResetRunningContainers(t *testing.T) {
 
 // --- Review task ---
 
-func TestPG_ReviewTaskCRUD(t *testing.T) {
-	s := testPostgresStore(t)
+func TestSQLite_ReviewTaskCRUD(t *testing.T) {
+	s := testSQLiteStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 
@@ -888,13 +810,13 @@ func TestPG_ReviewTaskCRUD(t *testing.T) {
 	}
 }
 
-func TestPG_UpsertReading_Insert(t *testing.T) {
-	s := testPostgresStore(t)
+func TestSQLite_UpsertReading_Insert(t *testing.T) {
+	s := testSQLiteStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 
 	// Need a task for the FK.
-	task := pgTestTask(t, s)
+	task := sqliteTestTask(t, s)
 
 	embedding := make([]float32, 1536)
 	embedding[0] = 0.1
@@ -907,7 +829,7 @@ func TestPG_UpsertReading_Insert(t *testing.T) {
 		Title:          "Test Article",
 		TLDR:           "A short summary",
 		Tags:           []string{"go", "testing"},
-		Keywords:       []string{"tdd", "postgres"},
+		Keywords:       []string{"tdd", "sqlite"},
 		People:         []string{"Alice"},
 		Orgs:           []string{"Acme"},
 		NoveltyVerdict: "novel",
@@ -928,17 +850,17 @@ func TestPG_UpsertReading_Insert(t *testing.T) {
 	var (
 		gotID, gotTaskID, gotURL, gotTitle, gotTLDR string
 		gotNovelty, gotSummary                      string
-		gotTags, gotKeywords, gotPeople, gotOrgs    []string
-		gotConnections, gotRawOutput                []byte
+		gotTags, gotKeywords, gotPeople, gotOrgs    string
+		gotConnections, gotRawOutput                string
 		gotEmbedding                                string
-		gotCreatedAt                                time.Time
+		gotCreatedAt                                string
 	)
-	err := s.pool.QueryRow(ctx, `
+	err := s.db.QueryRowContext(ctx, `
 		SELECT id, task_id, url, title, tldr,
 		       tags, keywords, people, orgs,
 		       novelty_verdict, connections, summary, raw_output,
-		       embedding::text, created_at
-		FROM readings WHERE id = $1`, r.ID).Scan(
+		       embedding, created_at
+		FROM readings WHERE id = ?`, r.ID).Scan(
 		&gotID, &gotTaskID, &gotURL, &gotTitle, &gotTLDR,
 		&gotTags, &gotKeywords, &gotPeople, &gotOrgs,
 		&gotNovelty, &gotConnections, &gotSummary, &gotRawOutput,
@@ -969,19 +891,19 @@ func TestPG_UpsertReading_Insert(t *testing.T) {
 	if gotSummary != r.Summary {
 		t.Errorf("Summary = %q, want %q", gotSummary, r.Summary)
 	}
-	if len(gotTags) != len(r.Tags) || gotTags[0] != "go" || gotTags[1] != "testing" {
+	if gotTags != `["go","testing"]` {
 		t.Errorf("Tags = %v, want %v", gotTags, r.Tags)
 	}
-	if len(gotKeywords) != len(r.Keywords) || gotKeywords[0] != "tdd" {
+	if gotKeywords != `["tdd","sqlite"]` {
 		t.Errorf("Keywords = %v, want %v", gotKeywords, r.Keywords)
 	}
-	if len(gotPeople) != len(r.People) || gotPeople[0] != "Alice" {
+	if gotPeople != `["Alice"]` {
 		t.Errorf("People = %v, want %v", gotPeople, r.People)
 	}
-	if len(gotOrgs) != len(r.Orgs) || gotOrgs[0] != "Acme" {
+	if gotOrgs != `["Acme"]` {
 		t.Errorf("Orgs = %v, want %v", gotOrgs, r.Orgs)
 	}
-	if !gotCreatedAt.Equal(r.CreatedAt) {
+	if gotCreatedAt != timeString(r.CreatedAt) {
 		t.Errorf("CreatedAt = %v, want %v", gotCreatedAt, r.CreatedAt)
 	}
 	// Verify embedding is non-empty (starts with "[0.1,0.9,")
@@ -990,11 +912,11 @@ func TestPG_UpsertReading_Insert(t *testing.T) {
 	}
 }
 
-func TestPG_UpsertReading_Update(t *testing.T) {
-	s := testPostgresStore(t)
+func TestSQLite_UpsertReading_Update(t *testing.T) {
+	s := testSQLiteStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	task := pgTestTask(t, s)
+	task := sqliteTestTask(t, s)
 
 	embedding := make([]float32, 1536)
 	embedding[0] = 0.3
@@ -1045,7 +967,7 @@ func TestPG_UpsertReading_Update(t *testing.T) {
 
 	// Verify exactly one row for that URL.
 	var count int
-	if err := s.pool.QueryRow(ctx, "SELECT count(*) FROM readings WHERE url = $1", original.URL).Scan(&count); err != nil {
+	if err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM readings WHERE url = ?", original.URL).Scan(&count); err != nil {
 		t.Fatalf("count: %v", err)
 	}
 	if count != 1 {
@@ -1054,7 +976,7 @@ func TestPG_UpsertReading_Update(t *testing.T) {
 
 	// Verify the row has updated content but keeps the original ID.
 	var gotID, gotTitle, gotTLDR, gotNovelty string
-	err := s.pool.QueryRow(ctx, "SELECT id, title, tldr, novelty_verdict FROM readings WHERE url = $1", original.URL).
+	err := s.db.QueryRowContext(ctx, "SELECT id, title, tldr, novelty_verdict FROM readings WHERE url = ?", original.URL).
 		Scan(&gotID, &gotTitle, &gotTLDR, &gotNovelty)
 	if err != nil {
 		t.Fatalf("query after upsert-update: %v", err)
@@ -1073,11 +995,11 @@ func TestPG_UpsertReading_Update(t *testing.T) {
 	}
 }
 
-func TestPG_GetReadingByURL(t *testing.T) {
-	s := testPostgresStore(t)
+func TestSQLite_GetReadingByURL(t *testing.T) {
+	s := testSQLiteStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	task := pgTestTask(t, s)
+	task := sqliteTestTask(t, s)
 
 	embedding := make([]float32, 1536)
 	embedding[0] = 0.42
@@ -1131,11 +1053,11 @@ func TestPG_GetReadingByURL(t *testing.T) {
 	}
 }
 
-func TestPG_MatchReadings_SimilarityOrdering(t *testing.T) {
-	s := testPostgresStore(t)
+func TestSQLite_MatchReadings_SimilarityOrdering(t *testing.T) {
+	s := testSQLiteStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	task := pgTestTask(t, s)
+	task := sqliteTestTask(t, s)
 
 	// Create 3 readings with unit vectors along different dimensions.
 	// Reading A: dimension 0
@@ -1181,27 +1103,9 @@ func TestPG_MatchReadings_SimilarityOrdering(t *testing.T) {
 	query := makeEmbedding(0)
 	query[1] = 0.1 // slight component toward B
 
-	rows, err := s.pool.Query(ctx, "SELECT id, title, similarity FROM reader.match_readings($1::vector, $2)", pgvector.NewVector(query), 3)
+	results, err := s.FindSimilarReadings(ctx, query, 3)
 	if err != nil {
-		t.Fatalf("match_readings: %v", err)
-	}
-	defer rows.Close()
-
-	type result struct {
-		ID         string
-		Title      string
-		Similarity float64
-	}
-	var results []result
-	for rows.Next() {
-		var r result
-		if err := rows.Scan(&r.ID, &r.Title, &r.Similarity); err != nil {
-			t.Fatalf("scan: %v", err)
-		}
-		results = append(results, r)
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("rows: %v", err)
+		t.Fatalf("FindSimilarReadings: %v", err)
 	}
 
 	if len(results) != 3 {

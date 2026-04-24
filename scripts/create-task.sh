@@ -45,7 +45,7 @@ Options:
   --claude-md <text>      Extra CLAUDE.md content to inject
   --context <text>        Additional context for the prompt
   --self-review           Enable self-review after PR creation
-  --no-save-output        Skip saving agent output to S3
+  --no-save-output        Skip saving agent output artifacts
   --env <KEY=VALUE>       Environment variable (can repeat)
 USAGE
     exit 1

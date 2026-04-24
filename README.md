@@ -1,29 +1,27 @@
 # Backflow
 
-Agent orchestrator that runs coding agents (Claude Code or Codex) in ephemeral containers. POST a task (repo + prompt), get back a branch with commits and a PR. Three modes: EC2 spot instances, local Docker, or ECS Fargate.
+Agent orchestrator that runs coding agents (Claude Code or Codex) in ephemeral containers. POST a task (repo + prompt), get back a branch with commits and a PR. The current runtime is local Docker plus a local SQLite database.
 
-Also supports a `read` task mode that runs a dedicated reader image against a URL, summarizes it, embeds the TL;DR, and stores the result in a `readings` table for similarity search. See [CLAUDE.md](CLAUDE.md#reading-mode) and [docs/supabase-setup.md](docs/supabase-setup.md).
+Also supports a `read` task mode that runs a dedicated reader image against a URL, summarizes it, embeds the TL;DR, and stores the result in a `readings` table for similarity search. See [CLAUDE.md](CLAUDE.md#reading-mode).
 
 ## Prerequisites
 
 - Go 1.25+
 - Docker
-- PostgreSQL (or Supabase)
+- SQLite
 - `jq` (for helper scripts)
-- AWS CLI (for EC2/Fargate modes)
 
 ## Local Development
 
 ```bash
 cp .env.example .env
-# Edit .env — at minimum set BACKFLOW_DATABASE_URL, ANTHROPIC_API_KEY, and GITHUB_TOKEN
-# Set BACKFLOW_MODE=local for local Docker (no AWS needed)
+# Edit .env — at minimum set BACKFLOW_DATABASE_PATH, ANTHROPIC_API_KEY, and GITHUB_TOKEN
 ```
 
 ```bash
 make build          # Compile to bin/backflow
-make run            # Build + run (auto-sources .env, refreshes AWS creds if needed)
-make test           # Run all tests (no cache)
+make run            # Build + run (auto-sources .env)
+make test           # Run all tests with -tags nocontainers (no cache)
 make lint           # go vet
 make deps           # go mod tidy
 make clean          # Remove bin/
@@ -31,11 +29,11 @@ make clean          # Remove bin/
 
 Single test: `go test ./internal/store/ -run TestCreateTask -v`
 
-Tests use [testcontainers](https://testcontainers.com/) to spin up ephemeral PostgreSQL instances — Docker must be running.
+DB-backed tests use temporary SQLite files ending in `-test.db`.
 
 ```bash
 make test-blackbox      # End-to-end: builds fake agent, starts server + DB, runs happy-path
-make test-soak          # Resource leak detector (10 min; truncates tasks DB with confirmation)
+make test-soak          # Resource leak detector (10 min; starts dedicated server on sibling -soak.db)
 make test-fake-agent    # Unit tests for the fake agent image
 make test-schema        # Schemathesis fuzz tests against OpenAPI spec
 ```
@@ -170,9 +168,6 @@ curl -s http://localhost:8080/api/v1/health
 
 # Operational stats (PID, uptime, running tasks, pool metrics)
 curl -s http://localhost:8080/debug/stats | jq .
-
-# Shell into an agent EC2 instance
-aws ssm start-session --target i-0abc...
 ```
 
 ### Task Lifecycle
@@ -183,50 +178,33 @@ Interrupted/failed tasks can enter `recovering` -> re-queued as `pending`.
 
 ### Database
 
-PostgreSQL (hosted on Supabase, connected via session pooler). Migrations managed by [goose](https://github.com/pressly/goose) in `migrations/`. Auto-runs on startup. Configured via `BACKFLOW_DATABASE_URL`.
+SQLite. Migrations are managed by [goose](https://github.com/pressly/goose) in `migrations/`. Auto-runs on startup. Configured via `BACKFLOW_DATABASE_PATH`.
 
 ```bash
 make db-running                             # Show running tasks
 make db-pending                             # Show pending tasks
 make db-completed                           # Show completed tasks
 make db-failed                              # Show failed tasks
-psql "$BACKFLOW_DATABASE_URL" -c "\dt"      # List tables
-psql "$BACKFLOW_DATABASE_URL" -c "SELECT id, status, created_at FROM tasks ORDER BY created_at DESC LIMIT 10;"
+sqlite3 "$BACKFLOW_DATABASE_PATH" ".tables"
+sqlite3 "$BACKFLOW_DATABASE_PATH" "SELECT id, status, created_at FROM tasks ORDER BY created_at DESC LIMIT 10;"
 ```
 
 To add a migration: create a new file in `migrations/` (e.g. `002_add_column.sql`) with `-- +goose Up` and `-- +goose Down` sections.
 
-## Deployment
-
-### Agent Image
+## Docker Images
 
 ```bash
-make docker-agent-build-local    # Single-arch local build
-make docker-agent-deploy         # Multi-arch build + push to ECR
+make docker-agent-build-local    # Single-arch agent image
+make docker-agent-build          # Multi-arch buildx (amd64+arm64)
+
+make docker-reader-build-local   # Single-arch reader image (for task_mode=read)
+make docker-reader-build         # Multi-arch buildx
+
+make docker-server-build-local   # Single-arch server image
+make docker-server-build         # Multi-arch buildx
 ```
 
-### AWS Setup (EC2 Mode)
-
-```bash
-make setup-aws
-# Creates: ECR repo, IAM role, security group, launch template
-# Copy BACKFLOW_LAUNCH_TEMPLATE_ID from output into .env
-```
-
-### Fargate Mode
-
-Set `BACKFLOW_MODE=fargate`. No EC2 instances to manage.
-
-```bash
-# Required in .env
-BACKFLOW_MODE=fargate
-BACKFLOW_ECS_CLUSTER=backflow
-BACKFLOW_ECS_TASK_DEFINITION=backflow-agent
-BACKFLOW_ECS_SUBNETS=subnet-abc123,subnet-def456
-BACKFLOW_CLOUDWATCH_LOG_GROUP=/ecs/backflow
-```
-
-Prerequisites: ECS cluster with Fargate capacity providers, task definition with `awslogs` log driver, subnets with egress, IAM roles for image pull + log delivery.
+Backflow runs agent containers directly against the local Docker daemon; there is no remote orchestration runtime. A legacy `make teardown-aws` target exists to clean up AWS resources from older deploys — see `scripts/teardown-aws.sh` (dry-run by default; pass `ARGS="--yes"` to actually delete).
 
 ## Configuration
 
@@ -236,14 +214,12 @@ All config via environment variables or `.env` file. See `.env.example` for the 
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BACKFLOW_MODE` | `ec2` | `ec2`, `local`, or `fargate` |
 | `ANTHROPIC_API_KEY` | | Required |
 | `OPENAI_API_KEY` | | Required for `codex` harness; also required for reading-mode completion (embedding the TL;DR) |
 | `GITHUB_TOKEN` | | For cloning private repos and creating PRs |
 | `BACKFLOW_LISTEN_ADDR` | `:8080` | Server listen address |
-| `BACKFLOW_DATABASE_URL` | | PostgreSQL connection string (Supabase session pooler recommended) |
+| `BACKFLOW_DATABASE_PATH` | | SQLite database path |
 | `BACKFLOW_POLL_INTERVAL_SEC` | `5` | Orchestrator poll interval (seconds) |
-| `BACKFLOW_S3_BUCKET` | | S3 bucket for agent output and large prompt offload |
 
 ### Reading Mode
 
@@ -253,10 +229,7 @@ All config via environment variables or `.env` file. See `.env.example` for the 
 | `BACKFLOW_DEFAULT_READ_MAX_BUDGET` | Budget cap for reading tasks |
 | `BACKFLOW_DEFAULT_READ_MAX_RUNTIME_SEC` | Runtime cap for reading tasks |
 | `BACKFLOW_DEFAULT_READ_MAX_TURNS` | Max turns for reading tasks |
-| `SUPABASE_URL` | Supabase project URL passed to reader containers |
-| `SUPABASE_ANON_KEY` | Supabase publishable key (`sb_publishable_...`) passed to reader containers for PostgREST calls |
-
-See [docs/supabase-setup.md](docs/supabase-setup.md) for the `readings` schema, `reader` PostgREST schema, and key model.
+| `BACKFLOW_INTERNAL_API_BASE_URL` | Optional override for the Backflow API base URL that reader containers use for duplicate/similarity lookups |
 
 ### Agent Defaults
 
@@ -278,31 +251,6 @@ Defaults are set in `internal/config/config.go` and can be overridden via env va
 | `BACKFLOW_MAX_USER_RETRIES` | Max user-initiated retries per task (see config for default) |
 | `BACKFLOW_CONTAINER_CPUS` | CPU cores per container |
 | `BACKFLOW_CONTAINER_MEMORY_GB` | Memory (GB) per container |
-
-### EC2 Mode
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `AWS_REGION` | `us-east-1` | AWS region |
-| `BACKFLOW_INSTANCE_TYPE` | `m7g.xlarge` | EC2 instance type |
-| `BACKFLOW_LAUNCH_TEMPLATE_ID` | | From `make setup-aws` |
-| `BACKFLOW_MAX_INSTANCES` | `5` | Max EC2 instances |
-| `BACKFLOW_CONTAINERS_PER_INSTANCE` | `1` | Containers per instance |
-
-### Fargate Mode
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `BACKFLOW_ECS_CLUSTER` | | ECS cluster name (required) |
-| `BACKFLOW_ECS_TASK_DEFINITION` | | Task definition ARN or family (required) |
-| `BACKFLOW_ECS_SUBNETS` | | Comma-separated subnet IDs (required) |
-| `BACKFLOW_CLOUDWATCH_LOG_GROUP` | | CloudWatch log group (required) |
-| `BACKFLOW_ECS_SECURITY_GROUPS` | | Comma-separated security group IDs |
-| `BACKFLOW_ECS_LAUNCH_TYPE` | `FARGATE_SPOT` | `FARGATE` or `FARGATE_SPOT` |
-| `BACKFLOW_ECS_CONTAINER_NAME` | `backflow-agent` | Container name in task definition |
-| `BACKFLOW_ECS_LOG_STREAM_PREFIX` | `ecs` | CloudWatch log stream prefix |
-| `BACKFLOW_ECS_ASSIGN_PUBLIC_IP` | `true` | `false` for private subnets with NAT |
-| `BACKFLOW_MAX_CONCURRENT_TASKS` | `5` | Max concurrent Fargate tasks |
 
 ### Webhooks
 

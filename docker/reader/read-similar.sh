@@ -10,12 +10,8 @@ if [ -z "${OPENAI_API_KEY:-}" ]; then
     echo "read-similar: OPENAI_API_KEY is not set" >&2
     exit 1
 fi
-if [ -z "${SUPABASE_URL:-}" ]; then
-    echo "read-similar: SUPABASE_URL is not set" >&2
-    exit 1
-fi
-if [ -z "${SUPABASE_ANON_KEY:-}" ]; then
-    echo "read-similar: SUPABASE_ANON_KEY is not set" >&2
+if [ -z "${BACKFLOW_API_BASE_URL:-}" ]; then
+    echo "read-similar: BACKFLOW_API_BASE_URL is not set" >&2
     exit 1
 fi
 
@@ -40,19 +36,23 @@ EMBEDDING=$(printf '%s' "$INPUT" | "$DIR/read-embed.sh") || {
 REQUEST_BODY=$(jq -n --argjson embedding "$EMBEDDING" --argjson count "$MATCH_COUNT" \
     '{query_embedding: $embedding, match_count: $count}')
 
+AUTH_ARGS=()
+if [ -n "${BACKFLOW_API_KEY:-}" ]; then
+    AUTH_ARGS=(-H "Authorization: Bearer ${BACKFLOW_API_KEY}")
+fi
+
 RESPONSE=$(curl -fsS \
-    -H "apikey: ${SUPABASE_ANON_KEY}" \
+    "${AUTH_ARGS[@]}" \
     -H "Content-Type: application/json" \
-    -H "Content-Profile: reader" \
     -d "$REQUEST_BODY" \
-    "${SUPABASE_URL}/rest/v1/rpc/match_readings") || {
-    echo "read-similar: Supabase match_readings RPC failed" >&2
+    "${BACKFLOW_API_BASE_URL}/api/v1/readings/similar") || {
+    echo "read-similar: Backflow similarity request failed" >&2
     exit 1
 }
 
-if ! printf '%s' "$RESPONSE" | jq -e 'type == "array"' >/dev/null 2>&1; then
-    echo "read-similar: unexpected response from Supabase: $RESPONSE" >&2
+if ! printf '%s' "$RESPONSE" | jq -e '.data | type == "array"' >/dev/null 2>&1; then
+    echo "read-similar: unexpected response from Backflow API: $RESPONSE" >&2
     exit 1
 fi
 
-printf '%s\n' "$RESPONSE" | jq -c .
+printf '%s\n' "$RESPONSE" | jq -c '.data'

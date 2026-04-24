@@ -86,7 +86,7 @@ docker-server-build:
 docker-server-build-local:
 	$(DOCKER) build -t backflow-server -f docker/server/Dockerfile .
 
-DB_QUERY = @$(ENV); psql "$$BACKFLOW_DATABASE_URL" -c
+DB_QUERY = @$(ENV); sqlite3 -json "$$BACKFLOW_DATABASE_PATH"
 
 db-pending:
 	$(DB_QUERY) "SELECT id, repo_url, branch, harness, created_at FROM tasks WHERE status = 'pending' ORDER BY created_at ASC;"

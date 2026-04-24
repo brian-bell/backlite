@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// Reading represents a structured reading result stored in Postgres.
+// Reading represents a structured reading result stored in SQLite.
 type Reading struct {
 	ID             string          `json:"id"`
 	TaskID         string          `json:"task_id"`

@@ -7,6 +7,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 
+	"github.com/brian-bell/backlite/internal/backup"
 	"github.com/brian-bell/backlite/internal/config"
 	"github.com/brian-bell/backlite/internal/embeddings"
 	"github.com/brian-bell/backlite/internal/models"
@@ -51,6 +52,7 @@ type Orchestrator struct {
 	outputs   Writer
 	embedder  embeddings.Embedder
 	lifecycle *lifecycle.Coordinator
+	backups   backupScheduler
 
 	mu              sync.Mutex
 	running         int
@@ -58,14 +60,24 @@ type Orchestrator struct {
 	inspectFailures map[string]int // task ID -> consecutive inspect failure count
 }
 
+type backupScheduler interface {
+	MaybeSchedule(context.Context)
+}
+
 func New(s store.Store, cfg *config.Config, bus *notify.EventBus, runner Runner, outputs Writer, embedder embeddings.Embedder) *Orchestrator {
 	o := &Orchestrator{
-		store:           s,
-		config:          cfg,
-		bus:             bus,
-		docker:          runner,
-		outputs:         outputs,
-		embedder:        embedder,
+		store:    s,
+		config:   cfg,
+		bus:      bus,
+		docker:   runner,
+		outputs:  outputs,
+		embedder: embedder,
+		backups: backup.New(backup.Config{
+			Enabled:      cfg.LocalBackupEnabled,
+			DatabasePath: cfg.DatabasePath,
+			Directory:    cfg.LocalBackupDir,
+			Interval:     cfg.LocalBackupInterval,
+		}),
 		stopCh:          make(chan struct{}),
 		inspectFailures: make(map[string]int),
 	}
@@ -146,6 +158,9 @@ func (o *Orchestrator) tick(ctx context.Context) {
 	o.monitorRecovering(ctx)
 	o.monitorRunning(ctx)
 	o.dispatchPending(ctx)
+	if o.backups != nil {
+		o.backups.MaybeSchedule(ctx)
+	}
 }
 
 // --- Shared helpers used across dispatch, monitor, and recovery ---

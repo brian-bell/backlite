@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -73,6 +74,11 @@ type Config struct {
 	// Database
 	DatabasePath string
 
+	// Local SQLite backups
+	LocalBackupEnabled  bool
+	LocalBackupDir      string
+	LocalBackupInterval time.Duration
+
 	// Retry
 	MaxUserRetries int
 
@@ -117,6 +123,8 @@ func Load() (*Config, error) {
 		WebhookURL:            os.Getenv("BACKFLOW_WEBHOOK_URL"),
 		LogFile:               os.Getenv("BACKFLOW_LOG_FILE"),
 		DatabasePath:          envOr("BACKFLOW_DATABASE_PATH", "./backlite.db"),
+		LocalBackupDir:        envOr("BACKFLOW_LOCAL_BACKUP_DIR", defaultLocalBackupDir()),
+		LocalBackupInterval:   time.Duration(envInt("BACKFLOW_LOCAL_BACKUP_INTERVAL_SEC", 86400)) * time.Second,
 		MaxUserRetries:        envInt("BACKFLOW_MAX_USER_RETRIES", 2),
 		PollInterval:          time.Duration(envInt("BACKFLOW_POLL_INTERVAL_SEC", 5)) * time.Second,
 	}
@@ -124,8 +132,10 @@ func Load() (*Config, error) {
 	c.DefaultCreatePR = envBool("BACKFLOW_DEFAULT_CREATE_PR", true)
 	c.DefaultSelfReview = envBool("BACKFLOW_DEFAULT_SELF_REVIEW", false)
 	c.DefaultSaveOutput = envBool("BACKFLOW_DEFAULT_SAVE_AGENT_OUTPUT", true)
+	c.LocalBackupEnabled = envBool("BACKFLOW_LOCAL_BACKUP_ENABLED", true)
 
 	c.WebhookEvents = envCSV("BACKFLOW_WEBHOOK_EVENTS")
+	c.LocalBackupDir = expandHomeDir(c.LocalBackupDir)
 
 	if c.AnthropicAPIKey == "" {
 		return nil, fmt.Errorf("ANTHROPIC_API_KEY is required")
@@ -137,6 +147,14 @@ func Load() (*Config, error) {
 
 	if c.DatabasePath == "" {
 		return nil, fmt.Errorf("BACKFLOW_DATABASE_PATH is required")
+	}
+	if c.LocalBackupEnabled {
+		if c.LocalBackupDir == "" {
+			return nil, fmt.Errorf("BACKFLOW_LOCAL_BACKUP_DIR is required when local backups are enabled")
+		}
+		if c.LocalBackupInterval <= 0 {
+			return nil, fmt.Errorf("BACKFLOW_LOCAL_BACKUP_INTERVAL_SEC must be > 0 when local backups are enabled")
+		}
 	}
 
 	if c.ContainerCPUs < 1 {
@@ -229,4 +247,32 @@ func envCSV(key string) []string {
 		}
 	}
 	return values
+}
+
+func defaultLocalBackupDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "./backlite-backups"
+	}
+	return filepath.Join(home, "backlite-backups")
+}
+
+func expandHomeDir(path string) string {
+	if path == "" {
+		return path
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return path
+	}
+
+	switch {
+	case path == "~":
+		return home
+	case strings.HasPrefix(path, "~/"), strings.HasPrefix(path, "~\\"):
+		return filepath.Join(home, path[2:])
+	default:
+		return path
+	}
 }

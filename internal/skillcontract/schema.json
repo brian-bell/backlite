@@ -1,0 +1,101 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://backlite.dev/schemas/skill-status.json",
+  "title": "Backlite Skill Agent status.json",
+  "description": "Status payload written by a skill-based agent at /home/agent/workspace/status.json after the harness exits. The orchestrator reads this file to drive task lifecycle transitions and webhook events.",
+  "type": "object",
+  "required": ["complete", "needs_input", "task_mode"],
+  "additionalProperties": true,
+  "properties": {
+    "exit_code": {
+      "type": "integer",
+      "description": "Effective exit code reported by the agent. 0 = success."
+    },
+    "complete": {
+      "type": "boolean",
+      "description": "True when the agent considers the task done. Overrides exit_code in the orchestrator's success determination."
+    },
+    "needs_input": {
+      "type": "boolean",
+      "description": "True when the agent stopped because it needs more input from the user."
+    },
+    "question": {
+      "type": "string",
+      "description": "Free-form prompt for the user when needs_input is true."
+    },
+    "error": {
+      "type": "string",
+      "description": "Diagnostic error message when the agent failed (complete=false, needs_input=false)."
+    },
+    "pr_url": {
+      "type": "string",
+      "description": "URL of the pull request created by a code-mode task."
+    },
+    "cost_usd": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Dollar cost spent on the harness run. Notarized by the entrypoint from the harness stream-json output."
+    },
+    "elapsed_time_sec": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "repo_url": {
+      "type": "string",
+      "description": "GitHub repository URL the agent identified from the prompt."
+    },
+    "target_branch": {
+      "type": "string"
+    },
+    "task_mode": {
+      "type": "string",
+      "enum": ["code", "review", "read", "auto"]
+    },
+    "url": {
+      "type": "string",
+      "description": "Read mode: the URL that was summarized."
+    },
+    "title": {
+      "type": "string",
+      "description": "Read mode: page title."
+    },
+    "tldr": {
+      "type": "string",
+      "description": "Read mode: short summary (<= 280 chars by convention)."
+    },
+    "tags": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "keywords": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "people": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "orgs": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "novelty_verdict": {
+      "type": "string",
+      "enum": ["", "novel", "extends_existing", "duplicate"]
+    },
+    "connections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["reading_id", "reason"],
+        "properties": {
+          "reading_id": {"type": "string"},
+          "reason": {"type": "string"}
+        }
+      }
+    },
+    "summary_markdown": {
+      "type": "string"
+    }
+  }
+}

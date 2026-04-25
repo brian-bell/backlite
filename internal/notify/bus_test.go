@@ -154,6 +154,26 @@ func TestNewEvent_CopiesTaskMode(t *testing.T) {
 	}
 }
 
+func TestNewEvent_CopiesParentTaskID(t *testing.T) {
+	parentID := "bf_PARENT0001"
+	task := &models.Task{ID: "bf_CHILD00001", ParentTaskID: &parentID}
+	event := NewEvent(EventTaskCreated, task)
+	if event.ParentTaskID == nil {
+		t.Fatalf("ParentTaskID = nil, want %q", parentID)
+	}
+	if *event.ParentTaskID != parentID {
+		t.Errorf("ParentTaskID = %q, want %q", *event.ParentTaskID, parentID)
+	}
+}
+
+func TestNewEvent_OmitsParentTaskIDWhenAbsent(t *testing.T) {
+	task := &models.Task{ID: "bf_solo"}
+	event := NewEvent(EventTaskCreated, task)
+	if event.ParentTaskID != nil {
+		t.Errorf("ParentTaskID = %v, want nil", event.ParentTaskID)
+	}
+}
+
 func TestNewEvent_WithReading_PopulatesFields(t *testing.T) {
 	task := &models.Task{ID: "bf_1", TaskMode: models.TaskModeRead}
 	tags := []string{"ai", "systems"}

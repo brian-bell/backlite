@@ -29,6 +29,7 @@ type Event struct {
 	Type              EventType `json:"event"`
 	TaskID            string    `json:"task_id"`
 	TaskMode          string    `json:"task_mode,omitempty"`
+	ParentTaskID      *string   `json:"parent_task_id,omitempty"`
 	RepoURL           string    `json:"repo_url,omitempty"`
 	Prompt            string    `json:"prompt,omitempty"`
 	Message           string    `json:"message,omitempty"`

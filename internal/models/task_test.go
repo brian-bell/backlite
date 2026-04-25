@@ -234,6 +234,35 @@ func TestCreateTaskRequestValidation(t *testing.T) {
 	}
 }
 
+func TestTaskParentTaskIDJSON(t *testing.T) {
+	parentID := "bf_PARENT0001"
+	task := Task{ID: "bf_CHILD00001", ParentTaskID: &parentID}
+	data, err := json.Marshal(task)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if !strings.Contains(string(data), `"parent_task_id":"bf_PARENT0001"`) {
+		t.Errorf("missing parent_task_id in marshaled task: %s", data)
+	}
+
+	var got Task
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got.ParentTaskID == nil || *got.ParentTaskID != parentID {
+		t.Errorf("ParentTaskID round-trip = %v, want %q", got.ParentTaskID, parentID)
+	}
+
+	// Without a parent, parent_task_id is omitted from JSON.
+	noParent, err := json.Marshal(Task{ID: "bf_solo"})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(string(noParent), "parent_task_id") {
+		t.Errorf("parent_task_id should be omitted when nil, got: %s", noParent)
+	}
+}
+
 func TestTaskAgentImageJSON(t *testing.T) {
 	task := Task{ID: "bf_test", AgentImage: "backlite-reader:v1"}
 	data, err := json.Marshal(task)

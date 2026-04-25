@@ -60,6 +60,7 @@ type Task struct {
 	MaxTurns        int               `json:"max_turns,omitempty"`
 	CreatePR        bool              `json:"create_pr"`
 	SelfReview      bool              `json:"self_review"`
+	ParentTaskID    *string           `json:"parent_task_id,omitempty"`
 	PRTitle         string            `json:"pr_title,omitempty"`
 	PRBody          string            `json:"pr_body,omitempty"`
 	PRURL           string            `json:"pr_url,omitempty"`

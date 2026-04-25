@@ -710,6 +710,11 @@ components:
         self_review:
           type: boolean
           example: false
+        parent_task_id:
+          type: string
+          nullable: true
+          description: ID of the parent task that triggered creation of this chained task. Null for user-submitted tasks.
+          example: "bf_01ARZ3NDEKTSV4RRFFQ69G5FAV"
         pr_title:
           type: string
           example: "Fix authentication bug"

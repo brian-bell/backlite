@@ -197,6 +197,60 @@ func TestSQLite_CreateTask_PersistsForce(t *testing.T) {
 	}
 }
 
+func TestSQLite_CreateTask_PersistsParentTaskID(t *testing.T) {
+	s := testSQLiteStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	parent := &models.Task{
+		ID:        "bf_PARENT0001",
+		Status:    models.TaskStatusPending,
+		TaskMode:  models.TaskModeCode,
+		Harness:   models.HarnessClaudeCode,
+		Prompt:    "Fix the bug",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := s.CreateTask(ctx, parent); err != nil {
+		t.Fatalf("CreateTask parent: %v", err)
+	}
+
+	parentID := parent.ID
+	child := &models.Task{
+		ID:           "bf_CHILD00001",
+		Status:       models.TaskStatusPending,
+		TaskMode:     models.TaskModeReview,
+		Harness:      models.HarnessClaudeCode,
+		Prompt:       "Review the PR",
+		ParentTaskID: &parentID,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	if err := s.CreateTask(ctx, child); err != nil {
+		t.Fatalf("CreateTask child: %v", err)
+	}
+
+	got, err := s.GetTask(ctx, "bf_CHILD00001")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.ParentTaskID == nil {
+		t.Fatalf("ParentTaskID = nil, want %q", parentID)
+	}
+	if *got.ParentTaskID != parentID {
+		t.Errorf("ParentTaskID = %q, want %q", *got.ParentTaskID, parentID)
+	}
+
+	// Sibling task without a parent has nil ParentTaskID.
+	gotParent, err := s.GetTask(ctx, "bf_PARENT0001")
+	if err != nil {
+		t.Fatalf("GetTask parent: %v", err)
+	}
+	if gotParent.ParentTaskID != nil {
+		t.Errorf("ParentTaskID = %v, want nil", gotParent.ParentTaskID)
+	}
+}
+
 func TestSQLite_APIKeyRoundTrip(t *testing.T) {
 	s := testSQLiteStore(t)
 	ctx := context.Background()

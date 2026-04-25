@@ -129,3 +129,58 @@ func TestResolve_OverridesPriorAgentImage(t *testing.T) {
 		t.Errorf("Resolve = %q, want %q (router takes precedence over creation default)", got, "skill-agent")
 	}
 }
+
+// TestDescribe_SummarizesRouting pins the human-readable startup-log summary
+// for each combination of configured images. Operators read this in the
+// orchestrator's startup log to confirm which image their tasks will land on.
+func TestDescribe_SummarizesRouting(t *testing.T) {
+	const (
+		agentImg  = "agent:v1"
+		readerImg = "reader:v1"
+		skillImg  = "skill:v1"
+	)
+	tests := []struct {
+		name      string
+		agentImg  string
+		readerImg string
+		skillImg  string
+		want      string
+	}{
+		{
+			name:     "agent only",
+			agentImg: agentImg,
+			want:     "default → agent:v1",
+		},
+		{
+			name:      "agent + reader",
+			agentImg:  agentImg,
+			readerImg: readerImg,
+			want:      "read → reader:v1; default → agent:v1",
+		},
+		{
+			name:     "agent + skill",
+			agentImg: agentImg,
+			skillImg: skillImg,
+			want:     "claude_code → skill:v1; default → agent:v1",
+		},
+		{
+			name:      "agent + reader + skill",
+			agentImg:  agentImg,
+			readerImg: readerImg,
+			skillImg:  skillImg,
+			want:      "claude_code → skill:v1; codex+read → reader:v1; default → agent:v1",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{
+				AgentImage:      tt.agentImg,
+				ReaderImage:     tt.readerImg,
+				SkillAgentImage: tt.skillImg,
+			}
+			if got := Describe(cfg); got != tt.want {
+				t.Errorf("Describe() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

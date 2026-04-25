@@ -14,6 +14,9 @@
 package imagerouter
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/brian-bell/backlite/internal/config"
 	"github.com/brian-bell/backlite/internal/models"
 )
@@ -39,4 +42,25 @@ func CanRunRead(task *models.Task, cfg *config.Config) bool {
 		return true
 	}
 	return cfg.SkillAgentImage != "" && task.Harness == models.HarnessClaudeCode
+}
+
+// Describe returns a one-line human-readable summary of the routing
+// precedence resolved from cfg, suitable for emitting at orchestrator
+// startup so operators can confirm which image each task type will land on.
+func Describe(cfg *config.Config) string {
+	parts := make([]string, 0, 3)
+	if cfg.SkillAgentImage != "" {
+		parts = append(parts, fmt.Sprintf("claude_code → %s", cfg.SkillAgentImage))
+	}
+	if cfg.ReaderImage != "" {
+		label := "read"
+		if cfg.SkillAgentImage != "" {
+			// claude_code reads route to the skill image above; only codex
+			// read tasks fall through to the reader image.
+			label = "codex+read"
+		}
+		parts = append(parts, fmt.Sprintf("%s → %s", label, cfg.ReaderImage))
+	}
+	parts = append(parts, fmt.Sprintf("default → %s", cfg.AgentImage))
+	return strings.Join(parts, "; ")
 }

@@ -253,7 +253,7 @@ Defaults are set in `internal/config/config.go` and can be overridden via env va
 | `BACKFLOW_DEFAULT_SELF_REVIEW` | Self-review by default |
 | `BACKFLOW_DEFAULT_SAVE_AGENT_OUTPUT` | Save agent output by default |
 | `BACKFLOW_AGENT_IMAGE` | Docker image for agent containers (see config for default) |
-| `BACKFLOW_SKILL_AGENT_IMAGE` | Optional opt-in: when set, routes `claude_code` tasks in `code` or `auto` mode to a skill-bundle image instead of `BACKFLOW_AGENT_IMAGE`. See [CLAUDE.md](CLAUDE.md#skill-based-agent-image-opt-in). |
+| `BACKFLOW_SKILL_AGENT_IMAGE` | Optional opt-in: when set, routes every `claude_code` task to a skill-bundle image instead of `BACKFLOW_AGENT_IMAGE` / `BACKFLOW_READER_IMAGE`. Codex tasks are unaffected. See [CLAUDE.md](CLAUDE.md#skill-based-agent-image-opt-in). |
 | `BACKFLOW_MAX_USER_RETRIES` | Max user-initiated retries per task (see config for default) |
 | `BACKFLOW_CONTAINER_CPUS` | CPU cores per container |
 | `BACKFLOW_CONTAINER_MEMORY_GB` | Memory (GB) per container |

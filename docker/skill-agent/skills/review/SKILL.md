@@ -27,16 +27,15 @@ prompt, read it carefully, and post one substantive review via `gh pr review`.
    `error: "could not find a GitHub PR URL in the prompt"`, emit
    `BACKFLOW_STATUS_JSON:` with the same payload, and exit. Do **not** retry.
 
-2. **Capture a baseline review count.** Before you do anything else, record
-   the count of reviews and comments already on the PR:
+2. **Capture a baseline timestamp.** Before you do anything else, record an
+   ISO-8601 UTC timestamp:
 
    ```
    START_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-   REVIEWS_BEFORE=$(gh pr view "$PR_URL" --json reviews --jq '.reviews | length')
-   COMMENTS_BEFORE=$(gh pr view "$PR_URL" --json comments --jq '.comments | length')
    ```
 
-   You'll use this at the end to confirm your review actually landed.
+   You'll use it in step 6 to filter for a review/comment you posted after
+   this point.
 
 3. **Read the PR.** Use `gh` to fetch metadata and the diff:
 

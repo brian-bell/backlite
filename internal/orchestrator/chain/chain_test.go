@@ -97,6 +97,20 @@ func TestPlan_TableDriven(t *testing.T) {
 			wantNil: true,
 		},
 		{
+			// Auto should have been resolved to code/review by the agent's
+			// prep stage before completion. An auto here means the agent
+			// didn't report a resolved mode — don't speculate, don't chain.
+			name: "no chain: parent mode still auto (unresolved)",
+			parent: models.Task{
+				ID:         "bf_AUTO00001",
+				Status:     models.TaskStatusCompleted,
+				TaskMode:   models.TaskModeAuto,
+				SelfReview: true,
+				PRURL:      "https://github.com/owner/repo/pull/42",
+			},
+			wantNil: true,
+		},
+		{
 			name: "no chain: parent already has parent_task_id (no recursion)",
 			parent: models.Task{
 				ID:           "bf_NESTED001",
@@ -138,6 +152,8 @@ func TestPlan_ChildShape(t *testing.T) {
 		SelfReview: true,
 		PRURL:      "https://github.com/owner/repo/pull/42",
 		Prompt:     "Refactor the auth flow.",
+		RepoURL:    "https://github.com/owner/repo",
+		Branch:     "feature-branch",
 		// Parent has a high budget; child should not inherit it.
 		MaxBudgetUSD: 50.0,
 		Model:        "claude-opus-4-7",
@@ -185,6 +201,23 @@ func TestPlan_ChildShape(t *testing.T) {
 	}
 	if child.PRURL != "" {
 		t.Errorf("child PRURL = %q, want empty", child.PRURL)
+	}
+	if child.RepoURL != parent.RepoURL {
+		t.Errorf("child RepoURL = %q, want %q (inherited)", child.RepoURL, parent.RepoURL)
+	}
+	if child.Branch != parent.Branch {
+		t.Errorf("child Branch = %q, want %q (inherited)", child.Branch, parent.Branch)
+	}
+	// MaxRuntimeSec / MaxTurns / AgentImage stay zero — caller fills from
+	// review-mode defaults before persisting.
+	if child.MaxRuntimeSec != 0 {
+		t.Errorf("child MaxRuntimeSec = %d, want 0 (caller fills from defaults)", child.MaxRuntimeSec)
+	}
+	if child.MaxTurns != 0 {
+		t.Errorf("child MaxTurns = %d, want 0 (caller fills from defaults)", child.MaxTurns)
+	}
+	if child.AgentImage != "" {
+		t.Errorf("child AgentImage = %q, want empty (caller fills from defaults)", child.AgentImage)
 	}
 }
 

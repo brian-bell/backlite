@@ -201,7 +201,7 @@ func TestMonitorRecovering_ContainerExited(t *testing.T) {
 	o.running = 1
 
 	task, _ := s.GetTask(context.Background(), "bf_exited")
-	status := ContainerStatus{Done: true, ExitCode: 0}
+	status := ContainerStatus{Done: true, Complete: true, ExitCode: 0}
 	o.handleCompletion(context.Background(), task, status)
 	bus.Close()
 

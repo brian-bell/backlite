@@ -176,6 +176,7 @@ func TestHandleCompletion_Success(t *testing.T) {
 	task, _ := s.GetTask(context.Background(), "bf_ok")
 	o.handleCompletion(context.Background(), task, ContainerStatus{
 		Done:     true,
+		Complete: true,
 		ExitCode: 0,
 		PRURL:    "https://github.com/test/repo/pull/1",
 	})
@@ -226,6 +227,7 @@ func TestHandleCompletion_SelfReview_ChainsReviewTask(t *testing.T) {
 	task, _ := s.GetTask(context.Background(), "bf_selfrev")
 	o.handleCompletion(context.Background(), task, ContainerStatus{
 		Done:     true,
+		Complete: true,
 		ExitCode: 0,
 		PRURL:    "https://github.com/test/repo/pull/77",
 	})
@@ -299,6 +301,7 @@ func TestHandleCompletion_SelfReview_NoPR_NoChain(t *testing.T) {
 	task, _ := s.GetTask(context.Background(), "bf_nopr")
 	o.handleCompletion(context.Background(), task, ContainerStatus{
 		Done:     true,
+		Complete: true,
 		ExitCode: 0,
 		PRURL:    "",
 	})
@@ -354,6 +357,49 @@ func TestHandleCompletion_CompleteFlagOverridesExitCode(t *testing.T) {
 	types := n.eventTypes()
 	if len(types) != 1 || types[0] != notify.EventTaskCompleted {
 		t.Errorf("expected [task.completed], got %v", types)
+	}
+}
+
+// TestHandleCompletion_AgentReportedFailureExit0 pins that an agent reporting
+// complete=false with an error must mark the task failed even when the
+// container exits 0. Without this, skill-authored failure branches (no repo
+// URL, mode stubs, etc.) would silently be recorded as success whenever the
+// underlying harness happened to exit 0.
+func TestHandleCompletion_AgentReportedFailureExit0(t *testing.T) {
+	s := newMockStore()
+	now := time.Now().UTC()
+	s.CreateTask(context.Background(), &models.Task{
+		ID:          "bf_skill_fail",
+		Status:      models.TaskStatusRunning,
+		RepoURL:     "https://github.com/test/repo",
+		Prompt:      "do something",
+		ContainerID: "cont1",
+		StartedAt:   &now,
+	})
+
+	bus, n := newTestBus()
+	o := newTestOrchestrator(s, bus)
+	o.running = 1
+
+	task, _ := s.GetTask(context.Background(), "bf_skill_fail")
+	o.handleCompletion(context.Background(), task, ContainerStatus{
+		Done:     true,
+		Complete: false,
+		ExitCode: 0,
+		Error:    "no repo URL in prompt",
+	})
+	bus.Close()
+
+	task, _ = s.GetTask(context.Background(), "bf_skill_fail")
+	if task.Status != models.TaskStatusFailed {
+		t.Errorf("status = %q, want failed", task.Status)
+	}
+	if task.Error != "no repo URL in prompt" {
+		t.Errorf("error = %q, want 'no repo URL in prompt'", task.Error)
+	}
+	types := n.eventTypes()
+	if len(types) != 1 || types[0] != notify.EventTaskFailed {
+		t.Errorf("expected [task.failed], got %v", types)
 	}
 }
 
@@ -973,6 +1019,11 @@ func TestKillTask(t *testing.T) {
 	}
 }
 
+// TestKillTask_CompleteTaskError pins that a write failure during killTask
+// keeps the slot held and suppresses the event. The DB row stays running, so
+// the next monitor tick will reprocess the (now-stopped) container and try
+// Complete again. Releasing the slot or emitting here would lie about a
+// terminal state we never persisted.
 func TestKillTask_CompleteTaskError(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
@@ -997,15 +1048,11 @@ func TestKillTask_CompleteTaskError(t *testing.T) {
 	o.killTask(context.Background(), task, "exceeded max runtime")
 	bus.Close()
 
-	// releaseSlot should still run.
-	if o.running != 0 {
-		t.Errorf("running = %d, want 0", o.running)
+	if o.running != 1 {
+		t.Errorf("running = %d, want 1 (slot must stay held when DB write failed)", o.running)
 	}
-
-	// Event should still be emitted.
-	evTypes := n.eventTypes()
-	if len(evTypes) != 1 || evTypes[0] != notify.EventTaskFailed {
-		t.Errorf("expected [task.failed], got %v", evTypes)
+	if evTypes := n.eventTypes(); len(evTypes) != 0 {
+		t.Errorf("events = %v, want none on write failure", evTypes)
 	}
 }
 
@@ -1125,7 +1172,7 @@ func TestMonitorRunning_Completed(t *testing.T) {
 	bus, n := newTestBus()
 	mock := &mockDockerManager{
 		inspectResults: map[string]ContainerStatus{
-			"cont1": {Done: true, ExitCode: 0, PRURL: "https://github.com/test/repo/pull/42"},
+			"cont1": {Done: true, Complete: true, ExitCode: 0, PRURL: "https://github.com/test/repo/pull/42"},
 		},
 	}
 	o := newTestOrchestrator(s, bus, withDocker(mock))
@@ -1623,6 +1670,11 @@ func TestMonitorCancelled_ClearAssignmentError(t *testing.T) {
 	}
 }
 
+// TestHandleCompletion_CompleteTaskError pins that a CompleteTask write
+// failure keeps the slot held and suppresses task.completed. The container
+// has already exited and the DB row is still running, so the next monitor
+// tick reprocesses the container and retries — emitting here would let the
+// next tick double-emit task.completed.
 func TestHandleCompletion_CompleteTaskError(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
@@ -1644,15 +1696,11 @@ func TestHandleCompletion_CompleteTaskError(t *testing.T) {
 	o.handleCompletion(context.Background(), task, status)
 	bus.Close()
 
-	// releaseSlot should still run despite CompleteTask error
-	if o.running != 0 {
-		t.Errorf("running = %d, want 0 (releaseSlot should still run)", o.running)
+	if o.running != 1 {
+		t.Errorf("running = %d, want 1 (slot stays held on write failure)", o.running)
 	}
-
-	// Event should still be emitted
-	types := notifier.eventTypes()
-	if len(types) != 1 || types[0] != notify.EventTaskCompleted {
-		t.Errorf("expected [task.completed], got %v", types)
+	if types := notifier.eventTypes(); len(types) != 0 {
+		t.Errorf("events = %v, want none on write failure", types)
 	}
 }
 

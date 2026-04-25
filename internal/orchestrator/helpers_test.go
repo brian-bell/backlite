@@ -113,12 +113,13 @@ func (s *mockStore) AssignTask(_ context.Context, id string) error {
 	return nil
 }
 
-func (s *mockStore) StartTask(_ context.Context, id string, containerID string) error {
+func (s *mockStore) StartTask(_ context.Context, id string, containerID string, agentImage string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if t, ok := s.tasks[id]; ok {
 		t.Status = models.TaskStatusRunning
 		t.ContainerID = containerID
+		t.AgentImage = agentImage
 		now := time.Now().UTC()
 		t.StartedAt = &now
 	}

@@ -1091,6 +1091,87 @@ func TestMonitorRunning_Completed_PersistsFinalOutputMetadata(t *testing.T) {
 	}
 }
 
+// TestMonitorRunning_SaveMetadataRunsAfterCompleteTask is a regression anchor
+// for the completion-artifact ordering invariant: task.json must reflect the
+// final committed row, not a stale "running" snapshot.
+//
+// The orchestrator deliberately splits SaveLog and SaveMetadata so that
+// SaveMetadata runs AFTER CompleteTask + GetTask reloads the finished row. If
+// a future refactor fuses the two back together (or moves SaveMetadata before
+// the DB update), task.json will pin the task as running forever with no
+// CompletedAt — exactly what this test guards against.
+func TestMonitorRunning_SaveMetadataRunsAfterCompleteTask(t *testing.T) {
+	s := newMockStore()
+	now := time.Now().UTC()
+
+	s.CreateInstance(context.Background(), &models.Instance{
+		InstanceID:        "local",
+		Status:            models.InstanceStatusRunning,
+		MaxContainers:     4,
+		RunningContainers: 1,
+	})
+	s.CreateTask(context.Background(), &models.Task{
+		ID:              "bf_order",
+		Status:          models.TaskStatusRunning,
+		RepoURL:         "https://github.com/test/repo",
+		Prompt:          "finish me",
+		SaveAgentOutput: true,
+		InstanceID:      "local",
+		ContainerID:     "cont1",
+		StartedAt:       &now,
+		CreatedAt:       now,
+	})
+
+	bus, _ := newTestBus()
+	root := t.TempDir()
+	mock := &mockDockerManager{
+		inspectResults: map[string]ContainerStatus{
+			"local/cont1": {
+				Done:         true,
+				Complete:     true,
+				ExitCode:     0,
+				PRURL:        "https://github.com/test/repo/pull/7",
+				RepoURL:      "https://github.com/test/repo",
+				TargetBranch: "main",
+				TaskMode:     "code",
+			},
+		},
+		agentOutput: "final agent bytes",
+	}
+	o := newTestOrchestrator(s, bus, withDocker(mock), withOutputs(outputs.New(root)))
+	o.running = 1
+
+	o.monitorRunning(context.Background())
+	bus.Close()
+
+	data, err := os.ReadFile(filepath.Join(root, "tasks", "bf_order", "task.json"))
+	if err != nil {
+		t.Fatalf("read task.json: %v", err)
+	}
+	var meta taskMetadata
+	if err := json.Unmarshal(data, &meta); err != nil {
+		t.Fatalf("unmarshal task.json: %v (body: %s)", err, string(data))
+	}
+
+	// Primary fingerprint of a fused / pre-DB-write SaveMetadata: the snapshot
+	// still reports running with no CompletedAt.
+	if meta.Status == models.TaskStatusRunning {
+		t.Fatalf("task.json captured stale running snapshot (status=%q) — SaveMetadata must run after CompleteTask", meta.Status)
+	}
+	if meta.CompletedAt == nil {
+		t.Fatal("task.json has nil CompletedAt — SaveMetadata ran before CompleteTask populated completed_at")
+	}
+	if meta.Status != models.TaskStatusCompleted {
+		t.Errorf("status = %q, want %q", meta.Status, models.TaskStatusCompleted)
+	}
+	if meta.PRURL != "https://github.com/test/repo/pull/7" {
+		t.Errorf("PRURL = %q, want populated from completed row", meta.PRURL)
+	}
+	if meta.OutputURL != "/api/v1/tasks/bf_order/output" {
+		t.Errorf("OutputURL = %q, want output endpoint", meta.OutputURL)
+	}
+}
+
 func TestMonitorRunning_CompletedFromStatusFile(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()

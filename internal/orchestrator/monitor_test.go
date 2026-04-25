@@ -1047,10 +1047,13 @@ func TestRequeueTask_LocalMode(t *testing.T) {
 		t.Errorf("running = %d, want 0", o.running)
 	}
 
-	// Instance should NOT be terminated in local mode
+	// Instance should NOT be terminated in local mode.
 	inst, _ := s.GetInstance(context.Background(), "local")
 	if inst.Status != models.InstanceStatusRunning {
 		t.Errorf("instance status = %q, want running (local mode should not terminate)", inst.Status)
+	}
+	if inst.RunningContainers != 0 {
+		t.Errorf("instance RunningContainers = %d, want 0 (requeue must release the instance slot)", inst.RunningContainers)
 	}
 }
 

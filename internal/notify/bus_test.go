@@ -76,10 +76,9 @@ func (n *blockingNotifier) Notify(Event) error {
 
 func TestNewEvent_PopulatesCoreFieldsFromTask(t *testing.T) {
 	task := &models.Task{
-		ID:           "bf_abc123",
-		RepoURL:      "https://github.com/org/repo",
-		Prompt:       "fix the bug",
-		ReplyChannel: "sms:+15551234567",
+		ID:      "bf_abc123",
+		RepoURL: "https://github.com/org/repo",
+		Prompt:  "fix the bug",
 	}
 
 	before := time.Now().UTC()
@@ -97,9 +96,6 @@ func TestNewEvent_PopulatesCoreFieldsFromTask(t *testing.T) {
 	}
 	if event.Prompt != "fix the bug" {
 		t.Errorf("Prompt = %q", event.Prompt)
-	}
-	if event.ReplyChannel != "sms:+15551234567" {
-		t.Errorf("ReplyChannel = %q, want %q", event.ReplyChannel, "sms:+15551234567")
 	}
 	if event.Timestamp.Before(before) || event.Timestamp.After(after) {
 		t.Errorf("Timestamp = %v, want between %v and %v", event.Timestamp, before, after)

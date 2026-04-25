@@ -42,7 +42,6 @@ Stores agent tasks submitted via the REST API.
 | `elapsed_time_sec` | `INTEGER` | `0` | Wall-clock seconds the agent ran. |
 | `error` | `TEXT` | `''` | Error message if the task failed. |
 | `ready_for_retry` | `BOOLEAN` | `false` | Whether the task is ready for user retry. Set `true` after container cleanup completes (for failed/cancelled/interrupted tasks under the retry cap). Reset to `false` on requeue. |
-| `reply_channel` | `TEXT` | `''` | Messaging reply channel. Legacy field from the removed SMS/Discord integrations; kept on the column set but no longer populated. |
 | `agent_image` | `TEXT` | `''` | Docker image the orchestrator used for this task's container. Populated at creation time — code/review tasks get the default agent image; read tasks get `BACKFLOW_READER_IMAGE`. Not user-settable via the API. |
 | `force` | `BOOLEAN` | `false` | For reading tasks, skip the exact-URL duplicate check and upsert the existing `readings` row on completion. Ignored for `code`/`review` tasks. |
 | `created_at` | `TEXT` | current UTC timestamp | When the task was created. |

@@ -363,7 +363,9 @@ func TestHandleRecoveringInspectError_RequeuesAtMaxFailures(t *testing.T) {
 	}
 }
 
-func TestRequeueRecoveringTask_WasRunning(t *testing.T) {
+func TestRecover_WasRunning_RequeuesAndReleasesBothSlots(t *testing.T) {
+	// Covers the previously-buggy recovery-requeue path where decrementRunning
+	// fired but releaseInstanceSlot did not. lifecycle.Recover pairs both.
 	s := newMockStore()
 	s.CreateInstance(context.Background(), &models.Instance{
 		InstanceID:        "local",
@@ -389,7 +391,9 @@ func TestRequeueRecoveringTask_WasRunning(t *testing.T) {
 	o.running = 1
 
 	task, _ := s.GetTask(context.Background(), "bf_rq")
-	o.requeueRecoveringTask(context.Background(), task, "instance gone", true)
+	if err := o.lifecycle.Recover(context.Background(), task, false, "instance gone"); err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
 
 	task, _ = s.GetTask(context.Background(), "bf_rq")
 	if task.Status != models.TaskStatusPending {
@@ -407,9 +411,13 @@ func TestRequeueRecoveringTask_WasRunning(t *testing.T) {
 	if o.running != 0 {
 		t.Errorf("running = %d, want 0", o.running)
 	}
+	inst, _ := s.GetInstance(context.Background(), "local")
+	if inst.RunningContainers != 0 {
+		t.Errorf("instance RunningContainers = %d, want 0 (bug fix: recovery path must release the instance slot too)", inst.RunningContainers)
+	}
 }
 
-func TestRequeueRecoveringTask_WasProvisioning(t *testing.T) {
+func TestRecover_WasProvisioning_RequeuesWithoutSlotRelease(t *testing.T) {
 	s := newMockStore()
 	s.CreateTask(context.Background(), &models.Task{
 		ID:      "bf_prov_rq",
@@ -424,7 +432,9 @@ func TestRequeueRecoveringTask_WasProvisioning(t *testing.T) {
 	o.running = 0
 
 	task, _ := s.GetTask(context.Background(), "bf_prov_rq")
-	o.requeueRecoveringTask(context.Background(), task, "no container", false)
+	if err := o.lifecycle.Recover(context.Background(), task, false, "no container"); err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
 
 	task, _ = s.GetTask(context.Background(), "bf_prov_rq")
 	if task.Status != models.TaskStatusPending {

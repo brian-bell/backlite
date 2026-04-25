@@ -219,8 +219,9 @@ func (c *Coordinator) Complete(ctx context.Context, task *models.Task, r Result)
 	}
 
 	var (
-		writeErr   error
-		chainChild *models.Task
+		writeErr      error
+		chainChild    *models.Task
+		parentWritten bool
 	)
 	if r.ChainTx != nil {
 		// Atomic path: parent COMPLETE + chain hook (e.g. child INSERT) run in
@@ -236,15 +237,19 @@ func (c *Coordinator) Complete(ctx context.Context, task *models.Task, r Result)
 			chainChild = child
 			return nil
 		})
-		if err != nil {
-			log.Error().Err(err).Str("task_id", task.ID).Msg("lifecycle.Complete: tx (parent + chain) failed; rolling back")
-			applyTaskResult(task, storeResult, now)
-			writeErr = err
-			chainChild = nil
-		} else {
+		if err == nil {
 			c.refreshTask(ctx, task, storeResult, now)
+			parentWritten = true
+		} else {
+			// Chain tx rolled back. Fall through to the non-chain path so the
+			// parent still commits — losing the chained review is preferable
+			// to leaving the parent stuck in `running` and re-firing this code
+			// path on every monitor tick.
+			log.Warn().Err(err).Str("task_id", task.ID).Msg("lifecycle.Complete: chain tx failed; falling back to non-chain completion")
+			chainChild = nil
 		}
-	} else {
+	}
+	if !parentWritten {
 		if err := c.store.CompleteTask(ctx, task.ID, storeResult); err != nil {
 			log.Error().Err(err).Str("task_id", task.ID).Msg("lifecycle.Complete: failed to complete task in store")
 			applyTaskResult(task, storeResult, now)

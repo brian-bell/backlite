@@ -153,9 +153,12 @@ func TestLifecycle_Complete_WithChain_AtomicSuccess(t *testing.T) {
 	}
 }
 
-// TestLifecycle_Complete_WithChain_TxRollback verifies atomicity: if the
-// child insert fails inside the chain tx, the parent's COMPLETE rolls back
-// and the parent stays in its pre-call status.
+// TestLifecycle_Complete_WithChain_TxRollback verifies the rollback +
+// fallback contract: if the child insert fails inside the chain tx, the
+// chain tx rolls back (no child row, no task.created event), but the parent
+// still commits via a fallback CompleteTask so the user gets a normal
+// task.completed and the parent doesn't get stuck in `running` (which would
+// otherwise hot-loop on the next monitor tick).
 func TestLifecycle_Complete_WithChain_TxRollback(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -174,37 +177,35 @@ func TestLifecycle_Complete_WithChain_TxRollback(t *testing.T) {
 			return nil, injected
 		},
 	})
-	if err == nil {
-		t.Fatalf("Complete: expected error from injected chain failure, got nil")
-	}
-	if !errors.Is(err, injected) {
-		t.Errorf("error chain = %v, want wraps %v", err, injected)
+	if err != nil {
+		t.Fatalf("Complete: expected nil after fallback succeeds, got %v", err)
 	}
 
 	gotParent, err := s.GetTask(ctx, parent.ID)
 	if err != nil {
 		t.Fatalf("GetTask parent: %v", err)
 	}
-	// Parent must still be running (rolled back), not completed.
-	if gotParent.Status != models.TaskStatusRunning {
-		t.Errorf("parent.Status after rollback = %q, want running (tx rolled back)", gotParent.Status)
+	// Fallback path commits the parent.
+	if gotParent.Status != models.TaskStatusCompleted {
+		t.Errorf("parent.Status after fallback = %q, want completed", gotParent.Status)
 	}
-	if gotParent.PRURL != "" {
-		t.Errorf("parent.PRURL after rollback = %q, want empty (tx rolled back)", gotParent.PRURL)
+	if gotParent.PRURL != "https://github.com/test/repo/pull/200" {
+		t.Errorf("parent.PRURL after fallback = %q, want PR URL set", gotParent.PRURL)
 	}
 
-	// Even on rollback, lifecycle still emits the parent's completion event so
-	// downstream consumers see the outcome. The child.created event must NOT
-	// fire because no child was persisted.
+	// Exactly one event: parent's task.completed. No child.created (chain
+	// tx rolled back, so no child row exists to announce).
 	evs := emitter.Events()
-	hasCreated := false
+	if len(evs) != 1 {
+		t.Fatalf("events = %d, want 1 (only parent.completed); got %+v", len(evs), evs)
+	}
+	if evs[0].Type != notify.EventTaskCompleted || evs[0].TaskID != parent.ID {
+		t.Errorf("event 0 = %+v, want task.completed for parent", evs[0])
+	}
 	for _, e := range evs {
 		if e.Type == notify.EventTaskCreated {
-			hasCreated = true
+			t.Errorf("task.created emitted despite chain rollback; events = %+v", evs)
 		}
-	}
-	if hasCreated {
-		t.Errorf("task.created event emitted despite rollback; events = %+v", evs)
 	}
 }
 

@@ -155,6 +155,7 @@ func TestDispatch_RoutesCodexToOldImage(t *testing.T) {
 		Harness:    models.HarnessCodex,
 		TaskMode:   models.TaskModeCode,
 		AgentImage: "backlite-agent",
+		RepoURL:    "https://github.com/test/repo",
 		Prompt:     "codex task",
 	})
 
@@ -308,12 +309,17 @@ func TestDispatch_ReadTaskWithoutEmbedder_Fails(t *testing.T) {
 // orchestrator that doesn't have a reader image configured refuses to dispatch
 // read tasks rather than silently running them on the default agent image.
 // Protects against cross-orchestrator mis-dispatch in shared-DB setups.
+//
+// Uses Harness=Codex to isolate the ReaderImage path: SkillAgentImage is
+// claude_code-only, so a codex read task with no ReaderImage is the only
+// scenario where the guard must still fire even with SkillAgentImage set.
 func TestDispatch_ReadTask_OrchestratorMissingReaderImage_Fails(t *testing.T) {
 	s := newMockStore()
 	task := &models.Task{
 		ID:         "bf_read_no_reader",
 		Status:     models.TaskStatusPending,
 		TaskMode:   models.TaskModeRead,
+		Harness:    models.HarnessCodex,
 		Prompt:     "https://example.com/post",
 		AgentImage: "backlite-reader", // set by the creating orchestrator
 	}
@@ -344,6 +350,46 @@ func TestDispatch_ReadTask_OrchestratorMissingReaderImage_Fails(t *testing.T) {
 	}
 	if got.Status == models.TaskStatusRunning {
 		t.Errorf("task should not be running, got %q", got.Status)
+	}
+}
+
+// TestDispatch_ReadTask_SkillImageOnly_Succeeds pins that an operator who
+// has only the skill image configured (no reader image) can still dispatch
+// claude_code read tasks. Slice 6 populated the read bundle, so the skill
+// image is now a self-contained host for claude_code reads — this lets
+// operators retire BACKFLOW_READER_IMAGE in favor of BACKFLOW_SKILL_AGENT_IMAGE.
+func TestDispatch_ReadTask_SkillImageOnly_Succeeds(t *testing.T) {
+	s := newMockStore()
+	s.CreateTask(context.Background(), &models.Task{
+		ID:       "bf_read_skill_only",
+		Status:   models.TaskStatusPending,
+		TaskMode: models.TaskModeRead,
+		Harness:  models.HarnessClaudeCode,
+		Prompt:   "https://example.com/post",
+	})
+
+	bus, _ := newTestBus()
+	defer bus.Close()
+	mock := &mockDockerManager{
+		runAgentID:     "cont-skill-read",
+		inspectResults: map[string]ContainerStatus{},
+	}
+	o := newTestOrchestrator(s, bus, withDocker(mock), withEmbedder(&mockEmbedder{}))
+	o.config.AgentImage = "backlite-agent"
+	o.config.ReaderImage = ""
+	o.config.SkillAgentImage = "backlite-skill-agent:v1"
+
+	task, _ := s.GetTask(context.Background(), "bf_read_skill_only")
+	if err := o.dispatch(context.Background(), task); err != nil {
+		t.Fatalf("dispatch should succeed for claude_code read with skill image only, got %v", err)
+	}
+
+	got, _ := s.GetTask(context.Background(), "bf_read_skill_only")
+	if got.AgentImage != "backlite-skill-agent:v1" {
+		t.Errorf("AgentImage = %q, want skill image", got.AgentImage)
+	}
+	if got.ContainerID != "cont-skill-read" {
+		t.Errorf("ContainerID = %q, want cont-skill-read", got.ContainerID)
 	}
 }
 

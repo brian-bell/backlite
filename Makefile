@@ -1,8 +1,8 @@
 .PHONY: build run test clean lint \
        docker-agent-build-local \
        docker-reader-build-local \
-       docker-server-build-local \
        docker-skill-agent-build-local \
+       docker-agents-build-local \
        test-fake-agent test-blackbox test-schema test-soak \
        test-skill-agent-entrypoint \
        db-pending db-running db-completed db-failed \
@@ -53,11 +53,10 @@ docker-agent-build-local:
 docker-reader-build-local:
 	$(DOCKER) build -t backlite-reader docker/reader/
 
-docker-server-build-local:
-	$(DOCKER) build -t backlite-server -f docker/server/Dockerfile .
-
 docker-skill-agent-build-local:
 	$(DOCKER) build -t backlite-skill-agent docker/skill-agent/
+
+docker-agents-build-local: docker-agent-build-local docker-reader-build-local docker-skill-agent-build-local
 
 test-skill-agent-entrypoint:
 	bash docker/skill-agent/test_entrypoint.sh

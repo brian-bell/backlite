@@ -12,7 +12,7 @@ Stores agent tasks submitted via the REST API.
 |--------|------|---------|-------------|
 | `id` | `TEXT` | — | **Primary key.** ULID with `bf_` prefix (e.g. `bf_01KKQW82994E87Z99QVEMBN8V0`). |
 | `status` | `TEXT` | `'pending'` | Task lifecycle state. One of: `pending`, `provisioning`, `running`, `completed`, `failed`, `interrupted`, `cancelled`, `recovering`. |
-| `task_mode` | `TEXT` | `'auto'` | Task mode. One of: `code`, `review`, `read`, or `auto` (Prep stage infers code vs review). |
+| `task_mode` | `TEXT` | `'auto'` | Task mode. One of: `code`, `review`, `read`, or `auto`. The user-facing API only accepts `auto` or `read`; the agent's prep stage resolves `auto` to the concrete `code` or `review` mode. |
 | `harness` | `TEXT` | `'claude_code'` | Agent CLI harness. `claude_code` (default) or `codex`. |
 | `repo_url` | `TEXT` | — | Git repository URL to clone (required). |
 | `branch` | `TEXT` | `''` | Branch to check out before running the agent. |
@@ -41,9 +41,9 @@ Stores agent tasks submitted via the REST API.
 | `elapsed_time_sec` | `INTEGER` | `0` | Wall-clock seconds the agent ran. |
 | `error` | `TEXT` | `''` | Error message if the task failed. |
 | `ready_for_retry` | `BOOLEAN` | `false` | Whether the task is ready for user retry. Set `true` after container cleanup completes (for failed/cancelled/interrupted tasks under the retry cap). Reset to `false` on requeue. |
-| `agent_image` | `TEXT` | `''` | Docker image the orchestrator used for this task's container. Populated at creation time — code/review tasks get the default agent image; read tasks get `BACKFLOW_READER_IMAGE`. The image router (in `internal/orchestrator/imagerouter`) re-derives this at dispatch time so that setting `BACKFLOW_SKILL_AGENT_IMAGE` reroutes claude_code tasks to the new skill-agent image without restarts. Not user-settable via the API. |
+| `agent_image` | `TEXT` | `''` | Docker image the orchestrator used for this task's container. Populated at creation time from the resolved task defaults — read tasks get `BACKFLOW_READER_IMAGE`; other modes get `BACKFLOW_AGENT_IMAGE`. The orchestrator's image router (`internal/orchestrator/imagerouter`) re-derives this at dispatch time, so setting `BACKFLOW_SKILL_AGENT_IMAGE` reroutes any in-flight `claude_code` task to the skill-agent image without restarts. Not user-settable via the API. |
 | `force` | `BOOLEAN` | `false` | For reading tasks, skip the exact-URL duplicate check and upsert the existing `readings` row on completion. Ignored for `code`/`review` tasks. |
-| `parent_task_id` | `TEXT` | `NULL` | For chained tasks (e.g. self-review children), the ID of the parent task that triggered creation. `NULL` for user-submitted tasks. Populated atomically in the same SQLite transaction as the parent's `CompleteTask`, so the child and parent appear together or not at all. Indexed via `idx_tasks_parent_task_id`. |
+| `parent_task_id` | `TEXT` | `NULL` | Optional pointer to the task that spawned this one (e.g. self-review children, retry chains, follow-ups). Foreign key to `tasks(id)` with `ON DELETE SET NULL` — deleting a parent nulls the reference rather than cascading. For chained self-review children, this is populated atomically in the same SQLite transaction as the parent's `CompleteTask`, so child and parent appear together or not at all. Indexed via `idx_tasks_parent_task_id`. |
 | `created_at` | `TEXT` | current UTC timestamp | When the task was created. |
 | `updated_at` | `TEXT` | current UTC timestamp | Last modification time. |
 | `started_at` | `TEXT` | `NULL` | When the agent container started. Nullable. |
@@ -52,7 +52,7 @@ Stores agent tasks submitted via the REST API.
 **Indexes:**
 - `idx_tasks_status` on `status` — used by the orchestrator to find pending/running tasks.
 - `idx_tasks_created` on `created_at` — used for ordered listing.
-- `idx_tasks_parent_task_id` on `parent_task_id` — used to find children of a given parent task.
+- `idx_tasks_parent_task_id` on `parent_task_id` — used to look up the children of a given task.
 
 ### `api_keys`
 

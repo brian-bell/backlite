@@ -251,6 +251,77 @@ func TestSQLite_CreateTask_PersistsParentTaskID(t *testing.T) {
 	}
 }
 
+func TestSQLite_CreateTask_RejectsUnknownParentTaskID(t *testing.T) {
+	s := testSQLiteStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	missing := "bf_DOES_NOT_EXIST"
+	child := &models.Task{
+		ID:           "bf_ORPHAN0001",
+		Status:       models.TaskStatusPending,
+		TaskMode:     models.TaskModeCode,
+		Harness:      models.HarnessClaudeCode,
+		Prompt:       "Do something",
+		ParentTaskID: &missing,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	err := s.CreateTask(ctx, child)
+	if err == nil {
+		t.Fatal("CreateTask succeeded with unknown parent_task_id, want FK violation")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "foreign key") {
+		t.Errorf("CreateTask error = %v, want foreign-key violation", err)
+	}
+}
+
+func TestSQLite_DeleteTask_NullsChildParentTaskID(t *testing.T) {
+	s := testSQLiteStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	parent := &models.Task{
+		ID:        "bf_PARENT_DEL",
+		Status:    models.TaskStatusCompleted,
+		TaskMode:  models.TaskModeCode,
+		Harness:   models.HarnessClaudeCode,
+		Prompt:    "Parent task",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := s.CreateTask(ctx, parent); err != nil {
+		t.Fatalf("CreateTask parent: %v", err)
+	}
+
+	parentID := parent.ID
+	child := &models.Task{
+		ID:           "bf_CHILD_DEL",
+		Status:       models.TaskStatusPending,
+		TaskMode:     models.TaskModeReview,
+		Harness:      models.HarnessClaudeCode,
+		Prompt:       "Child task",
+		ParentTaskID: &parentID,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	if err := s.CreateTask(ctx, child); err != nil {
+		t.Fatalf("CreateTask child: %v", err)
+	}
+
+	if err := s.DeleteTask(ctx, parent.ID); err != nil {
+		t.Fatalf("DeleteTask parent: %v", err)
+	}
+
+	got, err := s.GetTask(ctx, child.ID)
+	if err != nil {
+		t.Fatalf("GetTask child: %v", err)
+	}
+	if got.ParentTaskID != nil {
+		t.Errorf("child ParentTaskID = %v, want nil after parent deletion", got.ParentTaskID)
+	}
+}
+
 func TestSQLite_APIKeyRoundTrip(t *testing.T) {
 	s := testSQLiteStore(t)
 	ctx := context.Background()
@@ -317,7 +388,7 @@ func TestSQLite_WithTx_Commit(t *testing.T) {
 		if err := tx.AssignTask(ctx, "bf_TX01"); err != nil {
 			return err
 		}
-		return tx.StartTask(ctx, "bf_TX01", "container-tx01")
+		return tx.StartTask(ctx, "bf_TX01", "container-tx01", "")
 	})
 	if err != nil {
 		t.Fatalf("WithTx: %v", err)
@@ -354,7 +425,7 @@ func TestSQLite_WithTx_Rollback(t *testing.T) {
 	// Transaction that fails — the assign should roll back
 	err := s.WithTx(ctx, func(tx Store) error {
 		tx.AssignTask(ctx, "bf_TX02")
-		tx.StartTask(ctx, "bf_TX02", "container-tx02")
+		tx.StartTask(ctx, "bf_TX02", "container-tx02", "")
 		return fmt.Errorf("something failed")
 	})
 	if err == nil {
@@ -391,7 +462,7 @@ func TestSQLite_ListTasks(t *testing.T) {
 	sqliteTestTask(t, s)
 
 	// Start the task so it becomes running
-	s.StartTask(ctx, "bf_TEST001", "container-1")
+	s.StartTask(ctx, "bf_TEST001", "container-1", "")
 
 	// List all
 	tasks, err := s.ListTasks(ctx, TaskFilter{Limit: 10})
@@ -480,7 +551,7 @@ func TestSQLite_StartTask(t *testing.T) {
 	ctx := context.Background()
 	sqliteTestTask(t, s)
 
-	if err := s.StartTask(ctx, "bf_TEST001", "container-abc"); err != nil {
+	if err := s.StartTask(ctx, "bf_TEST001", "container-abc", "skill-agent:v1"); err != nil {
 		t.Fatalf("StartTask: %v", err)
 	}
 
@@ -490,6 +561,9 @@ func TestSQLite_StartTask(t *testing.T) {
 	}
 	if got.ContainerID != "container-abc" {
 		t.Errorf("ContainerID = %q, want %q", got.ContainerID, "container-abc")
+	}
+	if got.AgentImage != "skill-agent:v1" {
+		t.Errorf("AgentImage = %q, want %q (StartTask must persist the routed image)", got.AgentImage, "skill-agent:v1")
 	}
 	if got.StartedAt == nil {
 		t.Fatal("StartedAt should be set")
@@ -595,7 +669,7 @@ func TestSQLite_RequeueTask(t *testing.T) {
 	}
 
 	s.AssignTask(ctx, task.ID)
-	s.StartTask(ctx, task.ID, "container-abc")
+	s.StartTask(ctx, task.ID, "container-abc", "")
 
 	if err := s.RequeueTask(ctx, task.ID, "container gone"); err != nil {
 		t.Fatalf("RequeueTask: %v", err)
@@ -646,7 +720,7 @@ func TestSQLite_ClearTaskAssignment(t *testing.T) {
 	sqliteTestTask(t, s)
 
 	s.AssignTask(ctx, "bf_TEST001")
-	s.StartTask(ctx, "bf_TEST001", "container-abc")
+	s.StartTask(ctx, "bf_TEST001", "container-abc", "")
 
 	if err := s.ClearTaskAssignment(ctx, "bf_TEST001"); err != nil {
 		t.Fatalf("ClearTaskAssignment: %v", err)

@@ -50,7 +50,7 @@ type Store interface {
 	// Named task updates
 	UpdateTaskStatus(ctx context.Context, id string, status models.TaskStatus, taskErr string) error
 	AssignTask(ctx context.Context, id string) error
-	StartTask(ctx context.Context, id string, containerID string) error
+	StartTask(ctx context.Context, id string, containerID string, agentImage string) error
 	CompleteTask(ctx context.Context, id string, result TaskResult) error
 	RequeueTask(ctx context.Context, id string, reason string) error
 	CancelTask(ctx context.Context, id string) error

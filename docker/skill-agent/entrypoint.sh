@@ -61,8 +61,8 @@ if [ ! -d "$SKILL_DIR" ]; then
     echo "ERROR: no skill bundle for task_mode='${TASK_MODE}' at ${SKILL_DIR}" >&2
     exit 2
 fi
-mkdir -p "${HOME}/.claude/skills"
-cp -r "$SKILL_DIR" "${HOME}/.claude/skills/${TASK_MODE}"
+mkdir -p "${HOME}/.claude/skills/${TASK_MODE}"
+cp -r "${SKILL_DIR}/." "${HOME}/.claude/skills/${TASK_MODE}/"
 
 # Auto mode dispatches to code or review at runtime, so the auto skill needs
 # both bundles installed alongside it. Skip any sub-bundle that's already in

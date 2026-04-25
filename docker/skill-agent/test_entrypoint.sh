@@ -252,5 +252,46 @@ EOF
 )
 pass "auto mode installs auto + code + review bundles for runtime dispatch"
 
+# --- Idempotent skill install: pre-existing destination must not nest ---
+# Pins that re-running the entrypoint against a HOME where the skill bundle
+# is already installed doesn't produce ~/.claude/skills/code/code/SKILL.md.
+# `cp -r src dst` nests src inside dst when dst already exists; the entrypoint
+# must guard against that.
+(
+    tmp=$(mktemp -d)
+    trap 'rm -rf "$tmp"' EXIT
+    export HOME="$tmp"
+    mkdir -p "$tmp/.claude/skills/code"
+    # Pre-seed the destination as if a previous run had already installed it.
+    echo "stale" > "$tmp/.claude/skills/code/SKILL.md"
+
+    cat >"$tmp/claude" <<'EOF'
+#!/usr/bin/env bash
+mkdir -p "$HOME/workspace"
+cat >"$HOME/workspace/status.json" <<JSON
+{"complete": true, "needs_input": false, "task_mode": "code"}
+JSON
+exit 0
+EOF
+    chmod +x "$tmp/claude"
+    export PATH="$tmp:$PATH"
+    export BACKFLOW_SKILLS_DIR="$DIR/skills"
+
+    export PROMPT="do something"
+    export TASK_ID="bf_test"
+    export TASK_MODE="code"
+    export ANTHROPIC_API_KEY="sk-test"
+
+    "$ENTRYPOINT" >/dev/null 2>&1 || true
+
+    if [ -e "$tmp/.claude/skills/code/code" ]; then
+        fail "idempotent install: nested ~/.claude/skills/code/code/ exists; cp -r nested src under existing dst"
+    fi
+    if [ ! -f "$tmp/.claude/skills/code/SKILL.md" ]; then
+        fail "idempotent install: expected ~/.claude/skills/code/SKILL.md to exist after re-run"
+    fi
+)
+pass "skill install is idempotent when destination already exists"
+
 echo
 echo "All skill-agent entrypoint tests passed."

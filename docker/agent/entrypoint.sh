@@ -543,65 +543,11 @@ ${QUOTED_PROMPT}
     gh pr comment "$PR_URL" --body "$COMMENT_BODY" 2>/dev/null || true
 fi
 
-# --- Self-review phase ---
-if [ "$SELF_REVIEW" = "true" ] && [ -n "$PR_URL" ]; then
-    echo "==> Starting self-review phase..."
-
-    REVIEW_BUDGET=$(echo "$MAX_BUDGET_USD" | awk '{b = $1 * 0.2; print (b < 2) ? 2 : b}')
-
-    REVIEW_PROMPT="You are reviewing a pull request that you (a different instance) just created.
-
-PR URL: ${PR_URL}
-
-Review the PR by:
-1. Read the full diff with: gh pr diff ${PR_URL}
-2. Look at the PR description with: gh pr view ${PR_URL}
-3. Post your review using: gh pr review ${PR_URL} --comment --body '<your review>'
-
-Focus on:
-- Bugs and logic errors
-- Security issues
-- Missing error handling that could cause failures
-- Correctness of the implementation vs the PR description
-
-Do NOT comment on:
-- Code style or formatting
-- Minor naming preferences
-- Things that are working correctly
-
-You MUST post your review as a comment on the PR using the gh CLI. Do not just print your review to stdout."
-
-    REVIEW_LOG="${WORKSPACE}/review_output.log"
-    set +e
-    if [ "$HARNESS" = "codex" ]; then
-        REVIEW_CODEX_ARGS=(
-            exec
-            --model "$MODEL"
-            --dangerously-bypass-approvals-and-sandbox
-            "$REVIEW_PROMPT"
-        )
-        codex "${REVIEW_CODEX_ARGS[@]}" 2>&1 | tee "$REVIEW_LOG"
-    else
-        REVIEW_ARGS=(
-            -p "$REVIEW_PROMPT"
-            --dangerously-skip-permissions
-            --model "$MODEL"
-            --max-turns 10
-            --output-format stream-json
-            --verbose
-            --max-budget-usd "$REVIEW_BUDGET"
-        )
-        claude "${REVIEW_ARGS[@]}" 2>&1 | tee "$REVIEW_LOG"
-    fi
-    REVIEW_EXIT=${PIPESTATUS[0]}
-    set -e
-
-    if [ $REVIEW_EXIT -eq 0 ]; then
-        echo "==> Self-review completed successfully"
-    else
-        echo "==> Self-review failed (exit code: ${REVIEW_EXIT}), continuing anyway"
-    fi
-fi
+# Self-review used to happen here in the same container. It now runs as a
+# chained review task spawned by the orchestrator (internal/orchestrator/chain),
+# so this stage is intentionally empty when SELF_REVIEW=true. The "Self-Review"
+# label on the PR comment above is the user-facing hint that a follow-up review
+# task is on its way.
 
 # --- Write status ---
 ELAPSED_SEC=$(( $(date +%s) - START_TIME ))

@@ -11,6 +11,7 @@ import (
 
 	"github.com/brian-bell/backlite/internal/models"
 	"github.com/brian-bell/backlite/internal/notify"
+	"github.com/brian-bell/backlite/internal/orchestrator/chain"
 	"github.com/brian-bell/backlite/internal/orchestrator/lifecycle"
 	"github.com/brian-bell/backlite/internal/store"
 )
@@ -165,6 +166,26 @@ func (o *Orchestrator) handleCompletion(ctx context.Context, task *models.Task, 
 		result.EventOpts = []notify.EventOption{notify.WithContainerStatus("", status.Question, status.LogTail)}
 	default:
 		result.EventOpts = []notify.EventOption{notify.WithContainerStatus("", result.Error, status.LogTail)}
+	}
+
+	// Chain self-review on a successful code task. We pre-compute the child
+	// from the projected post-completion parent state and let lifecycle.Complete
+	// run the parent COMPLETE + child INSERT atomically.
+	if result.Status == models.TaskStatusCompleted {
+		projected := *task
+		projected.Status = models.TaskStatusCompleted
+		projected.PRURL = result.PRURL
+		if result.RepoURL != "" {
+			projected.RepoURL = result.RepoURL
+		}
+		if result.TaskMode != "" {
+			projected.TaskMode = result.TaskMode
+		}
+		if child, ok := chain.Plan(&projected); ok {
+			result.ChainTx = func(txCtx context.Context, tx store.Store) (*models.Task, error) {
+				return child, chain.CreateChild(txCtx, tx, child)
+			}
+		}
 	}
 
 	if err := o.lifecycle.Complete(ctx, task, result); err != nil {

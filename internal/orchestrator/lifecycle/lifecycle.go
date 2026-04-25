@@ -63,6 +63,11 @@ type Result struct {
 	// WithReading). The retry-gate option (WithReadyForRetry or
 	// WithRetryLimitReached) is applied automatically for non-success terminals.
 	EventOpts []notify.EventOption
+	// ChainTx, if non-nil, runs inside the same SQLite transaction that
+	// writes the parent's terminal state. Returning a non-nil child task
+	// causes Complete to emit task.created for it after the tx commits.
+	// Used by the chain module for atomic self-review chained-task creation.
+	ChainTx func(ctx context.Context, tx store.Store) (*models.Task, error)
 }
 
 // RequeueKind selects the event emitted when a task is returned to pending.
@@ -211,13 +216,40 @@ func (c *Coordinator) Complete(ctx context.Context, task *models.Task, r Result)
 		TaskMode:       r.TaskMode,
 	}
 
-	var writeErr error
-	if err := c.store.CompleteTask(ctx, task.ID, storeResult); err != nil {
-		log.Error().Err(err).Str("task_id", task.ID).Msg("lifecycle.Complete: failed to complete task in store")
-		applyTaskResult(task, storeResult, now)
-		writeErr = err
+	var (
+		writeErr   error
+		chainChild *models.Task
+	)
+	if r.ChainTx != nil {
+		// Atomic path: parent COMPLETE + chain hook (e.g. child INSERT) run in
+		// the same SQLite tx. If either fails, the whole pair rolls back.
+		err := c.store.WithTx(ctx, func(tx store.Store) error {
+			if err := tx.CompleteTask(ctx, task.ID, storeResult); err != nil {
+				return fmt.Errorf("complete parent: %w", err)
+			}
+			child, err := r.ChainTx(ctx, tx)
+			if err != nil {
+				return fmt.Errorf("chain tx: %w", err)
+			}
+			chainChild = child
+			return nil
+		})
+		if err != nil {
+			log.Error().Err(err).Str("task_id", task.ID).Msg("lifecycle.Complete: tx (parent + chain) failed; rolling back")
+			applyTaskResult(task, storeResult, now)
+			writeErr = err
+			chainChild = nil
+		} else {
+			c.refreshTask(ctx, task, storeResult, now)
+		}
 	} else {
-		c.refreshTask(ctx, task, storeResult, now)
+		if err := c.store.CompleteTask(ctx, task.ID, storeResult); err != nil {
+			log.Error().Err(err).Str("task_id", task.ID).Msg("lifecycle.Complete: failed to complete task in store")
+			applyTaskResult(task, storeResult, now)
+			writeErr = err
+		} else {
+			c.refreshTask(ctx, task, storeResult, now)
+		}
 	}
 
 	c.slots.Release(ctx, task)
@@ -234,6 +266,9 @@ func (c *Coordinator) Complete(ctx context.Context, task *models.Task, r Result)
 		}
 	}
 	c.emitter.Emit(notify.NewEvent(r.EventType, task, opts...))
+	if chainChild != nil {
+		c.emitter.Emit(notify.NewEvent(notify.EventTaskCreated, chainChild))
+	}
 	return writeErr
 }
 

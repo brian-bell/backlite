@@ -251,5 +251,40 @@ EOF
 )
 pass "installs review skill and runs to completion"
 
+# --- Read skill bundle ships its helper scripts ---
+(
+    tmp=$(mktemp -d)
+    trap 'rm -rf "$tmp"' EXIT
+    export HOME="$tmp"
+    mkdir -p "$tmp/.claude"
+
+    cat >"$tmp/claude" <<'EOF'
+#!/usr/bin/env bash
+mkdir -p "$HOME/workspace"
+cat >"$HOME/workspace/status.json" <<JSON
+{"complete": true, "needs_input": false, "task_mode": "read", "url": "https://example.com", "title": "x", "tldr": "y", "tags": [], "keywords": [], "people": [], "orgs": [], "novelty_verdict": "novel", "connections": [], "summary_markdown": "z"}
+JSON
+exit 0
+EOF
+    chmod +x "$tmp/claude"
+    export PATH="$tmp:$PATH"
+    export BACKFLOW_SKILLS_DIR="$DIR/skills"
+
+    export PROMPT="https://example.com"
+    export TASK_ID="bf_test"
+    export TASK_MODE="read"
+    export ANTHROPIC_API_KEY="sk-test"
+
+    if ! "$ENTRYPOINT" >/dev/null 2>&1; then
+        fail "read skill happy path: expected exit 0"
+    fi
+    for helper in read-embed.sh read-similar.sh read-lookup.sh; do
+        if [ ! -x "$tmp/.claude/skills/read/${helper}" ]; then
+            fail "read skill: helper ${helper} should be installed and executable at ~/.claude/skills/read/"
+        fi
+    done
+)
+pass "installs read skill with helper scripts (read-embed.sh, read-similar.sh, read-lookup.sh)"
+
 echo
 echo "All skill-agent entrypoint tests passed."

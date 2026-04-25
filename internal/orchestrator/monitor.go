@@ -129,14 +129,19 @@ func (o *Orchestrator) handleCompletion(ctx context.Context, task *models.Task, 
 	}
 
 	switch {
-	case status.Complete || (status.ExitCode == 0 && !status.NeedsInput):
-		result.Status = models.TaskStatusCompleted
-		result.EventType = notify.EventTaskCompleted
 	case status.NeedsInput:
 		result.Status = models.TaskStatusFailed
 		result.Error = "agent needs input"
 		result.EventType = notify.EventTaskNeedsInput
+	case status.Complete:
+		result.Status = models.TaskStatusCompleted
+		result.EventType = notify.EventTaskCompleted
 	default:
+		// complete=false (or unset) means failure regardless of exit code:
+		// the agent's self-report wins over what the harness happened to
+		// return. An exit-code-only success arm here would let skill-authored
+		// failure branches (e.g. "no repo URL") slip through as task.completed
+		// whenever the underlying harness exited 0.
 		result.Status = models.TaskStatusFailed
 		result.Error = status.Error
 		result.EventType = notify.EventTaskFailed

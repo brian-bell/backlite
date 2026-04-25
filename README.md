@@ -138,7 +138,7 @@ curl -X POST http://localhost:8080/api/v1/tasks \
 | `branch` | string | Working branch name |
 | `target_branch` | string | Target branch |
 | `create_pr` | bool | Create a PR on completion (omit to use server default) |
-| `self_review` | bool | Agent self-reviews the PR after creation (omit to use server default) |
+| `self_review` | bool | When `true` and the code task creates a PR, the orchestrator atomically chains a follow-up review task with a flat $2 budget and `parent_task_id` pointing at this task |
 | `pr_title` | string | Custom PR title |
 | `pr_body` | string | Custom PR body |
 | `max_budget_usd` | float | Budget cap in USD |
@@ -196,12 +196,15 @@ To add a migration: create a new file in `migrations/` (e.g. `002_add_column.sql
 ## Docker Images
 
 ```bash
-make docker-agent-build-local    # Agent image
-make docker-reader-build-local   # Reader image (for task_mode=read)
-make docker-server-build-local   # Server image
+make docker-agent-build-local         # Agent image (claude_code + codex)
+make docker-reader-build-local        # Reader image (for task_mode=read)
+make docker-skill-agent-build-local   # Skill-agent image (claude_code-only; opt-in)
+make docker-server-build-local        # Server image
 ```
 
 Backlite runs agent containers directly against the local Docker daemon; there is no remote orchestration runtime.
+
+The three agent images coexist: `docker/agent/` and `docker/reader/` are the originals, and `docker/skill-agent/` is a thin claude_code-only image that expresses each task mode as a Claude Code skill bundle. Set `BACKFLOW_SKILL_AGENT_IMAGE=<image>` to opt in — claude_code tasks reroute to the skill-agent image (regardless of mode); codex tasks continue to use the existing images. Unset to roll back instantly. See [CLAUDE.md](CLAUDE.md#agent-containers--three-coexisting-images) for the full routing rule.
 
 ## Configuration
 

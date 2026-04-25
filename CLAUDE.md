@@ -20,9 +20,11 @@ make test-fake-agent    # Unit tests for the fake agent Docker image
 make deps               # go mod tidy
 make clean              # Remove bin/ directory
 make db-running         # Show running tasks (also: db-pending, db-completed, db-failed)
-make docker-agent-build-local  # Agent image (native arch)
-make docker-server-build-local # Server image (native arch)
-make docker-reader-build-local # Reader image (native arch)
+make docker-agent-build-local        # Agent image (native arch)
+make docker-server-build-local       # Server image (native arch)
+make docker-reader-build-local       # Reader image (native arch)
+make docker-skill-agent-build-local  # Skill-agent image (native arch; opt-in via BACKFLOW_SKILL_AGENT_IMAGE)
+make test-skill-agent-entrypoint     # Shell tests for the skill-agent entrypoint
 goose -dir migrations status # Show pending/applied migrations
 goose -dir migrations up     # Apply the next migration(s)
 goose -dir migrations down   # Roll back the last migration
@@ -53,7 +55,8 @@ Two goroutines: chi REST API on `:8080` + polling orchestrator (5s default). The
 ### Key modules (`internal/`)
 
 - **api/** — chi router, handlers, JSON responses, `LogFetcher` interface, `NewTask` shared task-creation helper, `CancelTask` and `RetryTask` shared action helpers
-- **orchestrator/** — Poll loop (`orchestrator.go`), dispatch (`dispatch.go`), monitoring (`monitor.go`, including `handleReadingCompletion` for read-mode tasks), recovery (`recovery.go`). Subpackages: `docker/` (local Docker container management), `outputs/` (filesystem writer for agent logs + task metadata), `lifecycle/` (`Coordinator` owning task state transitions, slot accounting, and paired event emission — callers invoke domain verbs like `Dispatch`/`Complete`/`Requeue`/`Cancel` instead of selecting Store methods).
+- **orchestrator/** — Poll loop (`orchestrator.go`), dispatch (`dispatch.go`), monitoring (`monitor.go`, including `handleReadingCompletion` for read-mode tasks), recovery (`recovery.go`). Subpackages: `docker/` (local Docker container management), `outputs/` (filesystem writer for agent logs + task metadata), `lifecycle/` (`Coordinator` owning task state transitions, slot accounting, paired event emission, and the `ChainTx` hook used for atomic chained-task creation), `imagerouter/` (single-function `Resolve(task, cfg) string` that picks the docker image for a dispatch — claude_code goes to `SkillAgentImage` when set, otherwise read mode → `ReaderImage`, otherwise `AgentImage`), `chain/` (`Plan(parent)` decides whether to chain a self-review task and what shape the child takes; works with the `ChainTx` hook so parent COMPLETE + child INSERT happen in one SQLite tx).
+- **skillcontract/** — JSON-schema-style validator for the `status.json` payload that a skill-based agent writes. `Validate(b []byte) error` checks required fields, types, and enums. `make test` walks `docker/skill-agent/skills/*/examples/status.json` so drift between SKILL.md instructions and orchestrator parsing is caught.
 - **store/** — `Store` interface + SQLite (`database/sql`, goose migrations). Includes `UpsertReading` / `GetReadingByURL` / `FindSimilarReadings` for the `readings` table.
 - **models/** — `Task` and `Reading` (+ `Connection`) structs with status enums. `Task.AgentImage` records which Docker image the orchestrator used (read tasks get `ReaderImage`, others get the default agent image). `FindFirstURL` / `InferReviewMode` auto-detect review mode when a prompt's first URL is a GitHub PR URL.
 - **embeddings/** — Thin `Embedder` interface (`Embed(ctx, text) ([]float32, error)`) with an `OpenAIEmbedder` HTTP client (no SDK). Used by the orchestrator to embed a reading's final TL;DR before writing the `readings` row.
@@ -69,9 +72,32 @@ Minimal Alpine image used by black-box and soak tests. Reads `FAKE_OUTCOME` env 
 
 Long-running resource leak detector. Submits tasks at intervals, collects RSS, pool stats, and container counts, then analyzes for memory growth and container accumulation. Run via `make test-soak` (10-min short mode). It derives a sibling `-soak.db` path from `BACKFLOW_DATABASE_PATH`, starts a dedicated Backlite subprocess against that database, truncates the soak tables there, and prunes stale containers at start and end. The wrapper script (`scripts/test-soak.sh`) warns before truncating and asks for confirmation.
 
-### Agent container (`docker/agent/`)
+### Agent containers — three coexisting images
 
-Node.js 24 image with Claude Code CLI + Codex CLI + git + gh. `entrypoint.sh`: clone → checkout → inject CLAUDE.md → run agent (with retry up to 3 attempts) → commit → push → create PR → optional self-review. Supports two harnesses: `claude_code` (`--output-format stream-json`, `--max-turns`) and `codex` (`exec --dangerously-bypass-approvals-and-sandbox`). Both harnesses work in code and review modes. Writes `status.json` to the container workspace, which the orchestrator reads via `docker cp` after the container exits.
+Three docker images coexist; the orchestrator picks one per dispatch via `internal/orchestrator/imagerouter`:
+
+- **`docker/agent/`** — Original agent. Node.js 24 + Claude Code CLI + Codex CLI + git + gh. `entrypoint.sh` (~611 lines) does prep stage → clone → CLAUDE.md inject → run agent (in-container retry up to 3 attempts) → commit → push → create PR → optional self-review. Supports both `claude_code` and `codex` harnesses in code and review modes.
+- **`docker/reader/`** — Read-mode agent. Same base, `reader-entrypoint.sh` runs the harness against a URL and emits a structured reading JSON.
+- **`docker/skill-agent/`** — Opt-in via `BACKFLOW_SKILL_AGENT_IMAGE`. **Claude Code only** (codex tasks are rejected with a clear error). Skill bundles bake at `/opt/backflow/skills/{code,review,read}/`. `entrypoint.sh` is ~95 lines: validate env, fetch S3-offloaded fields, gh auth, copy the requested skill into `~/.claude/skills/<mode>/`, exec `claude` with a starter prompt, then notarize `cost_usd` from the harness stream-json into the agent-written `status.json` (or synthesize a fallback failure status if missing/unparsable). No mode branching, no harness branching, no in-container retry, no prep stage. `status_writer.sh` and `reader_helpers.sh` do not exist on this image. Source-tree skill bundles live at `docker/skill-agent/skills/{code,review,read}/`.
+
+**Image routing** (`internal/orchestrator/imagerouter`):
+1. `task.harness == "claude_code"` and `cfg.SkillAgentImage != ""` → `SkillAgentImage`
+2. `task.task_mode == "read"` and `cfg.ReaderImage != ""` → `ReaderImage`
+3. Otherwise → `cfg.AgentImage`
+
+When `BACKFLOW_SKILL_AGENT_IMAGE` is unset, behavior is identical to before. When set, only claude_code tasks reroute — codex tasks continue to use the existing images. If the orchestrator routes a codex task to the skill-agent image (which it shouldn't), the entrypoint fails fast.
+
+### Chained self-review
+
+`POST /api/v1/tasks` accepts an optional `self_review: true`. When a code task with `self_review=true` completes successfully and produced a PR URL, the orchestrator atomically creates a child review task in the same SQLite transaction as the parent's completion. The child has:
+
+- `task_mode = review`
+- `parent_task_id` set to the parent's ID
+- `max_budget_usd = 2.00` (flat — independent of parent budget; standalone review tasks keep using the request's `max_budget_usd`)
+- harness inherited from the parent
+- prompt synthesized from the parent's PR URL + parent prompt for context
+
+`task.created` fires for the child after the parent's `task.completed`. Subsequent webhook events for the child (`task.running`, `task.completed`, …) include `parent_task_id` so downstream automation can correlate. If the child insert fails the parent's COMPLETE rolls back too — atomicity is by SQLite transaction in `lifecycle.Coordinator.Complete`'s `ChainTx` hook, with the planning logic in `internal/orchestrator/chain`.
 
 ### Statuses
 
@@ -115,7 +141,7 @@ Reading-mode env vars:
 
 ## Skill-based agent image (opt-in)
 
-- `BACKFLOW_SKILL_AGENT_IMAGE` — Optional. When set and `task.harness == "claude_code"`, the orchestrator routes the task to this image regardless of mode. The image is expected to ship per-mode skill bundles (`code`, `review`, `read`) under `/opt/backflow/skills/`. Codex tasks are unaffected and continue to use the existing agent / reader images. Image-routing logic lives in `internal/orchestrator/imagerouter`.
+`BACKFLOW_SKILL_AGENT_IMAGE` opts a deployment into the new `docker/skill-agent/` image (claude_code-only). See **Agent containers — three coexisting images** above for the routing rule and the absent-from-this-image components (`status_writer.sh`, `reader_helpers.sh`, prep stage, in-container retry loop). Skill bundles live in the source tree at `docker/skill-agent/skills/{code,review,read}/`; the entrypoint copies the requested bundle into `~/.claude/skills/<mode>/` at start so Claude Code's native skill loader picks it up. Skills are not a user-facing extension point — operators do not supply or override skill content per task.
 
 The `tasks` table carries a `force` boolean column. REST callers can set `force` on `POST /api/v1/tasks`; `Force=true` bypasses the dispatch-time duplicate check and allows an existing reading row to be overwritten on completion.
 

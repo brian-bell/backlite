@@ -13,6 +13,7 @@ import (
 	"github.com/brian-bell/backlite/internal/models"
 	"github.com/brian-bell/backlite/internal/notify"
 	"github.com/brian-bell/backlite/internal/orchestrator/outputs"
+	"github.com/brian-bell/backlite/internal/store"
 )
 
 func TestMonitorCancelled_DecrementsRunning(t *testing.T) {
@@ -196,6 +197,120 @@ func TestHandleCompletion_Success(t *testing.T) {
 	types := n.eventTypes()
 	if len(types) != 1 || types[0] != notify.EventTaskCompleted {
 		t.Errorf("expected [task.completed], got %v", types)
+	}
+}
+
+// TestHandleCompletion_SelfReview_ChainsReviewTask covers the end-to-end
+// self-review chain via handleCompletion: a successful code task with
+// SelfReview=true and a non-empty PR URL produces a child review task with
+// the parent's PR URL synthesized into its prompt.
+func TestHandleCompletion_SelfReview_ChainsReviewTask(t *testing.T) {
+	s := newMockStore()
+	now := time.Now().UTC()
+	s.CreateTask(context.Background(), &models.Task{
+		ID:          "bf_selfrev",
+		Status:      models.TaskStatusRunning,
+		TaskMode:    models.TaskModeCode,
+		Harness:     models.HarnessClaudeCode,
+		RepoURL:     "https://github.com/test/repo",
+		Prompt:      "Refactor auth handler",
+		SelfReview:  true,
+		ContainerID: "cont-self",
+		StartedAt:   &now,
+	})
+
+	bus, n := newTestBus()
+	o := newTestOrchestrator(s, bus)
+	o.running = 1
+
+	task, _ := s.GetTask(context.Background(), "bf_selfrev")
+	o.handleCompletion(context.Background(), task, ContainerStatus{
+		Done:     true,
+		ExitCode: 0,
+		PRURL:    "https://github.com/test/repo/pull/77",
+	})
+	bus.Close()
+
+	// Parent persisted as completed.
+	parent, _ := s.GetTask(context.Background(), "bf_selfrev")
+	if parent.Status != models.TaskStatusCompleted {
+		t.Errorf("parent.Status = %q, want completed", parent.Status)
+	}
+
+	// One child task should exist with the right shape.
+	tasks, _ := s.ListTasks(context.Background(), store.TaskFilter{})
+	var child *models.Task
+	for _, t2 := range tasks {
+		if t2.ID == parent.ID {
+			continue
+		}
+		child = t2
+	}
+	if child == nil {
+		t.Fatalf("no child task created; tasks = %+v", tasks)
+	}
+	if child.TaskMode != models.TaskModeReview {
+		t.Errorf("child.TaskMode = %q, want review", child.TaskMode)
+	}
+	if child.ParentTaskID == nil || *child.ParentTaskID != parent.ID {
+		t.Errorf("child.ParentTaskID = %v, want %q", child.ParentTaskID, parent.ID)
+	}
+	if child.MaxBudgetUSD != 2.0 {
+		t.Errorf("child.MaxBudgetUSD = %v, want 2.0", child.MaxBudgetUSD)
+	}
+	if child.Harness != models.HarnessClaudeCode {
+		t.Errorf("child.Harness = %q, want claude_code (inherited)", child.Harness)
+	}
+
+	// Two events: parent.completed, child.created. Order matters.
+	types := n.eventTypes()
+	if len(types) != 2 {
+		t.Fatalf("event types = %v, want [task.completed, task.created]", types)
+	}
+	if types[0] != notify.EventTaskCompleted {
+		t.Errorf("event 0 = %q, want task.completed", types[0])
+	}
+	if types[1] != notify.EventTaskCreated {
+		t.Errorf("event 1 = %q, want task.created", types[1])
+	}
+}
+
+// TestHandleCompletion_SelfReview_NoPR_NoChain pins that a successful code
+// task without a PR URL doesn't trigger a chain (PR URL is the contract).
+func TestHandleCompletion_SelfReview_NoPR_NoChain(t *testing.T) {
+	s := newMockStore()
+	now := time.Now().UTC()
+	s.CreateTask(context.Background(), &models.Task{
+		ID:          "bf_nopr",
+		Status:      models.TaskStatusRunning,
+		TaskMode:    models.TaskModeCode,
+		Harness:     models.HarnessClaudeCode,
+		RepoURL:     "https://github.com/test/repo",
+		Prompt:      "Refactor",
+		SelfReview:  true,
+		ContainerID: "cont-nopr",
+		StartedAt:   &now,
+	})
+
+	bus, n := newTestBus()
+	o := newTestOrchestrator(s, bus)
+	o.running = 1
+
+	task, _ := s.GetTask(context.Background(), "bf_nopr")
+	o.handleCompletion(context.Background(), task, ContainerStatus{
+		Done:     true,
+		ExitCode: 0,
+		PRURL:    "",
+	})
+	bus.Close()
+
+	tasks, _ := s.ListTasks(context.Background(), store.TaskFilter{})
+	if len(tasks) != 1 {
+		t.Fatalf("tasks = %d, want 1 (no chain when no PR URL)", len(tasks))
+	}
+	types := n.eventTypes()
+	if len(types) != 1 || types[0] != notify.EventTaskCompleted {
+		t.Errorf("event types = %v, want [task.completed] only", types)
 	}
 }
 

@@ -155,6 +155,7 @@ func TestDispatch_RoutesCodexToOldImage(t *testing.T) {
 		Harness:    models.HarnessCodex,
 		TaskMode:   models.TaskModeCode,
 		AgentImage: "backlite-agent",
+		RepoURL:    "https://github.com/test/repo",
 		Prompt:     "codex task",
 	})
 

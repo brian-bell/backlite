@@ -1,0 +1,22 @@
+{
+  "exit_code": 0,
+  "complete": true,
+  "needs_input": false,
+  "question": "",
+  "error": "",
+  "task_mode": "read",
+  "cost_usd": 0.07,
+  "elapsed_time_sec": 41,
+  "url": "https://example.com/posts/concurrency-in-go",
+  "title": "Concurrency in Go: Patterns and Pitfalls",
+  "tldr": "A practical tour of Go concurrency primitives with worked examples for fan-out workers, pipelines, and graceful shutdown.",
+  "tags": ["go", "concurrency", "systems"],
+  "keywords": ["goroutines", "channels", "context", "select"],
+  "people": ["Alice Example"],
+  "orgs": ["ExampleCo"],
+  "novelty_verdict": "extends_existing",
+  "connections": [
+    {"reading_id": "bf_01HX0EXAMPLECONCURPREV1", "reason": "covers the same primitives but from a service-author POV"}
+  ],
+  "summary_markdown": "## Summary\n\n..."
+}

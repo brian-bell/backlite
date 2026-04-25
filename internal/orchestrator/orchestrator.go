@@ -11,6 +11,7 @@ import (
 	"github.com/brian-bell/backlite/internal/embeddings"
 	"github.com/brian-bell/backlite/internal/models"
 	"github.com/brian-bell/backlite/internal/notify"
+	"github.com/brian-bell/backlite/internal/orchestrator/imagerouter"
 	"github.com/brian-bell/backlite/internal/orchestrator/lifecycle"
 	"github.com/brian-bell/backlite/internal/store"
 )
@@ -108,6 +109,9 @@ func (o *Orchestrator) Docker() Runner {
 func (o *Orchestrator) Start(ctx context.Context) {
 	log.Info().
 		Str("agent_image", o.config.AgentImage).
+		Str("reader_image", o.config.ReaderImage).
+		Str("skill_agent_image", o.config.SkillAgentImage).
+		Str("image_routing", imagerouter.Describe(o.config)).
 		Int("max_concurrent", o.config.MaxConcurrent()).
 		Dur("poll_interval", o.config.PollInterval).
 		Msg("orchestrator started")

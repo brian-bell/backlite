@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -11,6 +12,34 @@ import (
 	"github.com/brian-bell/backlite/internal/notify"
 	"github.com/brian-bell/backlite/internal/store"
 )
+
+// failingStore wraps a real store and returns errFn for the methods toggled
+// in failOn. Lets us simulate transient SQLite failures during Complete
+// without tearing down the underlying tempfile.
+type failingStore struct {
+	store.Store
+	errFn          error
+	failComplete   bool
+	failWithTx     bool
+	completeCalled int
+	withTxCalled   int
+}
+
+func (f *failingStore) CompleteTask(ctx context.Context, id string, r store.TaskResult) error {
+	f.completeCalled++
+	if f.failComplete {
+		return f.errFn
+	}
+	return f.Store.CompleteTask(ctx, id, r)
+}
+
+func (f *failingStore) WithTx(ctx context.Context, fn func(store.Store) error) error {
+	f.withTxCalled++
+	if f.failWithTx {
+		return f.errFn
+	}
+	return f.Store.WithTx(ctx, fn)
+}
 
 // captureEmitter records events for test assertions.
 type captureEmitter struct {
@@ -386,6 +415,88 @@ func TestComplete_SuccessPath(t *testing.T) {
 	}
 	if n := len(slots.Released()); n != 1 {
 		t.Errorf("slots.Release calls = %d, want 1", n)
+	}
+}
+
+// TestComplete_StoreWriteFailure_DoesNotReleaseSlotOrEmit pins the gate that
+// keeps a write failure from leaking into observable side effects. If
+// CompleteTask never persisted the terminal state, the DB row is still
+// running — the next monitor tick will reprocess the exited container and
+// retry. Releasing the slot or emitting task.completed here would lie about
+// state we never managed to persist (and would let the next tick double-emit).
+func TestComplete_StoreWriteFailure_DoesNotReleaseSlotOrEmit(t *testing.T) {
+	real := newTestStore(t)
+	ctx := context.Background()
+	task := seedRunningTask(t, real, "bf_COMP_DBFAIL")
+
+	dbErr := errors.New("simulated db outage")
+	failing := &failingStore{Store: real, errFn: dbErr, failComplete: true}
+
+	emitter := &captureEmitter{}
+	slots := &trackingSlots{}
+	c := New(failing, emitter, WithSlots(slots), WithMaxUserRetries(2))
+
+	err := c.Complete(ctx, task, Result{
+		Status:    models.TaskStatusCompleted,
+		EventType: notify.EventTaskCompleted,
+		EventOpts: []notify.EventOption{notify.WithContainerStatus("", "", "tail")},
+	})
+	if err == nil {
+		t.Fatal("Complete should return the underlying write error")
+	}
+
+	got, _ := real.GetTask(ctx, task.ID)
+	if got.Status != models.TaskStatusRunning {
+		t.Errorf("DB status = %q, want still running (write failed, next tick must retry)", got.Status)
+	}
+	if n := len(slots.Released()); n != 0 {
+		t.Errorf("slots.Release calls = %d, want 0 on write failure", n)
+	}
+	if evs := emitter.Events(); len(evs) != 0 {
+		t.Errorf("events = %d, want 0 on write failure: %+v", len(evs), evs)
+	}
+}
+
+// TestComplete_ChainAndFallbackBothFail_DoesNotReleaseSlotOrEmit covers the
+// reviewer's exact concern: when the parent-complete + child-insert tx rolls
+// back AND the non-chain fallback CompleteTask also fails, neither write
+// landed, so the same gate must hold (no slot release, no event, no chain
+// child emitted).
+func TestComplete_ChainAndFallbackBothFail_DoesNotReleaseSlotOrEmit(t *testing.T) {
+	real := newTestStore(t)
+	ctx := context.Background()
+	task := seedRunningTask(t, real, "bf_COMP_CHAINDBFAIL")
+
+	dbErr := errors.New("simulated db outage")
+	failing := &failingStore{Store: real, errFn: dbErr, failWithTx: true, failComplete: true}
+
+	emitter := &captureEmitter{}
+	slots := &trackingSlots{}
+	c := New(failing, emitter, WithSlots(slots), WithMaxUserRetries(2))
+
+	chainCalls := 0
+	err := c.Complete(ctx, task, Result{
+		Status:    models.TaskStatusCompleted,
+		EventType: notify.EventTaskCompleted,
+		EventOpts: []notify.EventOption{notify.WithContainerStatus("", "", "tail")},
+		ChainTx: func(_ context.Context, _ store.Store) (*models.Task, error) {
+			chainCalls++
+			return &models.Task{ID: "bf_chain_child"}, nil
+		},
+	})
+	if err == nil {
+		t.Fatal("Complete should return the underlying write error")
+	}
+
+	got, _ := real.GetTask(ctx, task.ID)
+	if got.Status != models.TaskStatusRunning {
+		t.Errorf("DB status = %q, want still running (both writes failed)", got.Status)
+	}
+	if n := len(slots.Released()); n != 0 {
+		t.Errorf("slots.Release calls = %d, want 0 when both writes failed", n)
+	}
+	if evs := emitter.Events(); len(evs) != 0 {
+		t.Errorf("events = %d, want 0 when both writes failed: %+v", len(evs), evs)
 	}
 }
 

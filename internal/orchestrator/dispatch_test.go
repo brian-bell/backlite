@@ -353,12 +353,12 @@ func TestDispatch_ReadTask_OrchestratorMissingReaderImage_Fails(t *testing.T) {
 	}
 }
 
-// TestDispatch_ReadTask_SkillImageWithoutReaderImage_Succeeds pins that an
-// operator who configures BACKFLOW_SKILL_AGENT_IMAGE for a claude_code-only
-// fleet can dispatch read tasks without separately configuring
-// BACKFLOW_READER_IMAGE — the skill bundle ships the read skill, so the
-// router resolves the skill image and dispatch must let it through.
-func TestDispatch_ReadTask_SkillImageWithoutReaderImage_Succeeds(t *testing.T) {
+// TestDispatch_ReadTask_SkillImageWithoutReaderImage_Fails pins that the
+// skill image does NOT unlock read mode on its own. The read skill bundle
+// is a stub today (slice 6), so an operator who only sets
+// BACKFLOW_SKILL_AGENT_IMAGE without BACKFLOW_READER_IMAGE must get a clean
+// dispatch failure rather than a silent route into the stub.
+func TestDispatch_ReadTask_SkillImageWithoutReaderImage_Fails(t *testing.T) {
 	s := newMockStore()
 	s.CreateTask(context.Background(), &models.Task{
 		ID:       "bf_read_skill_no_reader",
@@ -368,32 +368,27 @@ func TestDispatch_ReadTask_SkillImageWithoutReaderImage_Succeeds(t *testing.T) {
 		Prompt:   "https://example.com/post",
 	})
 
-	var captured *models.Task
 	bus, _ := newTestBus()
 	defer bus.Close()
 	mock := &mockDockerManager{
-		runAgentFn: func(_ context.Context, task *models.Task) (string, error) {
-			cp := *task
-			captured = &cp
-			return "container-skill-read", nil
+		runAgentFn: func(_ context.Context, _ *models.Task) (string, error) {
+			t.Fatal("RunAgent should not be called when read mode has no reader image")
+			return "", nil
 		},
 		inspectResults: map[string]ContainerStatus{},
 	}
 	o := newTestOrchestrator(s, bus, withDocker(mock), withEmbedder(&mockEmbedder{}))
 	o.config.AgentImage = "backlite-agent"
 	o.config.ReaderImage = ""                            // intentionally unset
-	o.config.SkillAgentImage = "backlite-skill-agent:v1" // covers read via skill bundle
+	o.config.SkillAgentImage = "backlite-skill-agent:v1" // read bundle is a stub
 
 	task, _ := s.GetTask(context.Background(), "bf_read_skill_no_reader")
-	if err := o.dispatch(context.Background(), task); err != nil {
-		t.Fatalf("dispatch: %v (skill image should let read tasks through without ReaderImage)", err)
+	err := o.dispatch(context.Background(), task)
+	if err == nil {
+		t.Fatal("dispatch should fail when read has no reader image, even with skill image set")
 	}
-
-	if captured == nil {
-		t.Fatal("RunAgent was not called")
-	}
-	if captured.AgentImage != "backlite-skill-agent:v1" {
-		t.Errorf("captured AgentImage = %q, want %q", captured.AgentImage, "backlite-skill-agent:v1")
+	if !strings.Contains(err.Error(), "BACKFLOW_READER_IMAGE") {
+		t.Errorf("error = %v, want a message that points at BACKFLOW_READER_IMAGE", err)
 	}
 }
 

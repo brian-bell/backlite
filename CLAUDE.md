@@ -20,9 +20,11 @@ make test-fake-agent    # Unit tests for the fake agent Docker image
 make deps               # go mod tidy
 make clean              # Remove bin/ directory
 make db-running         # Show running tasks (also: db-pending, db-completed, db-failed)
-make docker-agent-build-local  # Agent image (native arch)
-make docker-server-build-local # Server image (native arch)
-make docker-reader-build-local # Reader image (native arch)
+make docker-agent-build-local       # Agent image (native arch)
+make docker-server-build-local      # Server image (native arch)
+make docker-reader-build-local      # Reader image (native arch)
+make docker-skill-agent-build-local # Skill-agent image (opt-in; see "Skill-based agent image")
+make test-skill-agent-entrypoint    # Shell-level e2e tests for the skill-agent entrypoint
 goose -dir migrations status # Show pending/applied migrations
 goose -dir migrations up     # Apply the next migration(s)
 goose -dir migrations down   # Roll back the last migration
@@ -49,11 +51,13 @@ Two goroutines: chi REST API on `:8080` + polling orchestrator (5s default). The
 - `GET /api/v1/tasks/{id}/logs` — Stream container logs
 - `GET /api/v1/tasks/{id}/output` — Return the agent's stdout log (`container_output.log`) persisted to `BACKFLOW_DATA_DIR` after the container exits
 - `GET /api/v1/tasks/{id}/output.json` — Return the JSON task metadata snapshot (`task.json`) persisted alongside the output log
+- `GET /api/v1/readings/lookup` — Exact-URL duplicate check (used by reader containers and the orchestrator's dispatch-time guard)
+- `POST /api/v1/readings/similar` — Semantic similarity search over stored `readings` (cosine similarity in Go over JSON-encoded embeddings)
 
 ### Key modules (`internal/`)
 
 - **api/** — chi router, handlers, JSON responses, `LogFetcher` interface, `NewTask` shared task-creation helper, `CancelTask` and `RetryTask` shared action helpers
-- **orchestrator/** — Poll loop (`orchestrator.go`), dispatch (`dispatch.go`), monitoring (`monitor.go`, including `handleReadingCompletion` for read-mode tasks), recovery (`recovery.go`). Subpackages: `docker/` (local Docker container management), `outputs/` (filesystem writer for agent logs + task metadata), `lifecycle/` (`Coordinator` owning task state transitions, slot accounting, and paired event emission — callers invoke domain verbs like `Dispatch`/`Complete`/`Requeue`/`Cancel` instead of selecting Store methods).
+- **orchestrator/** — Poll loop (`orchestrator.go`), dispatch (`dispatch.go`), monitoring (`monitor.go`, including `handleReadingCompletion` for read-mode tasks), recovery (`recovery.go`). Subpackages: `docker/` (local Docker container management), `outputs/` (filesystem writer for agent logs + task metadata), `lifecycle/` (`Coordinator` owning task state transitions, slot accounting, and paired event emission — callers invoke domain verbs like `Dispatch`/`Complete`/`Requeue`/`Cancel` instead of selecting Store methods; on a `Complete` write failure the slot is **not** released and no event is emitted, so the next monitor tick can retry against the still-`running` row), `chain/` (atomic self-review chained-task creation — exposes a `ChainTx` callback that the lifecycle Coordinator runs in the same SQLite transaction as the parent's `CompleteTask`, so the parent commit and child INSERT either both land or both roll back), `imagerouter/` (selects which agent image to use given task harness + mode + configured images).
 - **store/** — `Store` interface + SQLite (`database/sql`, goose migrations). Includes `UpsertReading` / `GetReadingByURL` / `FindSimilarReadings` for the `readings` table.
 - **models/** — `Task` and `Reading` (+ `Connection`) structs with status enums. `Task.AgentImage` records which Docker image the orchestrator used (read tasks get `ReaderImage`, others get the default agent image). `Task.ParentTaskID` is an optional pointer to the task that spawned this one (retry chains, follow-ups, sub-tasks); the column has a self-referential FK with `ON DELETE SET NULL`. `FindFirstURL` / `InferReviewMode` auto-detect review mode when a prompt's first URL is a GitHub PR URL.
 - **embeddings/** — Thin `Embedder` interface (`Embed(ctx, text) ([]float32, error)`) with an `OpenAIEmbedder` HTTP client (no SDK). Used by the orchestrator to embed a reading's final TL;DR before writing the `readings` row.
@@ -71,11 +75,15 @@ Long-running resource leak detector. Submits tasks at intervals, collects RSS, p
 
 ### Agent container (`docker/agent/`)
 
-Node.js 24 image with Claude Code CLI + Codex CLI + git + gh. `entrypoint.sh`: clone → checkout → inject CLAUDE.md → run agent (with retry up to 3 attempts) → commit → push → create PR → optional self-review. Supports two harnesses: `claude_code` (`--output-format stream-json`, `--max-turns`) and `codex` (`exec --dangerously-bypass-approvals-and-sandbox`). Both harnesses work in code and review modes. Writes `status.json` to the container workspace, which the orchestrator reads via `docker cp` after the container exits.
+Node.js 24 image with Claude Code CLI + Codex CLI + git + gh. `entrypoint.sh`: clone → checkout → inject CLAUDE.md → run agent (with retry up to 3 attempts) → commit → push → create PR → optional self-review. Supports two harnesses: `claude_code` (`--output-format stream-json`, `--max-turns`) and `codex` (`exec --dangerously-bypass-approvals-and-sandbox`). Both harnesses work in code and review modes. Writes `status.json` to the container workspace, which the orchestrator reads via `docker cp` after the container exits. Successful runs must set `complete=true` in `status.json`; the orchestrator no longer treats `exit_code=0` alone as success.
 
 ### Statuses
 
 - **Task:** `pending` → `provisioning` → `running` → `completed` | `failed` | `interrupted` | `cancelled` | `recovering` → `pending` | `running` | `completed` | `failed`
+
+### Success determination
+
+Success is the agent's call, not the harness's. `monitor.handleCompletion` requires `complete=true` in the agent-written `status.json` to mark a task `completed`; any other state (including `complete=false` with a clean `exit_code=0`) becomes `failed`. This keeps skill-authored failure branches (e.g. "no repo URL in prompt") from slipping through as success when the underlying CLI happened to exit cleanly. `needs_input=true` short-circuits to `failed` with the `task.needs_input` event regardless of `complete`.
 
 ### Webhook events
 
@@ -115,7 +123,9 @@ Reading-mode env vars:
 
 ## Skill-based agent image (opt-in)
 
-- `BACKFLOW_SKILL_AGENT_IMAGE` — Optional. When set and `task.harness == "claude_code"`, the orchestrator routes the task to this image regardless of mode. The image is expected to ship per-mode skill bundles (`code`, `review`, `read`) under `/opt/backflow/skills/`. Codex tasks are unaffected and continue to use the existing agent / reader images. Image-routing logic lives in `internal/orchestrator/imagerouter`.
+- `BACKFLOW_SKILL_AGENT_IMAGE` — Optional. When set, the orchestrator routes `claude_code` tasks in `code` or `auto` mode to this image. Read-mode tasks continue to use `BACKFLOW_READER_IMAGE`, and review-mode tasks continue to use the default agent image, because the skill image's `read` and `review` bundles are still placeholders (slices 6 and 5). The image ships per-mode skill bundles (`auto`, `code`, `review`, `read`) under `/opt/backflow/skills/`; the `auto` bundle handles the API's default `task_mode=auto` by inspecting the prompt and dispatching to the `code` or `review` skill at runtime, and the entrypoint installs both sub-bundles alongside `auto` so the dispatch can find them. Codex tasks are unaffected. Image-routing logic lives in `internal/orchestrator/imagerouter`.
+
+The skill-agent image (`docker/skill-agent/`) is intentionally thin: the `entrypoint.sh` validates env, optionally fetches S3-offloaded fields, sets up `gh` auth, copies the requested skill bundle into `~/.claude/skills/`, runs `claude_code`, and notarizes `cost_usd` from the harness's stream-json into the agent-written `status.json` (or synthesizes a fallback failure status if the agent didn't write one). No mode/harness branching, no retry loop. The `status.json` contract is enforced by the Go validator in `internal/skillcontract`, which embeds `schema.json`, walks every `docker/skill-agent/skills/*/examples/status.json` fixture in tests, and pins a deliberately broken fixture to the negative path.
 
 The `tasks` table carries a `force` boolean column. REST callers can set `force` on `POST /api/v1/tasks`; `Force=true` bypasses the dispatch-time duplicate check and allows an existing reading row to be overwritten on completion.
 

@@ -2,7 +2,9 @@
        docker-agent-build-local \
        docker-reader-build-local \
        docker-server-build-local \
+       docker-skill-agent-build-local \
        test-fake-agent test-blackbox test-schema test-soak \
+       test-skill-agent-entrypoint \
        db-pending db-running db-completed db-failed \
        deps
 
@@ -53,6 +55,12 @@ docker-reader-build-local:
 
 docker-server-build-local:
 	$(DOCKER) build -t backlite-server -f docker/server/Dockerfile .
+
+docker-skill-agent-build-local:
+	$(DOCKER) build -t backlite-skill-agent docker/skill-agent/
+
+test-skill-agent-entrypoint:
+	bash docker/skill-agent/test_entrypoint.sh
 
 DB_QUERY = @$(ENV); sqlite3 -json "$$BACKFLOW_DATABASE_PATH"
 

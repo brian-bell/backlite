@@ -252,11 +252,20 @@ func (c *Coordinator) Complete(ctx context.Context, task *models.Task, r Result)
 	if !parentWritten {
 		if err := c.store.CompleteTask(ctx, task.ID, storeResult); err != nil {
 			log.Error().Err(err).Str("task_id", task.ID).Msg("lifecycle.Complete: failed to complete task in store")
-			applyTaskResult(task, storeResult, now)
 			writeErr = err
 		} else {
 			c.refreshTask(ctx, task, storeResult, now)
 		}
+	}
+
+	if writeErr != nil {
+		// We never persisted the terminal state. Don't release the slot,
+		// don't emit, don't flip ready_for_retry — those would lie about
+		// state we couldn't write, and (because the DB row is still
+		// running) the next monitor tick will reprocess the exited
+		// container and call Complete again. Releasing here would also
+		// drop the slot accounting below the live container count.
+		return writeErr
 	}
 
 	c.slots.Release(ctx, task)
@@ -276,7 +285,7 @@ func (c *Coordinator) Complete(ctx context.Context, task *models.Task, r Result)
 	if chainChild != nil {
 		c.emitter.Emit(notify.NewEvent(notify.EventTaskCreated, chainChild))
 	}
-	return writeErr
+	return nil
 }
 
 // refreshTask reloads the task row from the store so the caller's pointer

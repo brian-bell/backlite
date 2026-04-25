@@ -1019,6 +1019,11 @@ func TestKillTask(t *testing.T) {
 	}
 }
 
+// TestKillTask_CompleteTaskError pins that a write failure during killTask
+// keeps the slot held and suppresses the event. The DB row stays running, so
+// the next monitor tick will reprocess the (now-stopped) container and try
+// Complete again. Releasing the slot or emitting here would lie about a
+// terminal state we never persisted.
 func TestKillTask_CompleteTaskError(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
@@ -1043,15 +1048,11 @@ func TestKillTask_CompleteTaskError(t *testing.T) {
 	o.killTask(context.Background(), task, "exceeded max runtime")
 	bus.Close()
 
-	// releaseSlot should still run.
-	if o.running != 0 {
-		t.Errorf("running = %d, want 0", o.running)
+	if o.running != 1 {
+		t.Errorf("running = %d, want 1 (slot must stay held when DB write failed)", o.running)
 	}
-
-	// Event should still be emitted.
-	evTypes := n.eventTypes()
-	if len(evTypes) != 1 || evTypes[0] != notify.EventTaskFailed {
-		t.Errorf("expected [task.failed], got %v", evTypes)
+	if evTypes := n.eventTypes(); len(evTypes) != 0 {
+		t.Errorf("events = %v, want none on write failure", evTypes)
 	}
 }
 
@@ -1669,6 +1670,11 @@ func TestMonitorCancelled_ClearAssignmentError(t *testing.T) {
 	}
 }
 
+// TestHandleCompletion_CompleteTaskError pins that a CompleteTask write
+// failure keeps the slot held and suppresses task.completed. The container
+// has already exited and the DB row is still running, so the next monitor
+// tick reprocesses the container and retries — emitting here would let the
+// next tick double-emit task.completed.
 func TestHandleCompletion_CompleteTaskError(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
@@ -1690,15 +1696,11 @@ func TestHandleCompletion_CompleteTaskError(t *testing.T) {
 	o.handleCompletion(context.Background(), task, status)
 	bus.Close()
 
-	// releaseSlot should still run despite CompleteTask error
-	if o.running != 0 {
-		t.Errorf("running = %d, want 0 (releaseSlot should still run)", o.running)
+	if o.running != 1 {
+		t.Errorf("running = %d, want 1 (slot stays held on write failure)", o.running)
 	}
-
-	// Event should still be emitted
-	types := notifier.eventTypes()
-	if len(types) != 1 || types[0] != notify.EventTaskCompleted {
-		t.Errorf("expected [task.completed], got %v", types)
+	if types := notifier.eventTypes(); len(types) != 0 {
+		t.Errorf("events = %v, want none on write failure", types)
 	}
 }
 

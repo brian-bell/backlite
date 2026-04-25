@@ -100,6 +100,92 @@ func TestDispatchPending_DispatchesTask(t *testing.T) {
 	}
 }
 
+// TestDispatch_RoutesToSkillAgentImage verifies dispatch consults the
+// imagerouter and overrides task.AgentImage with the resolved value before
+// calling docker.RunAgent. With BACKFLOW_SKILL_AGENT_IMAGE configured and a
+// claude_code task, the skill image should win regardless of the value the
+// task carried in (which would be the default agent image set at creation).
+func TestDispatch_RoutesToSkillAgentImage(t *testing.T) {
+	s := newMockStore()
+	s.CreateTask(context.Background(), &models.Task{
+		ID:         "bf_skill",
+		Status:     models.TaskStatusPending,
+		Harness:    models.HarnessClaudeCode,
+		TaskMode:   models.TaskModeCode,
+		AgentImage: "backlite-agent",
+		RepoURL:    "https://github.com/test/repo",
+		Prompt:     "use the skill image",
+	})
+
+	var captured *models.Task
+	bus, _ := newTestBus()
+	mock := &mockDockerManager{
+		runAgentFn: func(_ context.Context, task *models.Task) (string, error) {
+			cp := *task
+			captured = &cp
+			return "container-skill", nil
+		},
+		inspectResults: map[string]ContainerStatus{},
+	}
+	o := newTestOrchestrator(s, bus, withDocker(mock))
+	o.config.AgentImage = "backlite-agent"
+	o.config.SkillAgentImage = "backlite-skill-agent:v1"
+
+	task, _ := s.GetTask(context.Background(), "bf_skill")
+	if err := o.dispatch(context.Background(), task); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	bus.Close()
+
+	if captured == nil {
+		t.Fatal("RunAgent was not called")
+	}
+	if captured.AgentImage != "backlite-skill-agent:v1" {
+		t.Errorf("captured AgentImage = %q, want %q", captured.AgentImage, "backlite-skill-agent:v1")
+	}
+}
+
+// TestDispatch_RoutesCodexToOldImage pins that codex tasks ignore the skill
+// image even when BACKFLOW_SKILL_AGENT_IMAGE is set.
+func TestDispatch_RoutesCodexToOldImage(t *testing.T) {
+	s := newMockStore()
+	s.CreateTask(context.Background(), &models.Task{
+		ID:         "bf_codex",
+		Status:     models.TaskStatusPending,
+		Harness:    models.HarnessCodex,
+		TaskMode:   models.TaskModeCode,
+		AgentImage: "backlite-agent",
+		Prompt:     "codex task",
+	})
+
+	var captured *models.Task
+	bus, _ := newTestBus()
+	mock := &mockDockerManager{
+		runAgentFn: func(_ context.Context, task *models.Task) (string, error) {
+			cp := *task
+			captured = &cp
+			return "container-codex", nil
+		},
+		inspectResults: map[string]ContainerStatus{},
+	}
+	o := newTestOrchestrator(s, bus, withDocker(mock))
+	o.config.AgentImage = "backlite-agent"
+	o.config.SkillAgentImage = "backlite-skill-agent:v1"
+
+	task, _ := s.GetTask(context.Background(), "bf_codex")
+	if err := o.dispatch(context.Background(), task); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	bus.Close()
+
+	if captured == nil {
+		t.Fatal("RunAgent was not called")
+	}
+	if captured.AgentImage != "backlite-agent" {
+		t.Errorf("captured AgentImage = %q, want %q (codex ignores skill image)", captured.AgentImage, "backlite-agent")
+	}
+}
+
 func TestDispatchPending_FailedDispatch(t *testing.T) {
 	s := newMockStore()
 	s.CreateTask(context.Background(), &models.Task{

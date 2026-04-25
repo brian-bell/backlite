@@ -29,6 +29,7 @@ type Config struct {
 	// Agent
 	AgentImage            string
 	ReaderImage           string
+	SkillAgentImage       string
 	DefaultHarness        string
 	DefaultClaudeModel    string
 	DefaultCodexModel     string
@@ -87,6 +88,7 @@ func Load() (*Config, error) {
 		ContainerMemGB:        envInt("BACKFLOW_CONTAINER_MEMORY_GB", 8),
 		AgentImage:            envOr("BACKFLOW_AGENT_IMAGE", "backlite-agent"),
 		ReaderImage:           os.Getenv("BACKFLOW_READER_IMAGE"),
+		SkillAgentImage:       os.Getenv("BACKFLOW_SKILL_AGENT_IMAGE"),
 		DefaultHarness:        envOr("BACKFLOW_DEFAULT_HARNESS", "claude_code"),
 		DefaultClaudeModel:    envOr("BACKFLOW_DEFAULT_CLAUDE_MODEL", "claude-opus-4-7"),
 		DefaultCodexModel:     envOr("BACKFLOW_DEFAULT_CODEX_MODEL", "gpt-5.4"),

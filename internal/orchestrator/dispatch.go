@@ -8,6 +8,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/brian-bell/backlite/internal/models"
+	"github.com/brian-bell/backlite/internal/orchestrator/imagerouter"
 	"github.com/brian-bell/backlite/internal/store"
 )
 
@@ -63,6 +64,8 @@ func (o *Orchestrator) dispatch(ctx context.Context, task *models.Task) error {
 			}
 		}
 	}
+
+	task.AgentImage = imagerouter.Resolve(task, o.config)
 
 	if err := o.lifecycle.Assign(ctx, task.ID); err != nil {
 		return err

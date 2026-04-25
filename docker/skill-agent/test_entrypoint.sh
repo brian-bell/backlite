@@ -323,8 +323,10 @@ EOF
     if [ ! -f "$tmp/.claude/skills/review/SKILL.md" ]; then
         fail "review skill install: expected ~/.claude/skills/review/SKILL.md"
     fi
-    if ! grep -q "backlite-review" "$tmp/.claude/skills/review/SKILL.md"; then
-        fail "review skill: expected SKILL.md to identify itself as backlite-review"
+    # Pin a real-skill anchor that the slice 5 stub did not contain, so a
+    # regression to the placeholder bundle would fail this test.
+    if ! grep -q "Post the review" "$tmp/.claude/skills/review/SKILL.md"; then
+        fail "review skill: expected real review instructions, got the slice 5 stub"
     fi
 )
 pass "installs review skill and runs to completion"

@@ -31,13 +31,13 @@ func TestResolve_TableDriven(t *testing.T) {
 		{"codex+review, skill unset", models.HarnessCodex, models.TaskModeReview, "", readerImg, agentImg},
 		{"codex+read, skill unset", models.HarnessCodex, models.TaskModeRead, "", readerImg, readerImg},
 
-		// SkillAgentImage set + claude_code: route to skill image only for the
-		// modes whose bundles are real (code + auto). Review and read bundles
-		// are still stubs (slices 5/6) and would regress working paths, so
-		// they keep their existing routing.
+		// SkillAgentImage set + claude_code: route to skill image for every
+		// mode whose bundle is real (code + auto + review, slice 5). The read
+		// bundle is still a stub (slice 6), so read keeps its existing routing
+		// to ReaderImage rather than regressing the working read path.
 		{"claude_code+code, skill set", models.HarnessClaudeCode, models.TaskModeCode, skillImg, readerImg, skillImg},
 		{"claude_code+auto, skill set", models.HarnessClaudeCode, models.TaskModeAuto, skillImg, readerImg, skillImg},
-		{"claude_code+review, skill set (stub avoided)", models.HarnessClaudeCode, models.TaskModeReview, skillImg, readerImg, agentImg},
+		{"claude_code+review, skill set", models.HarnessClaudeCode, models.TaskModeReview, skillImg, readerImg, skillImg},
 		{"claude_code+read, skill set (reader wins)", models.HarnessClaudeCode, models.TaskModeRead, skillImg, readerImg, readerImg},
 		{"claude_code+read, skill set + reader unset (no fallback to skill stub)", models.HarnessClaudeCode, models.TaskModeRead, skillImg, "", agentImg},
 

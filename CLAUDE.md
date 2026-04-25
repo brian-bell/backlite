@@ -64,6 +64,7 @@ Two goroutines: chi REST API on `:8080` + polling orchestrator (5s default). The
 - **config/** — Env-var config (`BACKFLOW_*` prefix). `BACKFLOW_API_KEY` enables single-token API auth; otherwise `api_keys` in SQLite can back authenticated API/debug requests. `TaskDefaults(taskMode)` returns resolved defaults — for `read` mode it swaps in `ReaderImage` plus the `BACKFLOW_DEFAULT_READ_MAX_*` caps. `Apply(task, overrides)` fills zero-value fields using `*bool` overrides (nil = use default, non-nil = use pointed value)
 - **notify/** — `Notifier` interface, `WebhookNotifier` (HTTP POST, 3 retries, event filtering), `NoopNotifier`, `EventBus` (async fan-out delivery via buffered channel), `NewEvent` constructor with `EventOption` functional options (including `WithReading` for read-mode completion events). `Event` carries `TaskMode`, `ParentTaskID` (when set), plus optional reading fields (`TLDR`, `NoveltyVerdict`, `Tags`, `Connections`) populated only for read-task completion events.
 - **debug/** — `/debug/stats` handler: PID, uptime, running task count, database handle metrics
+- **skillcontract/** — Embedded JSON Schema validator (`schema.json`) for skill-agent `status.json` payloads. Tests walk every `docker/skill-agent/skills/*/examples/status.json` fixture and assert the deliberately broken negative fixture fails. Used by the skill-agent build to keep skill bundles' contract test fixtures honest.
 
 ### Fake agent (`test/blackbox/fake-agent/`)
 
@@ -123,9 +124,9 @@ Reading-mode env vars:
 
 ## Skill-based agent image (opt-in)
 
-- `BACKFLOW_SKILL_AGENT_IMAGE` — Optional. When set, the orchestrator routes `claude_code` tasks in `code` or `auto` mode to this image. Read-mode tasks continue to use `BACKFLOW_READER_IMAGE`, and review-mode tasks continue to use the default agent image, because the skill image's `read` bundle is still a placeholder (slice 6). The image ships per-mode skill bundles (`auto`, `code`, `review`, `read`) under `/opt/backflow/skills/`; the `auto` bundle handles the API's default `task_mode=auto` by inspecting the prompt and dispatching to the `code` or `review` skill at runtime, and the entrypoint installs both sub-bundles alongside `auto` so the dispatch can find them. Codex tasks are unaffected. Image-routing logic lives in `internal/orchestrator/imagerouter`.
+- `BACKFLOW_SKILL_AGENT_IMAGE` — Optional. When set, the orchestrator routes `claude_code` tasks in `code`, `auto`, or `review` mode to this image. Read-mode tasks continue to use `BACKFLOW_READER_IMAGE` because the skill image's `read` bundle is still a stub (slice 6); the gate broadens to read once that bundle is real. The image ships per-mode skill bundles (`auto`, `code`, `review`, `read`) under `/opt/backflow/skills/`; the `auto` bundle handles the API's default `task_mode=auto` by inspecting the prompt and dispatching to the `code` or `review` skill at runtime, and the entrypoint installs both sub-bundles alongside `auto` so the dispatch can find them. Codex tasks are unaffected. Image-routing logic lives in `internal/orchestrator/imagerouter`.
 
-The skill-agent image (`docker/skill-agent/`) is intentionally thin: the `entrypoint.sh` validates env, optionally fetches S3-offloaded fields, sets up `gh` auth, copies the requested skill bundle into `~/.claude/skills/`, runs `claude_code`, and notarizes `cost_usd` from the harness's stream-json into the agent-written `status.json` (or synthesizes a fallback failure status if the agent didn't write one). No mode/harness branching, no retry loop. The `status.json` contract is enforced by the Go validator in `internal/skillcontract`, which embeds `schema.json`, walks every `docker/skill-agent/skills/*/examples/status.json` fixture in tests, and pins a deliberately broken fixture to the negative path. Slice 5 (#49) populates the `review` skill bundle; standalone review tasks dispatched to the skill-agent image and chained self-review tasks (#47) both run through it.
+The skill-agent image (`docker/skill-agent/`) is intentionally thin: the `entrypoint.sh` validates env, optionally fetches S3-offloaded fields, sets up `gh` auth, copies the requested skill bundle into `~/.claude/skills/`, runs `claude_code`, and notarizes `cost_usd` from the harness's stream-json into the agent-written `status.json` (or synthesizes a fallback failure status if the agent didn't write one). No mode/harness branching, no retry loop. The `status.json` contract is enforced by the Go validator in `internal/skillcontract`, which embeds `schema.json`, walks every `docker/skill-agent/skills/*/examples/status.json` fixture in tests, and pins a deliberately broken fixture to the negative path.
 
 The `tasks` table carries a `force` boolean column. REST callers can set `force` on `POST /api/v1/tasks`; `Force=true` bypasses the dispatch-time duplicate check and allows an existing reading row to be overwritten on completion.
 
@@ -192,4 +193,7 @@ Create new migrations in `migrations/` with the next numeric prefix, `-- +goose 
 
 Additional docs in `docs/`:
 - `schema.md` — Database schema (tables, columns, indexes, status lifecycles)
+- `self-hosting.md` — Single-host deployment walkthrough
 - `adrs/` — Architecture Decision Records (historical; see individual files for current status)
+
+The OpenAPI 3.0 spec lives at `api/openapi.yaml`. `make test-schema` runs Schemathesis fuzz tests against it.

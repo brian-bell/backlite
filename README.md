@@ -111,6 +111,8 @@ curl -X POST http://localhost:8080/api/v1/tasks \
 
 ## API Reference
 
+The full OpenAPI 3.0 spec lives at [`api/openapi.yaml`](api/openapi.yaml). `make test-schema` runs Schemathesis fuzz tests against it.
+
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/api/v1/tasks` | Create a task |

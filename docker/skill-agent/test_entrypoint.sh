@@ -366,5 +366,180 @@ EOF
 )
 pass "installs read skill with helper scripts (read-embed.sh, read-similar.sh, read-lookup.sh)"
 
+# --- send-email.sh: happy-path POST shape against fake Resend server ---
+(
+    tmp=$(mktemp -d)
+    capture="$tmp/captured-request"
+    pid_file="$tmp/server.pid"
+    port_file="$tmp/port"
+    trap '[ -f "$pid_file" ] && kill "$(cat "$pid_file")" 2>/dev/null || true; rm -rf "$tmp"' EXIT
+
+    python3 - "$capture" "$port_file" "$pid_file" >/dev/null 2>&1 <<'PYEOF' &
+import json, sys, os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+capture = sys.argv[1]
+port_file = sys.argv[2]
+pid_file = sys.argv[3]
+
+class H(BaseHTTPRequestHandler):
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length).decode("utf-8")
+        with open(capture, "w") as f:
+            json.dump({
+                "method": self.command,
+                "path": self.path,
+                "headers": dict(self.headers),
+                "body": body,
+            }, f)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(b'{"id":"fake"}')
+    def log_message(self, *a, **kw):
+        pass
+
+srv = HTTPServer(("127.0.0.1", 0), H)
+with open(port_file, "w") as f:
+    f.write(str(srv.server_address[1]))
+with open(pid_file, "w") as f:
+    f.write(str(os.getpid()))
+srv.serve_forever()
+PYEOF
+
+    # Wait for server to bind a port (cap at ~3s)
+    for _ in $(seq 1 30); do
+        if [ -s "$port_file" ]; then break; fi
+        sleep 0.1
+    done
+    if [ ! -s "$port_file" ]; then
+        fail "send-email happy path: fake Resend server did not start"
+    fi
+    PORT=$(cat "$port_file")
+
+    # Stub status.json with a populated reading.
+    cat >"$tmp/status.json" <<'JSON'
+{
+  "url": "https://example.com/post",
+  "title": "Example Post Title",
+  "tldr": "A pithy one-line summary of the post."
+}
+JSON
+
+    export RESEND_API_KEY="re_test"
+    export NOTIFY_EMAIL_FROM="from@example.com"
+    export NOTIFY_EMAIL_TO="to@example.com"
+    export RESEND_BASE_URL="http://127.0.0.1:$PORT"
+    export TASK_ID="bf_emailtest"
+
+    SCRIPT="$DIR/skills/read/send-email.sh"
+    if ! "$SCRIPT" "$tmp/status.json" >/dev/null 2>&1; then
+        fail "send-email happy path: script exited non-zero"
+    fi
+
+    if [ ! -s "$capture" ]; then
+        fail "send-email happy path: fake server did not record any request"
+    fi
+    method=$(jq -r '.method' "$capture")
+    if [ "$method" != "POST" ]; then
+        fail "send-email happy path: expected POST, got $method"
+    fi
+    path=$(jq -r '.path' "$capture")
+    if [ "$path" != "/emails" ]; then
+        fail "send-email happy path: expected path /emails, got $path"
+    fi
+    auth=$(jq -r '.headers.Authorization' "$capture")
+    if [ "$auth" != "Bearer re_test" ]; then
+        fail "send-email happy path: expected Authorization 'Bearer re_test', got $auth"
+    fi
+    ctype=$(jq -r '.headers["Content-Type"]' "$capture")
+    if [ "$ctype" != "application/json" ]; then
+        fail "send-email happy path: expected Content-Type application/json, got $ctype"
+    fi
+    body_from=$(jq -r '.body | fromjson | .from' "$capture")
+    if [ "$body_from" != "from@example.com" ]; then
+        fail "send-email happy path: expected body.from from@example.com, got $body_from"
+    fi
+    body_to=$(jq -r '.body | fromjson | .to[0]' "$capture")
+    if [ "$body_to" != "to@example.com" ]; then
+        fail "send-email happy path: expected body.to[0] to@example.com, got $body_to"
+    fi
+    body_subject=$(jq -r '.body | fromjson | .subject' "$capture")
+    if [ "$body_subject" != "Example Post Title" ]; then
+        fail "send-email happy path: expected body.subject 'Example Post Title', got $body_subject"
+    fi
+    body_text=$(jq -r '.body | fromjson | .text' "$capture")
+    for needle in "https://example.com/post" "Example Post Title" "A pithy one-line summary" "Task: bf_emailtest"; do
+        if [[ "$body_text" != *"$needle"* ]]; then
+            fail "send-email happy path: body.text missing '$needle', got: $body_text"
+        fi
+    done
+)
+pass "send-email.sh POSTs to /emails with Bearer auth and JSON body containing from/to/subject/text"
+
+# --- send-email.sh: no-op when RESEND_API_KEY is unset ---
+(
+    tmp=$(mktemp -d)
+    capture="$tmp/captured-request"
+    pid_file="$tmp/server.pid"
+    port_file="$tmp/port"
+    trap '[ -f "$pid_file" ] && kill "$(cat "$pid_file")" 2>/dev/null || true; rm -rf "$tmp"' EXIT
+
+    python3 - "$capture" "$port_file" "$pid_file" >/dev/null 2>&1 <<'PYEOF' &
+import json, sys, os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+capture = sys.argv[1]
+port_file = sys.argv[2]
+pid_file = sys.argv[3]
+
+class H(BaseHTTPRequestHandler):
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        self.rfile.read(length)
+        with open(capture, "w") as f:
+            f.write("posted")
+        self.send_response(200); self.end_headers()
+    def log_message(self, *a, **kw):
+        pass
+
+srv = HTTPServer(("127.0.0.1", 0), H)
+with open(port_file, "w") as f:
+    f.write(str(srv.server_address[1]))
+with open(pid_file, "w") as f:
+    f.write(str(os.getpid()))
+srv.serve_forever()
+PYEOF
+
+    for _ in $(seq 1 30); do
+        if [ -s "$port_file" ]; then break; fi
+        sleep 0.1
+    done
+    if [ ! -s "$port_file" ]; then
+        fail "send-email no-op: fake Resend server did not start"
+    fi
+    PORT=$(cat "$port_file")
+
+    cat >"$tmp/status.json" <<'JSON'
+{"url":"https://example.com","title":"x","tldr":"y"}
+JSON
+
+    unset RESEND_API_KEY
+    export NOTIFY_EMAIL_FROM="from@example.com"
+    export NOTIFY_EMAIL_TO="to@example.com"
+    export RESEND_BASE_URL="http://127.0.0.1:$PORT"
+    export TASK_ID="bf_noop"
+
+    SCRIPT="$DIR/skills/read/send-email.sh"
+    if ! "$SCRIPT" "$tmp/status.json" >/dev/null 2>&1; then
+        fail "send-email no-op: script should exit 0 when RESEND_API_KEY is unset"
+    fi
+    if [ -s "$capture" ]; then
+        fail "send-email no-op: script must not POST when RESEND_API_KEY is unset (capture: $(cat "$capture"))"
+    fi
+)
+pass "send-email.sh exits 0 without POSTing when RESEND_API_KEY is unset"
+
 echo
 echo "All skill-agent entrypoint tests passed."

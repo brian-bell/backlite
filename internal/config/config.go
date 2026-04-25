@@ -19,6 +19,11 @@ type Config struct {
 	AnthropicAPIKey string
 	OpenAIAPIKey    string
 
+	// Email notification (Resend). All-or-nothing — see Load() gating.
+	ResendAPIKey    string
+	NotifyEmailFrom string
+	NotifyEmailTo   string
+
 	// Capacity
 	MaxContainers int
 
@@ -83,6 +88,9 @@ func Load() (*Config, error) {
 		APIKey:                os.Getenv("BACKFLOW_API_KEY"),
 		AnthropicAPIKey:       os.Getenv("ANTHROPIC_API_KEY"),
 		OpenAIAPIKey:          os.Getenv("OPENAI_API_KEY"),
+		ResendAPIKey:          os.Getenv("BACKFLOW_RESEND_API_KEY"),
+		NotifyEmailFrom:       os.Getenv("BACKFLOW_NOTIFY_EMAIL_FROM"),
+		NotifyEmailTo:         os.Getenv("BACKFLOW_NOTIFY_EMAIL_TO"),
 		MaxContainers:         envInt("BACKFLOW_MAX_CONTAINERS", 1),
 		ContainerCPUs:         envInt("BACKFLOW_CONTAINER_CPUS", 2),
 		ContainerMemGB:        envInt("BACKFLOW_CONTAINER_MEMORY_GB", 8),
@@ -142,6 +150,21 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("BACKFLOW_DEFAULT_READ_MAX_RUNTIME_SEC must be > 0 when BACKFLOW_READER_IMAGE is set")
 		case c.DefaultReadMaxTurns <= 0:
 			return nil, fmt.Errorf("BACKFLOW_DEFAULT_READ_MAX_TURNS must be > 0 when BACKFLOW_READER_IMAGE is set")
+		}
+	}
+
+	if c.ResendAPIKey != "" || c.NotifyEmailFrom != "" || c.NotifyEmailTo != "" {
+		switch {
+		case c.ResendAPIKey == "":
+			return nil, fmt.Errorf("BACKFLOW_RESEND_API_KEY is required when BACKFLOW_NOTIFY_EMAIL_FROM or BACKFLOW_NOTIFY_EMAIL_TO is set")
+		case c.NotifyEmailFrom == "":
+			return nil, fmt.Errorf("BACKFLOW_NOTIFY_EMAIL_FROM is required when BACKFLOW_RESEND_API_KEY or BACKFLOW_NOTIFY_EMAIL_TO is set")
+		case c.NotifyEmailTo == "":
+			return nil, fmt.Errorf("BACKFLOW_NOTIFY_EMAIL_TO is required when BACKFLOW_RESEND_API_KEY or BACKFLOW_NOTIFY_EMAIL_FROM is set")
+		case !strings.Contains(c.NotifyEmailFrom, "@"):
+			return nil, fmt.Errorf("BACKFLOW_NOTIFY_EMAIL_FROM must contain '@'")
+		case !strings.Contains(c.NotifyEmailTo, "@"):
+			return nil, fmt.Errorf("BACKFLOW_NOTIFY_EMAIL_TO must contain '@'")
 		}
 	}
 

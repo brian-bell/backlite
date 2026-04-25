@@ -392,6 +392,41 @@ func TestBuildSecretEnvPairs_NoSecrets(t *testing.T) {
 	}
 }
 
+func TestBuildSecretEnvPairs_IncludesResendVars(t *testing.T) {
+	cfg := &config.Config{
+		ResendAPIKey:    "re_test",
+		NotifyEmailFrom: "from@example.com",
+		NotifyEmailTo:   "to@example.com",
+	}
+	dm := NewManager(cfg)
+
+	pairs := dm.buildSecretEnvPairs(&models.Task{ID: "bf_01ABC"})
+
+	for _, want := range []string{
+		"RESEND_API_KEY=re_test",
+		"NOTIFY_EMAIL_FROM=from@example.com",
+		"NOTIFY_EMAIL_TO=to@example.com",
+	} {
+		if !contains(pairs, want) {
+			t.Errorf("expected %q in secret env pairs, got %v", want, pairs)
+		}
+	}
+}
+
+func TestBuildSecretEnvPairs_OmitsResendVarsWhenUnset(t *testing.T) {
+	cfg := &config.Config{}
+	dm := NewManager(cfg)
+
+	pairs := dm.buildSecretEnvPairs(&models.Task{ID: "bf_01ABC"})
+
+	joined := strings.Join(pairs, "\n")
+	for _, key := range []string{"RESEND_API_KEY", "NOTIFY_EMAIL_FROM", "NOTIFY_EMAIL_TO"} {
+		if strings.Contains(joined, key) {
+			t.Errorf("env-file must not contain %q when unset, got %v", key, pairs)
+		}
+	}
+}
+
 func TestWriteEnvFile(t *testing.T) {
 	pairs := []string{"FOO=bar", "BAZ=qux with spaces"}
 	path, err := writeEnvFile(pairs)

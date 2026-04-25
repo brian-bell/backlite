@@ -64,6 +64,53 @@ func TestResolve_TableDriven(t *testing.T) {
 	}
 }
 
+// TestCanRunRead_TableDriven covers every (harness, skill, reader) combination
+// for read-mode dispatch preconditions. The guard must accept any task whose
+// resolved image will actually have a reader entrypoint — which today means
+// either ReaderImage is set, or SkillAgentImage is set for a claude_code task
+// (the skill bundle ships the read skill). codex tasks must still require
+// ReaderImage since the skill image is claude_code-only.
+func TestCanRunRead_TableDriven(t *testing.T) {
+	const (
+		readerImg = "backlite-reader:v1"
+		skillImg  = "backlite-skill-agent:v1"
+	)
+
+	tests := []struct {
+		name      string
+		harness   models.Harness
+		skillImg  string
+		readerImg string
+		want      bool
+	}{
+		{"claude_code, both unset", models.HarnessClaudeCode, "", "", false},
+		{"claude_code, reader set", models.HarnessClaudeCode, "", readerImg, true},
+		{"claude_code, skill set", models.HarnessClaudeCode, skillImg, "", true},
+		{"claude_code, both set", models.HarnessClaudeCode, skillImg, readerImg, true},
+
+		{"codex, both unset", models.HarnessCodex, "", "", false},
+		{"codex, reader set", models.HarnessCodex, "", readerImg, true},
+		// Skill image is claude_code-only, so codex+read still needs the
+		// dedicated reader image even if SkillAgentImage is set.
+		{"codex, skill set only", models.HarnessCodex, skillImg, "", false},
+		{"codex, both set", models.HarnessCodex, skillImg, readerImg, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{
+				ReaderImage:     tt.readerImg,
+				SkillAgentImage: tt.skillImg,
+			}
+			task := &models.Task{Harness: tt.harness, TaskMode: models.TaskModeRead}
+			if got := CanRunRead(task, cfg); got != tt.want {
+				t.Errorf("CanRunRead(harness=%s, skill=%q, reader=%q) = %v, want %v",
+					tt.harness, tt.skillImg, tt.readerImg, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestResolve_OverridesPriorAgentImage pins a key behavior: even when the task
 // already carries an AgentImage value (set by creation-time defaults), the
 // router re-derives at dispatch. This is what makes BACKFLOW_SKILL_AGENT_IMAGE

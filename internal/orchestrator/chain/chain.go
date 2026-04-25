@@ -34,8 +34,15 @@ const SelfReviewBudgetUSD = 2.00
 //   - Parent completed successfully
 //   - Parent has SelfReview=true
 //   - Parent produced a non-empty PR URL
-//   - Parent is in code mode (review or read parents do not chain)
+//   - Parent is in code mode. Auto/review/read parents do not chain — by the
+//     time a task completes, the agent's prep stage has resolved auto into a
+//     concrete mode written to status.json, so an unresolved auto here means
+//     the agent never reported back and we shouldn't speculate.
 //   - Parent is itself a top-level task (no nested chains)
+//
+// MaxRuntimeSec, MaxTurns, and AgentImage are intentionally left zero on the
+// returned child; the caller fills them from review-mode config defaults
+// before persisting (chain stays config-free so it remains pure/testable).
 func Plan(parent *models.Task) (*models.Task, bool) {
 	if parent.Status != models.TaskStatusCompleted {
 		return nil, false
@@ -46,7 +53,7 @@ func Plan(parent *models.Task) (*models.Task, bool) {
 	if parent.PRURL == "" {
 		return nil, false
 	}
-	if parent.TaskMode != models.TaskModeCode && parent.TaskMode != models.TaskModeAuto {
+	if parent.TaskMode != models.TaskModeCode {
 		return nil, false
 	}
 	if parent.ParentTaskID != nil {
@@ -61,6 +68,11 @@ func Plan(parent *models.Task) (*models.Task, bool) {
 		TaskMode:     models.TaskModeReview,
 		Harness:      parent.Harness,
 		ParentTaskID: &parentID,
+		// Inherit RepoURL/Branch so dispatch has them up front. The synthesized
+		// prompt also names the PR URL, but relying solely on URL parsing for
+		// repo identity is brittle — explicit inheritance is cheap insurance.
+		RepoURL:      parent.RepoURL,
+		Branch:       parent.Branch,
 		Prompt:       synthReviewPrompt(parent),
 		Context:      parent.Context,
 		Model:        parent.Model,

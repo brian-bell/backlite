@@ -1284,11 +1284,13 @@ func TestMonitorRunning_SaveMetadataRunsAfterCompleteTask(t *testing.T) {
 	mock := &mockDockerManager{
 		inspectResults: map[string]ContainerStatus{
 			"local/cont1": {
-				Done:     true,
-				Complete: true,
-				ExitCode: 0,
-				PRURL:    "https://github.com/test/repo/pull/7",
-				TaskMode: "code",
+				Done:         true,
+				Complete:     true,
+				ExitCode:     0,
+				PRURL:        "https://github.com/test/repo/pull/7",
+				RepoURL:      "https://github.com/test/repo",
+				TargetBranch: "main",
+				TaskMode:     "code",
 			},
 		},
 		agentOutput: "final agent bytes",
@@ -1321,6 +1323,9 @@ func TestMonitorRunning_SaveMetadataRunsAfterCompleteTask(t *testing.T) {
 	}
 	if meta.PRURL != "https://github.com/test/repo/pull/7" {
 		t.Errorf("PRURL = %q, want populated from completed row", meta.PRURL)
+	}
+	if meta.OutputURL != "/api/v1/tasks/bf_order/output" {
+		t.Errorf("OutputURL = %q, want output endpoint", meta.OutputURL)
 	}
 }
 

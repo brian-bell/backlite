@@ -25,3 +25,18 @@ func Resolve(task *models.Task, cfg *config.Config) string {
 	}
 	return cfg.AgentImage
 }
+
+// CanRunRead reports whether the configured images can host a read-mode task.
+// True when ReaderImage is set, or when SkillAgentImage is set for a
+// claude_code task (the skill bundle ships the read skill). codex tasks
+// require ReaderImage because the skill image is claude_code-only.
+//
+// Dispatch should consult this before starting a read-mode container so
+// operators who run all modes through SkillAgentImage don't need to also
+// configure BACKFLOW_READER_IMAGE.
+func CanRunRead(task *models.Task, cfg *config.Config) bool {
+	if cfg.SkillAgentImage != "" && task.Harness == models.HarnessClaudeCode {
+		return true
+	}
+	return cfg.ReaderImage != ""
+}

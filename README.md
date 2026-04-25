@@ -196,14 +196,9 @@ To add a migration: create a new file in `migrations/` (e.g. `002_add_column.sql
 ## Docker Images
 
 ```bash
-make docker-agent-build-local    # Single-arch agent image
-make docker-agent-build          # Multi-arch buildx (amd64+arm64)
-
-make docker-reader-build-local   # Single-arch reader image (for task_mode=read)
-make docker-reader-build         # Multi-arch buildx
-
-make docker-server-build-local   # Single-arch server image
-make docker-server-build         # Multi-arch buildx
+make docker-agent-build-local    # Agent image
+make docker-reader-build-local   # Reader image (for task_mode=read)
+make docker-server-build-local   # Server image
 ```
 
 Backlite runs agent containers directly against the local Docker daemon; there is no remote orchestration runtime.

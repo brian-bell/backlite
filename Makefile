@@ -1,14 +1,12 @@
 .PHONY: build run test clean lint \
-       docker-agent-build docker-agent-build-local \
-       docker-reader-build docker-reader-build-local \
-       docker-server-build docker-server-build-local \
-       docker-fake-agent-build test-fake-agent test-blackbox test-schema test-soak \
-       db-pending db-provisioning db-running db-completed db-failed db-interrupted db-cancelled db-recovering \
-       deps test-docker-status-writer test-reader-status-writer \
-       test-reader-scripts
+       docker-agent-build-local \
+       docker-reader-build-local \
+       docker-server-build-local \
+       test-fake-agent test-blackbox test-schema test-soak \
+       db-pending db-running db-completed db-failed \
+       deps
 
 BINARY := backlite
-PKG := github.com/brian-bell/backlite
 GOFLAGS := -trimpath
 export PATH := $(HOME)/.local/go/bin:$(HOME)/go/bin:$(PATH)
 
@@ -28,20 +26,8 @@ run: build
 test:
 	go test -tags nocontainers ./... -v -count=1
 
-test-docker-status-writer:
-	bash scripts/test-docker-status-writer.sh
-
-test-reader-status-writer:
-	bash scripts/test-reader-status-writer.sh
-
-test-reader-scripts:
-	bash docker/reader/test_read_scripts.sh
-	bash docker/reader/test_entrypoint.sh
-
-docker-fake-agent-build:
+test-fake-agent:
 	$(DOCKER) build -t backlite-fake-agent test/blackbox/fake-agent/
-
-test-fake-agent: docker-fake-agent-build
 	go test ./test/blackbox/fake-agent/ -v -count=1
 
 test-blackbox:
@@ -59,29 +45,11 @@ lint:
 clean:
 	rm -rf bin/
 
-docker-agent-build:
-	$(DOCKER) buildx build \
-		--platform linux/amd64,linux/arm64 \
-		-t backlite-agent \
-		docker/agent/
-
 docker-agent-build-local:
 	$(DOCKER) build -t backlite-agent docker/agent/
 
-docker-reader-build:
-	$(DOCKER) buildx build \
-		--platform linux/amd64,linux/arm64 \
-		-t backlite-reader \
-		docker/reader/
-
 docker-reader-build-local:
 	$(DOCKER) build -t backlite-reader docker/reader/
-
-docker-server-build:
-	$(DOCKER) buildx build \
-		--platform linux/amd64,linux/arm64 \
-		-t backlite-server \
-		-f docker/server/Dockerfile .
 
 docker-server-build-local:
 	$(DOCKER) build -t backlite-server -f docker/server/Dockerfile .
@@ -91,9 +59,6 @@ DB_QUERY = @$(ENV); sqlite3 -json "$$BACKFLOW_DATABASE_PATH"
 db-pending:
 	$(DB_QUERY) "SELECT id, repo_url, branch, harness, created_at FROM tasks WHERE status = 'pending' ORDER BY created_at ASC;"
 
-db-provisioning:
-	$(DB_QUERY) "SELECT id, repo_url, branch, harness, created_at FROM tasks WHERE status = 'provisioning' ORDER BY created_at ASC;"
-
 db-running:
 	$(DB_QUERY) "SELECT id, repo_url, branch, harness, model, started_at, elapsed_time_sec FROM tasks WHERE status = 'running' ORDER BY started_at ASC;"
 
@@ -102,15 +67,6 @@ db-completed:
 
 db-failed:
 	$(DB_QUERY) "SELECT id, repo_url, branch, harness, error, completed_at FROM tasks WHERE status = 'failed' ORDER BY completed_at DESC;"
-
-db-interrupted:
-	$(DB_QUERY) "SELECT id, repo_url, branch, harness, error, retry_count, updated_at FROM tasks WHERE status = 'interrupted' ORDER BY updated_at DESC;"
-
-db-cancelled:
-	$(DB_QUERY) "SELECT id, repo_url, branch, harness, completed_at FROM tasks WHERE status = 'cancelled' ORDER BY completed_at DESC;"
-
-db-recovering:
-	$(DB_QUERY) "SELECT id, repo_url, branch, harness, container_id, updated_at FROM tasks WHERE status = 'recovering' ORDER BY updated_at ASC;"
 
 deps:
 	go mod tidy

@@ -18,18 +18,9 @@ import (
 func TestMonitorCancelled_DecrementsRunning(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:        "local",
-		Status:            models.InstanceStatusRunning,
-		MaxContainers:     4,
-		RunningContainers: 1,
-	})
-
 	s.CreateTask(context.Background(), &models.Task{
 		ID:          "bf_cancel_run",
 		Status:      models.TaskStatusCancelled,
-		InstanceID:  "local",
 		ContainerID: "abc123",
 		StartedAt:   &now,
 		CompletedAt: &now,
@@ -50,12 +41,6 @@ func TestMonitorCancelled_DecrementsRunning(t *testing.T) {
 	if task.ContainerID != "" {
 		t.Errorf("containerID = %q, want empty (should be cleared after cleanup)", task.ContainerID)
 	}
-
-	inst, _ := s.GetInstance(context.Background(), "local")
-	if inst.RunningContainers != 0 {
-		t.Errorf("RunningContainers = %d, want 0", inst.RunningContainers)
-	}
-
 	// Verify a cancelled event with ReadyForRetry was emitted after cleanup
 	events := notifier.eventTypes()
 	if len(events) != 1 || events[0] != notify.EventTaskCancelled {
@@ -146,18 +131,9 @@ func TestMonitorCancelled_AtCapStillSetsReadyForRetry(t *testing.T) {
 func TestMonitorCancelled_RecoveringTaskCancelled(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:        "local",
-		Status:            models.InstanceStatusRunning,
-		MaxContainers:     4,
-		RunningContainers: 1,
-	})
-
 	s.CreateTask(context.Background(), &models.Task{
 		ID:          "bf_cancel_recov",
 		Status:      models.TaskStatusCancelled,
-		InstanceID:  "local",
 		ContainerID: "def456",
 		StartedAt:   &now,
 		CompletedAt: &now,
@@ -183,20 +159,11 @@ func TestMonitorCancelled_RecoveringTaskCancelled(t *testing.T) {
 func TestHandleCompletion_Success(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:        "local",
-		Status:            models.InstanceStatusRunning,
-		MaxContainers:     4,
-		RunningContainers: 1,
-	})
-
 	s.CreateTask(context.Background(), &models.Task{
 		ID:          "bf_ok",
 		Status:      models.TaskStatusRunning,
 		RepoURL:     "https://github.com/test/repo",
 		Prompt:      "do something",
-		InstanceID:  "local",
 		ContainerID: "cont1",
 		StartedAt:   &now,
 	})
@@ -226,12 +193,6 @@ func TestHandleCompletion_Success(t *testing.T) {
 	if o.running != 0 {
 		t.Errorf("running = %d, want 0", o.running)
 	}
-
-	inst, _ := s.GetInstance(context.Background(), "local")
-	if inst.RunningContainers != 0 {
-		t.Errorf("RunningContainers = %d, want 0", inst.RunningContainers)
-	}
-
 	types := n.eventTypes()
 	if len(types) != 1 || types[0] != notify.EventTaskCompleted {
 		t.Errorf("expected [task.completed], got %v", types)
@@ -241,20 +202,11 @@ func TestHandleCompletion_Success(t *testing.T) {
 func TestHandleCompletion_CompleteFlagOverridesExitCode(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:        "local",
-		Status:            models.InstanceStatusRunning,
-		MaxContainers:     4,
-		RunningContainers: 1,
-	})
-
 	s.CreateTask(context.Background(), &models.Task{
 		ID:          "bf_complete_flag",
 		Status:      models.TaskStatusRunning,
 		RepoURL:     "https://github.com/test/repo",
 		Prompt:      "do something",
-		InstanceID:  "local",
 		ContainerID: "cont1",
 		StartedAt:   &now,
 		Error:       "previous error",
@@ -293,15 +245,11 @@ func TestHandleCompletion_CompleteFlagOverridesExitCode(t *testing.T) {
 func TestHandleCompletion_NeedsInput(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), newLocalInstance())
-
 	s.CreateTask(context.Background(), &models.Task{
 		ID:          "bf_input",
 		Status:      models.TaskStatusRunning,
 		RepoURL:     "https://github.com/test/repo",
 		Prompt:      "do something",
-		InstanceID:  "local",
 		ContainerID: "cont1",
 		StartedAt:   &now,
 	})
@@ -339,15 +287,11 @@ func TestHandleCompletion_NeedsInput(t *testing.T) {
 func TestHandleCompletion_Failure(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), newLocalInstance())
-
 	s.CreateTask(context.Background(), &models.Task{
 		ID:          "bf_fail",
 		Status:      models.TaskStatusRunning,
 		RepoURL:     "https://github.com/test/repo",
 		Prompt:      "do something",
-		InstanceID:  "local",
 		ContainerID: "cont1",
 		StartedAt:   &now,
 	})
@@ -391,15 +335,11 @@ func TestHandleCompletion_Failure(t *testing.T) {
 func TestHandleCompletion_PropagatesInferredFields(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), newLocalInstance())
-
 	s.CreateTask(context.Background(), &models.Task{
 		ID:          "bf_inferred",
 		Status:      models.TaskStatusRunning,
 		TaskMode:    "auto",
 		Prompt:      "fix the bug in https://github.com/test/repo",
-		InstanceID:  "local",
 		ContainerID: "cont1",
 		StartedAt:   &now,
 	})
@@ -448,15 +388,11 @@ func TestHandleCompletion_PropagatesInferredFields(t *testing.T) {
 func TestHandleCompletion_ReadSuccess_EmbedsAndCreatesReading(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), newLocalInstance())
-
 	s.CreateTask(context.Background(), &models.Task{
 		ID:          "bf_read_ok",
 		Status:      models.TaskStatusRunning,
 		TaskMode:    models.TaskModeRead,
 		Prompt:      "https://example.com/post",
-		InstanceID:  "local",
 		ContainerID: "cont1",
 		StartedAt:   &now,
 	})
@@ -564,9 +500,6 @@ func TestHandleCompletion_ReadSuccess_EmbedsAndCreatesReading(t *testing.T) {
 func TestHandleCompletion_ReadSuccess_AssignsUniqueReadingIDs(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), newLocalInstance())
-
 	for i, url := range []string{"https://example.com/a", "https://example.com/b"} {
 		id := fmt.Sprintf("bf_read_%d", i)
 		s.CreateTask(context.Background(), &models.Task{
@@ -574,7 +507,6 @@ func TestHandleCompletion_ReadSuccess_AssignsUniqueReadingIDs(t *testing.T) {
 			Status:      models.TaskStatusRunning,
 			TaskMode:    models.TaskModeRead,
 			Prompt:      url,
-			InstanceID:  "local",
 			ContainerID: "cont1",
 			StartedAt:   &now,
 		})
@@ -613,16 +545,12 @@ func TestHandleCompletion_ReadSuccess_AssignsUniqueReadingIDs(t *testing.T) {
 func TestHandleCompletion_ReadEmptyURL_MarksTaskFailed(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), newLocalInstance())
-
 	// Both status.URL and task.Prompt are empty — no fallback possible.
 	s.CreateTask(context.Background(), &models.Task{
 		ID:          "bf_read_empty_url",
 		Status:      models.TaskStatusRunning,
 		TaskMode:    models.TaskModeRead,
 		Prompt:      "",
-		InstanceID:  "local",
 		ContainerID: "cont1",
 		StartedAt:   &now,
 	})
@@ -674,16 +602,12 @@ func TestHandleCompletion_ReadEmptyURL_MarksTaskFailed(t *testing.T) {
 func TestHandleCompletion_ReadDuplicate_SkipsWrite(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), newLocalInstance())
-
 	s.CreateTask(context.Background(), &models.Task{
 		ID:          "bf_read_dup",
 		Status:      models.TaskStatusRunning,
 		TaskMode:    models.TaskModeRead,
 		Force:       false,
 		Prompt:      "https://example.com/post",
-		InstanceID:  "local",
 		ContainerID: "cont1",
 		StartedAt:   &now,
 	})
@@ -733,16 +657,12 @@ func TestHandleCompletion_ReadDuplicate_SkipsWrite(t *testing.T) {
 func TestHandleCompletion_ReadDuplicate_Force_StillWrites(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), newLocalInstance())
-
 	s.CreateTask(context.Background(), &models.Task{
 		ID:          "bf_read_dup_force",
 		Status:      models.TaskStatusRunning,
 		TaskMode:    models.TaskModeRead,
 		Force:       true,
 		Prompt:      "https://example.com/post",
-		InstanceID:  "local",
 		ContainerID: "cont1",
 		StartedAt:   &now,
 	})
@@ -774,15 +694,11 @@ func TestHandleCompletion_ReadStoreFailure_MarksTaskFailed(t *testing.T) {
 	s := newMockStore()
 	s.upsertReadingErr = fmt.Errorf("db write failed")
 	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), newLocalInstance())
-
 	s.CreateTask(context.Background(), &models.Task{
 		ID:          "bf_read_store_fail",
 		Status:      models.TaskStatusRunning,
 		TaskMode:    models.TaskModeRead,
 		Prompt:      "https://example.com/post",
-		InstanceID:  "local",
 		ContainerID: "cont1",
 		StartedAt:   &now,
 	})
@@ -816,15 +732,11 @@ func TestHandleCompletion_ReadStoreFailure_MarksTaskFailed(t *testing.T) {
 func TestHandleCompletion_ReadEmbedFailure_MarksTaskFailed(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), newLocalInstance())
-
 	s.CreateTask(context.Background(), &models.Task{
 		ID:          "bf_read_embed_fail",
 		Status:      models.TaskStatusRunning,
 		TaskMode:    models.TaskModeRead,
 		Prompt:      "https://example.com/post",
-		InstanceID:  "local",
 		ContainerID: "cont1",
 		StartedAt:   &now,
 	})
@@ -867,16 +779,12 @@ func TestHandleCompletion_ReadEmbedFailure_MarksTaskFailed(t *testing.T) {
 func TestHandleCompletion_ReadForce_CallsUpsertReading(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), newLocalInstance())
-
 	s.CreateTask(context.Background(), &models.Task{
 		ID:          "bf_read_force",
 		Status:      models.TaskStatusRunning,
 		TaskMode:    models.TaskModeRead,
 		Force:       true,
 		Prompt:      "https://example.com/post",
-		InstanceID:  "local",
 		ContainerID: "cont1",
 		StartedAt:   &now,
 	})
@@ -909,20 +817,11 @@ func TestHandleCompletion_ReadForce_CallsUpsertReading(t *testing.T) {
 func TestKillTask(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:        "local",
-		Status:            models.InstanceStatusRunning,
-		MaxContainers:     4,
-		RunningContainers: 1,
-	})
-
 	s.CreateTask(context.Background(), &models.Task{
 		ID:          "bf_kill",
 		Status:      models.TaskStatusRunning,
 		RepoURL:     "https://github.com/test/repo",
 		Prompt:      "long running task",
-		InstanceID:  "local",
 		ContainerID: "cont_kill",
 		StartedAt:   &now,
 	})
@@ -948,12 +847,6 @@ func TestKillTask(t *testing.T) {
 	if o.running != 0 {
 		t.Errorf("running = %d, want 0", o.running)
 	}
-
-	inst, _ := s.GetInstance(context.Background(), "local")
-	if inst.RunningContainers != 0 {
-		t.Errorf("RunningContainers = %d, want 0", inst.RunningContainers)
-	}
-
 	types := n.eventTypes()
 	if len(types) != 1 || types[0] != notify.EventTaskFailed {
 		t.Errorf("expected [task.failed], got %v", types)
@@ -968,20 +861,11 @@ func TestKillTask(t *testing.T) {
 func TestKillTask_CompleteTaskError(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:        "local",
-		Status:            models.InstanceStatusRunning,
-		MaxContainers:     4,
-		RunningContainers: 1,
-	})
-
 	s.CreateTask(context.Background(), &models.Task{
 		ID:          "bf_kill_err",
 		Status:      models.TaskStatusRunning,
 		RepoURL:     "https://github.com/test/repo",
 		Prompt:      "task that fails to complete",
-		InstanceID:  "local",
 		ContainerID: "cont_kill_err",
 		StartedAt:   &now,
 	})
@@ -1013,20 +897,11 @@ func TestKillTask_CompleteTaskError(t *testing.T) {
 func TestRequeueTask_LocalMode(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:        "local",
-		Status:            models.InstanceStatusRunning,
-		MaxContainers:     4,
-		RunningContainers: 1,
-	})
-
 	s.CreateTask(context.Background(), &models.Task{
 		ID:          "bf_requeue_local",
 		Status:      models.TaskStatusRunning,
 		RepoURL:     "https://github.com/test/repo",
 		Prompt:      "requeue me",
-		InstanceID:  "local",
 		ContainerID: "cont_rq",
 		StartedAt:   &now,
 	})
@@ -1047,13 +922,8 @@ func TestRequeueTask_LocalMode(t *testing.T) {
 		t.Errorf("running = %d, want 0", o.running)
 	}
 
-	// Instance should NOT be terminated in local mode.
-	inst, _ := s.GetInstance(context.Background(), "local")
-	if inst.Status != models.InstanceStatusRunning {
-		t.Errorf("instance status = %q, want running (local mode should not terminate)", inst.Status)
-	}
-	if inst.RunningContainers != 0 {
-		t.Errorf("instance RunningContainers = %d, want 0 (requeue must release the instance slot)", inst.RunningContainers)
+	if task.ContainerID != "" {
+		t.Errorf("container ID = %q, want cleared", task.ContainerID)
 	}
 }
 
@@ -1062,19 +932,11 @@ func TestRequeueTask_LocalMode(t *testing.T) {
 func TestMonitorRunning_TimedOutTaskKilled(t *testing.T) {
 	s := newMockStore()
 	past := time.Now().UTC().Add(-60 * time.Minute)
-
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:        "local",
-		Status:            models.InstanceStatusRunning,
-		MaxContainers:     4,
-		RunningContainers: 1,
-	})
 	s.CreateTask(context.Background(), &models.Task{
 		ID:            "bf_timeout",
 		Status:        models.TaskStatusRunning,
 		RepoURL:       "https://github.com/test/repo",
 		Prompt:        "long task",
-		InstanceID:    "local",
 		ContainerID:   "cont1",
 		StartedAt:     &past,
 		MaxRuntimeSec: 600,
@@ -1102,12 +964,9 @@ func TestMonitorRunning_TimedOutTaskKilled(t *testing.T) {
 func TestMonitorRunning_StillRunning(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), newLocalInstance())
 	s.CreateTask(context.Background(), &models.Task{
 		ID:          "bf_still",
 		Status:      models.TaskStatusRunning,
-		InstanceID:  "local",
 		ContainerID: "cont1",
 		StartedAt:   &now,
 	})
@@ -1115,7 +974,7 @@ func TestMonitorRunning_StillRunning(t *testing.T) {
 	bus, n := newTestBus()
 	mock := &mockDockerManager{
 		inspectResults: map[string]ContainerStatus{
-			"local/cont1": {Done: false},
+			"cont1": {Done: false},
 		},
 	}
 	o := newTestOrchestrator(s, bus, withDocker(mock))
@@ -1139,19 +998,11 @@ func TestMonitorRunning_StillRunning(t *testing.T) {
 func TestMonitorRunning_Completed(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:        "local",
-		Status:            models.InstanceStatusRunning,
-		MaxContainers:     4,
-		RunningContainers: 1,
-	})
 	s.CreateTask(context.Background(), &models.Task{
 		ID:          "bf_done",
 		Status:      models.TaskStatusRunning,
 		RepoURL:     "https://github.com/test/repo",
 		Prompt:      "finish me",
-		InstanceID:  "local",
 		ContainerID: "cont1",
 		StartedAt:   &now,
 	})
@@ -1159,7 +1010,7 @@ func TestMonitorRunning_Completed(t *testing.T) {
 	bus, n := newTestBus()
 	mock := &mockDockerManager{
 		inspectResults: map[string]ContainerStatus{
-			"local/cont1": {Done: true, ExitCode: 0, PRURL: "https://github.com/test/repo/pull/42"},
+			"cont1": {Done: true, ExitCode: 0, PRURL: "https://github.com/test/repo/pull/42"},
 		},
 	}
 	o := newTestOrchestrator(s, bus, withDocker(mock))
@@ -1184,20 +1035,12 @@ func TestMonitorRunning_Completed(t *testing.T) {
 func TestMonitorRunning_Completed_PersistsFinalOutputMetadata(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:        "local",
-		Status:            models.InstanceStatusRunning,
-		MaxContainers:     4,
-		RunningContainers: 1,
-	})
 	s.CreateTask(context.Background(), &models.Task{
 		ID:              "bf_done_meta",
 		Status:          models.TaskStatusRunning,
 		RepoURL:         "https://github.com/test/repo",
 		Prompt:          "finish me",
 		SaveAgentOutput: true,
-		InstanceID:      "local",
 		ContainerID:     "cont1",
 		StartedAt:       &now,
 		CreatedAt:       now,
@@ -1207,7 +1050,7 @@ func TestMonitorRunning_Completed_PersistsFinalOutputMetadata(t *testing.T) {
 	root := t.TempDir()
 	mock := &mockDockerManager{
 		inspectResults: map[string]ContainerStatus{
-			"local/cont1": {
+			"cont1": {
 				Done:         true,
 				Complete:     true,
 				ExitCode:     0,
@@ -1251,19 +1094,11 @@ func TestMonitorRunning_Completed_PersistsFinalOutputMetadata(t *testing.T) {
 func TestMonitorRunning_CompletedFromStatusFile(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:        "local",
-		Status:            models.InstanceStatusRunning,
-		MaxContainers:     4,
-		RunningContainers: 1,
-	})
 	s.CreateTask(context.Background(), &models.Task{
 		ID:          "bf_done_status",
 		Status:      models.TaskStatusRunning,
 		RepoURL:     "https://github.com/test/repo",
 		Prompt:      "finish me",
-		InstanceID:  "local",
 		ContainerID: "cont1",
 		StartedAt:   &now,
 	})
@@ -1271,7 +1106,7 @@ func TestMonitorRunning_CompletedFromStatusFile(t *testing.T) {
 	bus, n := newTestBus()
 	mock := &mockDockerManager{
 		inspectResults: map[string]ContainerStatus{
-			"local/cont1": {Done: true, Complete: true, ExitCode: 1, PRURL: "https://github.com/test/repo/pull/43"},
+			"cont1": {Done: true, Complete: true, ExitCode: 1, PRURL: "https://github.com/test/repo/pull/43"},
 		},
 	}
 	o := newTestOrchestrator(s, bus, withDocker(mock))
@@ -1299,12 +1134,9 @@ func TestMonitorRunning_CompletedFromStatusFile(t *testing.T) {
 func TestMonitorRunning_InspectError(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), newLocalInstance())
 	s.CreateTask(context.Background(), &models.Task{
 		ID:          "bf_ierr",
 		Status:      models.TaskStatusRunning,
-		InstanceID:  "local",
 		ContainerID: "cont1",
 		StartedAt:   &now,
 	})
@@ -1313,7 +1145,7 @@ func TestMonitorRunning_InspectError(t *testing.T) {
 	defer bus.Close()
 	mock := &mockDockerManager{
 		inspectErrors: map[string]error{
-			"local/cont1": fmt.Errorf("connection refused"),
+			"cont1": fmt.Errorf("connection refused"),
 		},
 	}
 	o := newTestOrchestrator(s, bus, withDocker(mock))
@@ -1334,12 +1166,9 @@ func TestMonitorRunning_InspectError(t *testing.T) {
 func TestMonitorRunning_ClearsInspectFailuresOnSuccess(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), newLocalInstance())
 	s.CreateTask(context.Background(), &models.Task{
 		ID:          "bf_clear",
 		Status:      models.TaskStatusRunning,
-		InstanceID:  "local",
 		ContainerID: "cont1",
 		StartedAt:   &now,
 	})
@@ -1348,7 +1177,7 @@ func TestMonitorRunning_ClearsInspectFailuresOnSuccess(t *testing.T) {
 	defer bus.Close()
 	mock := &mockDockerManager{
 		inspectResults: map[string]ContainerStatus{
-			"local/cont1": {Done: false},
+			"cont1": {Done: false},
 		},
 	}
 	o := newTestOrchestrator(s, bus, withDocker(mock))
@@ -1364,54 +1193,12 @@ func TestMonitorRunning_ClearsInspectFailuresOnSuccess(t *testing.T) {
 
 // --- handleInspectError tests ---
 
-func TestHandleInspectError_InstanceGone(t *testing.T) {
-	s := newMockStore()
-	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), newLocalInstance())
-	s.CreateTask(context.Background(), &models.Task{
-		ID:          "bf_gone",
-		Status:      models.TaskStatusRunning,
-		RepoURL:     "https://github.com/test/repo",
-		Prompt:      "lost instance",
-		InstanceID:  "local",
-		ContainerID: "cont1",
-		StartedAt:   &now,
-	})
-
-	bus, _ := newTestBus()
-	defer bus.Close()
-	o := newTestOrchestrator(s, bus)
-	o.running = 1
-	o.inspectFailures["bf_gone"] = 2 // should be cleared
-
-	task, _ := s.GetTask(context.Background(), "bf_gone")
-	o.handleInspectError(context.Background(), task, fmt.Errorf("InvalidInstanceId: i-abc does not exist"))
-
-	task, _ = s.GetTask(context.Background(), "bf_gone")
-	if task.Status != models.TaskStatusPending {
-		t.Errorf("status = %q, want pending (requeued)", task.Status)
-	}
-	if task.RetryCount != 1 {
-		t.Errorf("retry count = %d, want 1", task.RetryCount)
-	}
-	if o.running != 0 {
-		t.Errorf("running = %d, want 0", o.running)
-	}
-	if _, exists := o.inspectFailures["bf_gone"]; exists {
-		t.Error("inspectFailures should be cleared on instance gone")
-	}
-}
-
 func TestHandleInspectError_AccumulatesFailures(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), newLocalInstance())
 	s.CreateTask(context.Background(), &models.Task{
 		ID:          "bf_accum",
 		Status:      models.TaskStatusRunning,
-		InstanceID:  "local",
 		ContainerID: "cont1",
 		StartedAt:   &now,
 	})
@@ -1445,19 +1232,11 @@ func TestHandleInspectError_AccumulatesFailures(t *testing.T) {
 func TestHandleInspectError_KillsAtMaxFailures(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:        "local",
-		Status:            models.InstanceStatusRunning,
-		MaxContainers:     4,
-		RunningContainers: 1,
-	})
 	s.CreateTask(context.Background(), &models.Task{
 		ID:          "bf_maxfail",
 		Status:      models.TaskStatusRunning,
 		RepoURL:     "https://github.com/test/repo",
 		Prompt:      "failing task",
-		InstanceID:  "local",
 		ContainerID: "cont1",
 		StartedAt:   &now,
 	})
@@ -1584,17 +1363,9 @@ func TestIsTimedOut(t *testing.T) {
 func TestMonitorCancelled_StopContainerError(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:        "local",
-		Status:            models.InstanceStatusRunning,
-		MaxContainers:     4,
-		RunningContainers: 1,
-	})
 	s.CreateTask(context.Background(), &models.Task{
 		ID:          "bf_stop_err",
 		Status:      models.TaskStatusCancelled,
-		InstanceID:  "local",
 		ContainerID: "abc123",
 		StartedAt:   &now,
 		CompletedAt: &now,
@@ -1613,10 +1384,6 @@ func TestMonitorCancelled_StopContainerError(t *testing.T) {
 
 	// ClearTaskAssignment should still run despite StopContainer error
 	task, _ := s.GetTask(context.Background(), "bf_stop_err")
-	if task.InstanceID != "" {
-		t.Errorf("instanceID = %q, want empty (ClearTaskAssignment should still run)", task.InstanceID)
-	}
-
 	// markRetryReady should still run
 	if !task.ReadyForRetry {
 		t.Error("ReadyForRetry should be true (markRetryReady should still run)")
@@ -1637,17 +1404,9 @@ func TestMonitorCancelled_StopContainerError(t *testing.T) {
 func TestMonitorCancelled_ClearAssignmentError(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:        "local",
-		Status:            models.InstanceStatusRunning,
-		MaxContainers:     4,
-		RunningContainers: 1,
-	})
 	s.CreateTask(context.Background(), &models.Task{
 		ID:          "bf_clear_err",
 		Status:      models.TaskStatusCancelled,
-		InstanceID:  "local",
 		ContainerID: "abc123",
 		StartedAt:   &now,
 		CompletedAt: &now,
@@ -1678,17 +1437,9 @@ func TestMonitorCancelled_ClearAssignmentError(t *testing.T) {
 func TestHandleCompletion_CompleteTaskError(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:        "local",
-		Status:            models.InstanceStatusRunning,
-		MaxContainers:     4,
-		RunningContainers: 1,
-	})
 	s.CreateTask(context.Background(), &models.Task{
 		ID:          "bf_comp_err",
 		Status:      models.TaskStatusRunning,
-		InstanceID:  "local",
 		ContainerID: "cont1",
 		StartedAt:   &now,
 	})
@@ -1719,17 +1470,9 @@ func TestHandleCompletion_CompleteTaskError(t *testing.T) {
 func TestKillTask_StopContainerError(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
-
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:        "local",
-		Status:            models.InstanceStatusRunning,
-		MaxContainers:     4,
-		RunningContainers: 1,
-	})
 	s.CreateTask(context.Background(), &models.Task{
 		ID:          "bf_kill_err",
 		Status:      models.TaskStatusRunning,
-		InstanceID:  "local",
 		ContainerID: "cont1",
 		StartedAt:   &now,
 	})
@@ -1774,7 +1517,6 @@ func TestSaveAgentOutput_WritesViaWriter(t *testing.T) {
 		ID:              "bf_fs_out",
 		Status:          models.TaskStatusRunning,
 		SaveAgentOutput: true,
-		InstanceID:      "local",
 		ContainerID:     "cont1",
 		StartedAt:       &now,
 		CreatedAt:       now,
@@ -1816,7 +1558,6 @@ func TestSaveAgentOutput_NilWriter(t *testing.T) {
 		ID:              "bf_fs_nil",
 		Status:          models.TaskStatusRunning,
 		SaveAgentOutput: true,
-		InstanceID:      "local",
 		ContainerID:     "cont1",
 		StartedAt:       &now,
 	})
@@ -1842,7 +1583,6 @@ func TestSaveAgentOutput_GateOffWhenSaveDisabled(t *testing.T) {
 		ID:              "bf_fs_gate",
 		Status:          models.TaskStatusRunning,
 		SaveAgentOutput: false, // gated off
-		InstanceID:      "local",
 		ContainerID:     "cont1",
 		StartedAt:       &now,
 	})

@@ -39,13 +39,9 @@ func (o *Orchestrator) recoverOnStartup(ctx context.Context) {
 		o.lifecycle.MarkRecovering(ctx, task, true, "recovering after server restart (was provisioning)")
 	}
 
-	// Running tasks: mark recovering, preserve instance/container for inspection.
-	instanceContainers := make(map[string]int)
+	// Running tasks: mark recovering, preserve container for inspection.
 	for _, task := range runningTasks {
 		o.lifecycle.MarkRecovering(ctx, task, false, "recovering after server restart (was running)")
-		if task.InstanceID != "" {
-			instanceContainers[task.InstanceID]++
-		}
 	}
 
 	// Set o.running to the count of previously-running tasks plus any
@@ -53,14 +49,6 @@ func (o *Orchestrator) recoverOnStartup(ctx context.Context) {
 	o.mu.Lock()
 	o.running = len(runningTasks) + previouslyRunning
 	o.mu.Unlock()
-
-	// Fix up RunningContainers for each referenced instance
-	for instID, count := range instanceContainers {
-		o.store.ResetRunningContainers(ctx, instID)
-		for i := 0; i < count; i++ {
-			o.store.IncrementRunningContainers(ctx, instID)
-		}
-	}
 
 	log.Info().Int("recovering", len(runningTasks)+len(provTasks)).Msg("recovery: tasks marked as recovering")
 }
@@ -96,7 +84,7 @@ func (o *Orchestrator) monitorRecovering(ctx context.Context) {
 		}
 
 		// Was running — try to inspect the container.
-		status, err := o.docker.InspectContainer(ctx, task.InstanceID, task.ContainerID)
+		status, err := o.docker.InspectContainer(ctx, task.ContainerID)
 		if err != nil {
 			o.handleRecoveringInspectError(ctx, task, err)
 			continue
@@ -118,15 +106,10 @@ func (o *Orchestrator) monitorRecovering(ctx context.Context) {
 }
 
 // handleRecoveringInspectError handles inspect failures for recovering tasks,
-// requeuing on instance loss or after repeated failures.
+// requeuing after repeated failures.
 func (o *Orchestrator) handleRecoveringInspectError(ctx context.Context, task *models.Task, err error) {
 	outcome, count := o.classifyInspectFailure(task.ID, err)
 	switch outcome {
-	case inspectInstanceGone:
-		log.Warn().Str("task_id", task.ID).Msg("recovery: instance gone, re-queuing")
-		if err := o.lifecycle.Recover(ctx, task, false, "instance gone"); err != nil {
-			log.Error().Err(err).Str("task_id", task.ID).Msg("failed to re-queue recovering task")
-		}
 	case inspectExceededThreshold:
 		log.Warn().Err(err).Str("task_id", task.ID).Int("consecutive_failures", count).Msg("recovery: inspect failed repeatedly, re-queuing")
 		if err := o.lifecycle.Recover(ctx, task, false, fmt.Sprintf("inspect error after %d failures: %v", count, err)); err != nil {

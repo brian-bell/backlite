@@ -1,7 +1,6 @@
 package notify
 
 import (
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,24 +8,6 @@ import (
 	"testing"
 	"time"
 )
-
-func TestEvent_MarshalJSONOmitsLegacyReplyChannel(t *testing.T) {
-	event := Event{
-		Type:      EventTaskCompleted,
-		TaskID:    "bf_123",
-		Timestamp: time.Now().UTC(),
-	}
-
-	body, err := json.Marshal(event)
-	if err != nil {
-		t.Fatalf("marshal event: %v", err)
-	}
-
-	jsonBody := string(body)
-	if strings.Contains(jsonBody, "reply_channel") {
-		t.Fatalf("serialized event still emits reply_channel: %s", jsonBody)
-	}
-}
 
 func TestWebhookNotifier_NotifyPostsPayload(t *testing.T) {
 	var gotBody string
@@ -61,8 +42,5 @@ func TestWebhookNotifier_NotifyPostsPayload(t *testing.T) {
 
 	if !strings.Contains(gotBody, `"task_id":"bf_123"`) {
 		t.Fatalf("webhook payload missing task_id: %s", gotBody)
-	}
-	if strings.Contains(gotBody, "reply_channel") {
-		t.Fatalf("webhook payload still emits reply_channel: %s", gotBody)
 	}
 }

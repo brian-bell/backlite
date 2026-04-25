@@ -115,7 +115,7 @@ func TestMarkReadyForRetry_UnknownTaskIsNoop(t *testing.T) {
 }
 
 // trackingSlots records Acquire + Release calls so tests can assert the
-// coordinator pairs DB writes with the local counter + instance-slot updates.
+// coordinator pairs DB writes with local counter updates.
 type trackingSlots struct {
 	mu       sync.Mutex
 	acquired int
@@ -148,30 +148,11 @@ func (s *trackingSlots) Acquired() int {
 	return s.acquired
 }
 
-func seedInstance(t *testing.T, s store.Store, id string, running int) {
-	t.Helper()
-	ctx := context.Background()
-	now := time.Now().UTC().Truncate(time.Microsecond)
-	inst := &models.Instance{
-		InstanceID:        id,
-		Status:            models.InstanceStatusRunning,
-		MaxContainers:     4,
-		RunningContainers: running,
-		CreatedAt:         now,
-		UpdatedAt:         now,
-	}
-	if err := s.CreateInstance(ctx, inst); err != nil {
-		t.Fatalf("CreateInstance: %v", err)
-	}
-}
-
 func TestMarkRecovering_ProvisioningOrphan(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	task := seedTask(t, s, "bf_MR_PROV", models.TaskStatusProvisioning)
-	// Mirror recoverOnStartup: provisioning orphan has instance assigned.
-	task.InstanceID = "local"
-	_ = s.AssignTask(ctx, task.ID, "local")
+	_ = s.AssignTask(ctx, task.ID)
 
 	emitter := &captureEmitter{}
 	c := New(s, emitter, WithSlots(&trackingSlots{}))
@@ -184,9 +165,6 @@ func TestMarkRecovering_ProvisioningOrphan(t *testing.T) {
 	}
 	if got.Status != models.TaskStatusRecovering {
 		t.Errorf("status = %q, want recovering", got.Status)
-	}
-	if got.InstanceID != "" {
-		t.Errorf("instance_id = %q, want empty (clearAssignment=true)", got.InstanceID)
 	}
 	evs := emitter.Events()
 	if len(evs) != 1 || evs[0].Type != notify.EventTaskRecovering {
@@ -201,7 +179,7 @@ func TestMarkRecovering_RunningOrphan_PreservesAssignment(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	task := seedTask(t, s, "bf_MR_RUN", models.TaskStatusRunning)
-	_ = s.AssignTask(ctx, task.ID, "local")
+	_ = s.AssignTask(ctx, task.ID)
 	_ = s.StartTask(ctx, task.ID, "cont_123")
 	task, _ = s.GetTask(ctx, task.ID)
 
@@ -214,8 +192,8 @@ func TestMarkRecovering_RunningOrphan_PreservesAssignment(t *testing.T) {
 	if got.Status != models.TaskStatusRecovering {
 		t.Errorf("status = %q, want recovering", got.Status)
 	}
-	if got.InstanceID != "local" || got.ContainerID != "cont_123" {
-		t.Errorf("assignment wiped despite clearAssignment=false: instance=%q container=%q", got.InstanceID, got.ContainerID)
+	if got.ContainerID != "cont_123" {
+		t.Errorf("container_id wiped despite clearAssignment=false: %q", got.ContainerID)
 	}
 	if len(emitter.Events()) != 1 {
 		t.Fatalf("events = %d, want 1", len(emitter.Events()))
@@ -250,10 +228,9 @@ func TestRecover_ContainerAlive_PromotesToRunning(t *testing.T) {
 
 func TestRecover_NoContainer_RequeuesWithoutSlotRelease(t *testing.T) {
 	// Provisioning-orphan path: no container was ever started, so neither
-	// the local counter nor the instance slot should be released.
+	// the local counter nor any container assignment should be released.
 	s := newTestStore(t)
 	ctx := context.Background()
-	seedInstance(t, s, "local", 0)
 	task := seedTask(t, s, "bf_REC_NOCONT", models.TaskStatusRecovering)
 	// task.ContainerID stays empty (was provisioning).
 
@@ -272,22 +249,15 @@ func TestRecover_NoContainer_RequeuesWithoutSlotRelease(t *testing.T) {
 	if got := slots.Released(); len(got) != 0 {
 		t.Errorf("slots released on no-container path = %v, want none", got)
 	}
-	inst, _ := s.GetInstance(ctx, "local")
-	if inst.RunningContainers != 0 {
-		t.Errorf("instance RunningContainers = %d, want 0", inst.RunningContainers)
-	}
 }
 
-func TestRecover_WasRunning_ReleasesBothCounters(t *testing.T) {
-	// Was-running orphan path: the instance was incremented at startup
-	// fix-up, and the local counter is also nonzero. Both must be released.
-	// This covers the pre-refactor drift bug at recovery.go:150 where the
-	// local counter decremented but the instance slot did not.
+func TestRecover_WasRunning_ReleasesSlot(t *testing.T) {
+	// Was-running orphan path: the local counter is nonzero and must be
+	// released when the task is requeued.
 	s := newTestStore(t)
 	ctx := context.Background()
-	seedInstance(t, s, "local", 1)
 	task := seedTask(t, s, "bf_REC_WASRUN", models.TaskStatusRecovering)
-	_ = s.AssignTask(ctx, task.ID, "local")
+	_ = s.AssignTask(ctx, task.ID)
 	_ = s.StartTask(ctx, task.ID, "cont_wasrun")
 	task, _ = s.GetTask(ctx, task.ID)
 
@@ -295,7 +265,7 @@ func TestRecover_WasRunning_ReleasesBothCounters(t *testing.T) {
 	slots := &trackingSlots{}
 	c := New(s, emitter, WithSlots(slots))
 
-	if err := c.Recover(ctx, task, false, "instance gone"); err != nil {
+	if err := c.Recover(ctx, task, false, "container gone"); err != nil {
 		t.Fatalf("Recover: %v", err)
 	}
 
@@ -303,21 +273,21 @@ func TestRecover_WasRunning_ReleasesBothCounters(t *testing.T) {
 	if got.Status != models.TaskStatusPending {
 		t.Errorf("status = %q, want pending", got.Status)
 	}
-	if got.InstanceID != "" || got.ContainerID != "" {
-		t.Errorf("assignment not cleared by requeue: instance=%q container=%q", got.InstanceID, got.ContainerID)
+	if got.ContainerID != "" {
+		t.Errorf("container_id not cleared by requeue: %q", got.ContainerID)
 	}
 	if got := slots.Released(); len(got) != 1 || got[0] != task.ID {
 		t.Errorf("slots.Release calls = %v, want [%q]", got, task.ID)
 	}
 }
 
-// seedRunningTask creates a task already in the running state with instance +
-// container set, mirroring what Dispatch leaves behind before Complete fires.
+// seedRunningTask creates a task already in the running state with a container
+// set, mirroring what Dispatch leaves behind before Complete fires.
 func seedRunningTask(t *testing.T, s store.Store, id string) *models.Task {
 	t.Helper()
 	ctx := context.Background()
 	task := seedTask(t, s, id, models.TaskStatusPending)
-	if err := s.AssignTask(ctx, task.ID, "local"); err != nil {
+	if err := s.AssignTask(ctx, task.ID); err != nil {
 		t.Fatalf("AssignTask: %v", err)
 	}
 	if err := s.StartTask(ctx, task.ID, "cont_"+id); err != nil {
@@ -333,7 +303,6 @@ func seedRunningTask(t *testing.T, s store.Store, id string) *models.Task {
 func TestComplete_SuccessPath(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	seedInstance(t, s, "local", 1)
 	task := seedRunningTask(t, s, "bf_COMP_OK")
 
 	emitter := &captureEmitter{}
@@ -389,7 +358,6 @@ func TestComplete_SuccessPath(t *testing.T) {
 func TestComplete_FailurePath_UnderRetryCap(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	seedInstance(t, s, "local", 1)
 	task := seedRunningTask(t, s, "bf_COMP_FAIL")
 
 	emitter := &captureEmitter{}
@@ -431,7 +399,6 @@ func TestComplete_FailurePath_UnderRetryCap(t *testing.T) {
 func TestComplete_FailurePath_RetryCapReached(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	seedInstance(t, s, "local", 1)
 
 	// Seed a task that already sits at the user-retry cap.
 	now := time.Now().UTC().Truncate(time.Microsecond)
@@ -451,7 +418,7 @@ func TestComplete_FailurePath_RetryCapReached(t *testing.T) {
 	if err := s.CreateTask(ctx, seed); err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
-	_ = s.AssignTask(ctx, seed.ID, "local")
+	_ = s.AssignTask(ctx, seed.ID)
 	_ = s.StartTask(ctx, seed.ID, "cont_limit")
 	task, _ := s.GetTask(ctx, seed.ID)
 
@@ -479,17 +446,16 @@ func TestComplete_FailurePath_RetryCapReached(t *testing.T) {
 	}
 }
 
-func TestRequeue_Interrupted_ReleasesBothSlotsAndEmits(t *testing.T) {
+func TestRequeue_Interrupted_ReleasesSlotAndEmits(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	seedInstance(t, s, "local", 1)
 	task := seedRunningTask(t, s, "bf_RQ_INT")
 
 	emitter := &captureEmitter{}
 	slots := &trackingSlots{}
 	c := New(s, emitter, WithSlots(slots), WithMaxUserRetries(2))
 
-	if err := c.Requeue(ctx, task, "instance terminated", RequeueInterrupted); err != nil {
+	if err := c.Requeue(ctx, task, "container unreachable", RequeueInterrupted); err != nil {
 		t.Fatalf("Requeue: %v", err)
 	}
 
@@ -500,17 +466,17 @@ func TestRequeue_Interrupted_ReleasesBothSlotsAndEmits(t *testing.T) {
 	if got.OutputURL != "" {
 		t.Errorf("output_url = %q, want empty after requeue (gated per current-attempt state — stale artifacts must not leak through /output endpoints)", got.OutputURL)
 	}
-	if got.InstanceID != "" || got.ContainerID != "" {
-		t.Errorf("assignment not cleared: instance=%q container=%q", got.InstanceID, got.ContainerID)
+	if got.ContainerID != "" {
+		t.Errorf("container_id not cleared: %q", got.ContainerID)
 	}
 	if n := len(slots.Released()); n != 1 {
-		t.Errorf("slots.Release calls = %d, want 1 (both counters must release)", n)
+		t.Errorf("slots.Release calls = %d, want 1", n)
 	}
 	evs := emitter.Events()
 	if len(evs) != 1 || evs[0].Type != notify.EventTaskInterrupted {
 		t.Fatalf("events = %+v, want one task.interrupted", evs)
 	}
-	if evs[0].Message != "instance terminated" {
+	if evs[0].Message != "container unreachable" {
 		t.Errorf("event Message = %q", evs[0].Message)
 	}
 }
@@ -518,14 +484,13 @@ func TestRequeue_Interrupted_ReleasesBothSlotsAndEmits(t *testing.T) {
 func TestRequeue_Recovering_EmitsRecoveringEvent(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	seedInstance(t, s, "local", 1)
 	task := seedRunningTask(t, s, "bf_RQ_REC")
 
 	emitter := &captureEmitter{}
 	slots := &trackingSlots{}
 	c := New(s, emitter, WithSlots(slots), WithMaxUserRetries(2))
 
-	if err := c.Requeue(ctx, task, "instance gone", RequeueRecovering); err != nil {
+	if err := c.Requeue(ctx, task, "container gone", RequeueRecovering); err != nil {
 		t.Fatalf("Requeue: %v", err)
 	}
 
@@ -586,21 +551,17 @@ func TestCancel_CancellableState(t *testing.T) {
 func TestAssign_PendingToProvisioning(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	seedInstance(t, s, "local", 0)
 	task := seedTask(t, s, "bf_DISP_ASSIGN", models.TaskStatusPending)
 
 	emitter := &captureEmitter{}
 	c := New(s, emitter, WithSlots(&trackingSlots{}), WithMaxUserRetries(2))
 
-	if err := c.Assign(ctx, task.ID, "local"); err != nil {
+	if err := c.Assign(ctx, task.ID); err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
 	got, _ := s.GetTask(ctx, task.ID)
 	if got.Status != models.TaskStatusProvisioning {
 		t.Errorf("status = %q, want provisioning", got.Status)
-	}
-	if got.InstanceID != "local" {
-		t.Errorf("instance_id = %q, want local", got.InstanceID)
 	}
 	if len(emitter.Events()) != 0 {
 		t.Errorf("events emitted = %d, want 0 (task.running fires on Start)", len(emitter.Events()))
@@ -610,16 +571,15 @@ func TestAssign_PendingToProvisioning(t *testing.T) {
 func TestStart_ProvisioningToRunning(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	seedInstance(t, s, "local", 0)
 	task := seedTask(t, s, "bf_DISP_START", models.TaskStatusPending)
-	_ = s.AssignTask(ctx, task.ID, "local")
+	_ = s.AssignTask(ctx, task.ID)
 	task, _ = s.GetTask(ctx, task.ID)
 
 	emitter := &captureEmitter{}
 	slots := &trackingSlots{}
 	c := New(s, emitter, WithSlots(slots), WithMaxUserRetries(2))
 
-	if err := c.Start(ctx, task, "local", "cont_start"); err != nil {
+	if err := c.Start(ctx, task, "cont_start"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -629,10 +589,6 @@ func TestStart_ProvisioningToRunning(t *testing.T) {
 	}
 	if got.ContainerID != "cont_start" {
 		t.Errorf("container_id = %q", got.ContainerID)
-	}
-	inst, _ := s.GetInstance(ctx, "local")
-	if inst.RunningContainers != 1 {
-		t.Errorf("instance RunningContainers = %d, want 1", inst.RunningContainers)
 	}
 	if n := slots.Acquired(); n != 1 {
 		t.Errorf("slots.Acquire calls = %d, want 1", n)
@@ -677,9 +633,8 @@ func TestFailDispatch_EmitsFailedWithoutRetryGate(t *testing.T) {
 func TestRequeue_NoContainer_DoesNotReleaseSlots(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	seedInstance(t, s, "local", 0)
 	task := seedTask(t, s, "bf_RQ_NOC", models.TaskStatusRecovering)
-	// No instance / container assignment.
+	// No container assignment.
 
 	emitter := &captureEmitter{}
 	slots := &trackingSlots{}
@@ -701,7 +656,6 @@ func TestRequeue_NoContainer_DoesNotReleaseSlots(t *testing.T) {
 func TestComplete_NeedsInputEmitsDistinctEventType(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	seedInstance(t, s, "local", 1)
 	task := seedRunningTask(t, s, "bf_COMP_NI")
 
 	emitter := &captureEmitter{}

@@ -27,8 +27,7 @@ type Emitter = notify.Emitter
 // Slots exposes the orchestrator's in-memory running-task counter so the
 // coordinator can pair its DB writes with the local accounting update.
 //   - Acquire is called after a successful Start transition.
-//   - Release decrements both the local counter and the instance's DB-backed
-//     running_containers slot.
+//   - Release decrements the local running counter.
 //
 // The orchestrator's incrementRunning + releaseSlot methods satisfy this.
 type Slots interface {
@@ -92,7 +91,7 @@ type Coordinator struct {
 type Option func(*Coordinator)
 
 // WithSlots wires in the orchestrator's slot-release hook so the coordinator
-// can pair its DB writes with the local counter + instance-slot decrement.
+// can pair its DB writes with the local running counter.
 // Omit in tests that don't care about slot accounting.
 func WithSlots(s Slots) Option {
 	return func(c *Coordinator) { c.slots = s }
@@ -121,27 +120,20 @@ func (c *Coordinator) MarkReadyForRetry(ctx context.Context, taskID string) erro
 	return c.store.MarkReadyForRetry(ctx, taskID)
 }
 
-// Assign transitions a task pending → provisioning and records the task's
-// assignment to an instance. Used as the first step of dispatch before the
-// caller triggers the external RunAgent side-effect.
-func (c *Coordinator) Assign(ctx context.Context, taskID, instanceID string) error {
-	if err := c.store.AssignTask(ctx, taskID, instanceID); err != nil {
+// Assign transitions a task pending → provisioning. Used as the first step of
+// dispatch before the caller triggers the external RunAgent side-effect.
+func (c *Coordinator) Assign(ctx context.Context, taskID string) error {
+	if err := c.store.AssignTask(ctx, taskID); err != nil {
 		return fmt.Errorf("assign task: %w", err)
 	}
 	return nil
 }
 
-// Start atomically transitions a task provisioning → running: writes StartTask
-// and IncrementRunningContainers under WithTx, bumps the local running
+// Start transitions a task provisioning → running, bumps the local running
 // counter, and emits task.running. The caller is responsible for invoking
 // docker.RunAgent between Assign and Start.
-func (c *Coordinator) Start(ctx context.Context, task *models.Task, instanceID, containerID string) error {
-	if err := c.store.WithTx(ctx, func(tx store.Store) error {
-		if err := tx.StartTask(ctx, task.ID, containerID); err != nil {
-			return err
-		}
-		return tx.IncrementRunningContainers(ctx, instanceID)
-	}); err != nil {
+func (c *Coordinator) Start(ctx context.Context, task *models.Task, containerID string) error {
+	if err := c.store.StartTask(ctx, task.ID, containerID); err != nil {
 		return fmt.Errorf("start task: %w", err)
 	}
 	c.slots.Acquire()
@@ -181,7 +173,7 @@ func (c *Coordinator) FailDispatch(ctx context.Context, task *models.Task, reaso
 }
 
 // MarkRecovering transitions a task to recovering, optionally clears its
-// instance/container assignment, and emits task.recovering. Performs every
+// container assignment, and emits task.recovering. Performs every
 // step best-effort: internal errors are logged but do not short-circuit the
 // event emission, preserving the pre-refactor invariant that orphan-recovery
 // notifications fire even if a momentary DB hiccup skips the status write.
@@ -283,9 +275,8 @@ func applyTaskResult(task *models.Task, r store.TaskResult, completedAt time.Tim
 // Recover handles a recovering-state task after startup has classified it.
 // If containerAlive is true, the task is promoted back to running and
 // task.running is emitted. Otherwise the task is returned to pending via
-// Requeue(RequeueRecovering) — any orphan that held a container gets both
-// counters released before the requeue write, which fixes the pre-refactor
-// drift where recovery-requeue only released the local counter.
+// Requeue(RequeueRecovering). Any orphan that held a container releases its
+// local slot before the requeue write.
 func (c *Coordinator) Recover(ctx context.Context, task *models.Task, containerAlive bool, reason string) error {
 	if containerAlive {
 		if err := c.store.UpdateTaskStatus(ctx, task.ID, models.TaskStatusRunning, ""); err != nil {
@@ -298,8 +289,8 @@ func (c *Coordinator) Recover(ctx context.Context, task *models.Task, containerA
 }
 
 // Requeue returns a task to pending for another attempt. It clears output_url
-// (already part of store.RequeueTask), releases both slot counters if the
-// task held a container, and emits task.interrupted (RequeueInterrupted) or
+// (already part of store.RequeueTask), releases the local slot if the task
+// held a container, and emits task.interrupted (RequeueInterrupted) or
 // task.recovering (RequeueRecovering). This is the sole requeue path now
 // that both the monitor and recovery loops route through the coordinator.
 func (c *Coordinator) Requeue(ctx context.Context, task *models.Task, reason string, kind RequeueKind) error {

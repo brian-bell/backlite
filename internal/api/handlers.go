@@ -26,7 +26,7 @@ var taskIDPattern = regexp.MustCompile(`^bf_[0-9A-Z]{26}$`)
 
 // LogFetcher retrieves container logs for a running task.
 type LogFetcher interface {
-	GetLogs(ctx context.Context, instanceID, containerID string, tail int) (string, error)
+	GetLogs(ctx context.Context, containerID string, tail int) (string, error)
 }
 
 type Handlers struct {
@@ -149,7 +149,7 @@ func (h *Handlers) GetTaskLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if task.InstanceID == "" || task.ContainerID == "" {
+	if task.ContainerID == "" {
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
 		msg := "status: " + string(task.Status) + "\n"
@@ -167,7 +167,7 @@ func (h *Handlers) GetTaskLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	logs, err := h.logs.GetLogs(r.Context(), task.InstanceID, task.ContainerID, tail)
+	logs, err := h.logs.GetLogs(r.Context(), task.ContainerID, tail)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "failed to fetch logs: "+err.Error())
 		return

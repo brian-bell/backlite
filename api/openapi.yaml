@@ -740,9 +740,6 @@ components:
             type: string
           example:
             CUSTOM_VAR: "value"
-        instance_id:
-          type: string
-          example: "i-0abc123def456789"
         container_id:
           type: string
           example: "abc123def456"

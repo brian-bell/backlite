@@ -115,7 +115,7 @@ ls "$BACKFLOW_DATA_DIR/tasks/<task-id>/"
 
 - Backlite is local-Docker-only. There is no alternate cloud runtime path.
 - The notifier is webhook-only.
-- The synthetic `instances` row in SQLite tracks local Docker capacity; it is not a cloud instance inventory.
+- Concurrency capacity is capped by `BACKFLOW_MAX_CONTAINERS`; the orchestrator counts tasks in `provisioning`/`running` against it.
 - `save_agent_output=false` disables the filesystem artifact write for a task.
 
 ## Related Docs

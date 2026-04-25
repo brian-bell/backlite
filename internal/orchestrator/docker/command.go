@@ -9,7 +9,7 @@ import (
 )
 
 // runCommand executes a bash command on the local host.
-func (m *Manager) runCommand(ctx context.Context, _ /*instanceID*/, command string) (string, error) {
+func (m *Manager) runCommand(ctx context.Context, command string) (string, error) {
 	cmd := exec.CommandContext(ctx, "bash", "-c", command)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

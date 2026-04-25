@@ -8,7 +8,7 @@ import (
 
 type noopLogFetcher struct{}
 
-func (noopLogFetcher) GetLogs(_ context.Context, _, _ string, _ int) (string, error) {
+func (noopLogFetcher) GetLogs(_ context.Context, _ string, _ int) (string, error) {
 	return "test logs\n", nil
 }
 

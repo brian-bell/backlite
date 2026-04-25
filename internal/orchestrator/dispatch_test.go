@@ -10,131 +10,31 @@ import (
 	"github.com/brian-bell/backlite/internal/notify"
 )
 
-func TestFindAvailableInstance_ReturnsInstanceWithCapacity(t *testing.T) {
+func TestReleaseSlot_DecrementsRunningCounter(t *testing.T) {
 	s := newMockStore()
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:        "i-full",
-		Status:            models.InstanceStatusRunning,
-		MaxContainers:     2,
-		RunningContainers: 2,
-	})
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:        "i-avail",
-		Status:            models.InstanceStatusRunning,
-		MaxContainers:     4,
-		RunningContainers: 1,
-	})
-
-	bus, _ := newTestBus()
-	defer bus.Close()
-	o := newTestOrchestrator(s, bus)
-
-	inst, err := o.findAvailableInstance(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if inst.InstanceID != "i-avail" {
-		t.Errorf("instance = %q, want i-avail", inst.InstanceID)
-	}
-}
-
-func TestFindAvailableInstance_NoCapacity(t *testing.T) {
-	s := newMockStore()
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:        "i-full",
-		Status:            models.InstanceStatusRunning,
-		MaxContainers:     2,
-		RunningContainers: 2,
-	})
-
-	bus, _ := newTestBus()
-	defer bus.Close()
-	o := newTestOrchestrator(s, bus)
-
-	_, err := o.findAvailableInstance(context.Background())
-	if err != errNoCapacity {
-		t.Errorf("expected errNoCapacity, got %v", err)
-	}
-}
-
-func TestFindAvailableInstance_IgnoresNonRunning(t *testing.T) {
-	s := newMockStore()
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:        "i-terminated",
-		Status:            models.InstanceStatusTerminated,
-		MaxContainers:     4,
-		RunningContainers: 0,
-	})
-
-	bus, _ := newTestBus()
-	defer bus.Close()
-	o := newTestOrchestrator(s, bus)
-
-	_, err := o.findAvailableInstance(context.Background())
-	if err != errNoCapacity {
-		t.Errorf("expected errNoCapacity for terminated instance, got %v", err)
-	}
-}
-
-func TestFindAvailableInstance_EmptyStore(t *testing.T) {
-	s := newMockStore()
-	bus, _ := newTestBus()
-	defer bus.Close()
-	o := newTestOrchestrator(s, bus)
-
-	_, err := o.findAvailableInstance(context.Background())
-	if err != errNoCapacity {
-		t.Errorf("expected errNoCapacity for empty store, got %v", err)
-	}
-}
-
-func TestReleaseSlot(t *testing.T) {
-	s := newMockStore()
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:        "local",
-		Status:            models.InstanceStatusRunning,
-		MaxContainers:     4,
-		RunningContainers: 2,
-	})
-
 	bus, _ := newTestBus()
 	defer bus.Close()
 	o := newTestOrchestrator(s, bus)
 	o.running = 2
 
-	task := &models.Task{InstanceID: "local"}
-	o.releaseSlot(context.Background(), task)
+	o.releaseSlot(context.Background(), &models.Task{})
 
 	if o.running != 1 {
 		t.Errorf("running = %d, want 1", o.running)
 	}
-
-	inst, _ := s.GetInstance(context.Background(), "local")
-	if inst.RunningContainers != 1 {
-		t.Errorf("RunningContainers = %d, want 1", inst.RunningContainers)
-	}
 }
 
-func TestReleaseSlot_PreventsNegativeContainers(t *testing.T) {
+func TestReleaseSlot_FloorsAtZero(t *testing.T) {
 	s := newMockStore()
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:        "local",
-		Status:            models.InstanceStatusRunning,
-		MaxContainers:     4,
-		RunningContainers: 0,
-	})
-
 	bus, _ := newTestBus()
 	defer bus.Close()
 	o := newTestOrchestrator(s, bus)
-	o.running = 1
+	o.running = 0
 
-	task := &models.Task{InstanceID: "local"}
-	o.releaseSlot(context.Background(), task)
+	o.releaseSlot(context.Background(), &models.Task{})
 
-	inst, _ := s.GetInstance(context.Background(), "local")
-	if inst.RunningContainers != 0 {
-		t.Errorf("RunningContainers = %d, want 0 (should not go negative)", inst.RunningContainers)
+	if o.running != 0 {
+		t.Errorf("running = %d, want 0 (should not go negative)", o.running)
 	}
 }
 
@@ -151,7 +51,7 @@ func TestDispatchPending_NoCapacity(t *testing.T) {
 
 	bus, _ := newTestBus()
 	defer bus.Close()
-	o := newTestOrchestrator(s, bus) // MaxConcurrent = ContainersPerInst = 4
+	o := newTestOrchestrator(s, bus) // MaxContainers = 4
 	o.running = 4                    // at capacity
 
 	o.dispatchPending(context.Background())
@@ -164,7 +64,6 @@ func TestDispatchPending_NoCapacity(t *testing.T) {
 
 func TestDispatchPending_DispatchesTask(t *testing.T) {
 	s := newMockStore()
-	s.CreateInstance(context.Background(), newLocalInstance())
 	s.CreateTask(context.Background(), &models.Task{
 		ID:      "bf_disp",
 		Status:  models.TaskStatusPending,
@@ -189,9 +88,6 @@ func TestDispatchPending_DispatchesTask(t *testing.T) {
 	if task.ContainerID != "container-abc" {
 		t.Errorf("containerID = %q, want container-abc", task.ContainerID)
 	}
-	if task.InstanceID != "local" {
-		t.Errorf("instanceID = %q, want local", task.InstanceID)
-	}
 	if task.StartedAt == nil {
 		t.Error("StartedAt should be set")
 	}
@@ -206,7 +102,6 @@ func TestDispatchPending_DispatchesTask(t *testing.T) {
 
 func TestDispatchPending_FailedDispatch(t *testing.T) {
 	s := newMockStore()
-	s.CreateInstance(context.Background(), newLocalInstance())
 	s.CreateTask(context.Background(), &models.Task{
 		ID:      "bf_dfail",
 		Status:  models.TaskStatusPending,
@@ -239,37 +134,8 @@ func TestDispatchPending_FailedDispatch(t *testing.T) {
 
 // --- dispatch tests ---
 
-func TestDispatch_NoAvailableInstance(t *testing.T) {
-	s := newMockStore()
-	// No instances at all
-	task := &models.Task{
-		ID:      "bf_noinst",
-		Status:  models.TaskStatusPending,
-		RepoURL: "https://github.com/test/repo",
-		Prompt:  "no instance",
-	}
-	s.CreateTask(context.Background(), task)
-
-	bus, _ := newTestBus()
-	defer bus.Close()
-	o := newTestOrchestrator(s, bus)
-
-	task, _ = s.GetTask(context.Background(), "bf_noinst")
-	err := o.dispatch(context.Background(), task)
-	if err != nil {
-		t.Errorf("dispatch should return nil when no capacity (triggers scale-up), got %v", err)
-	}
-
-	// Task should still be pending (not modified by dispatch when no instance)
-	task, _ = s.GetTask(context.Background(), "bf_noinst")
-	if task.Status != models.TaskStatusPending {
-		t.Errorf("status = %q, want pending", task.Status)
-	}
-}
-
 func TestDispatch_Success(t *testing.T) {
 	s := newMockStore()
-	s.CreateInstance(context.Background(), newLocalInstance())
 	task := &models.Task{
 		ID:      "bf_dsuc",
 		Status:  models.TaskStatusPending,
@@ -299,19 +165,11 @@ func TestDispatch_Success(t *testing.T) {
 	if task.ContainerID != "cont-xyz" {
 		t.Errorf("containerID = %q, want cont-xyz", task.ContainerID)
 	}
-	if task.InstanceID != "local" {
-		t.Errorf("instanceID = %q, want local", task.InstanceID)
-	}
 	if task.StartedAt == nil {
 		t.Error("StartedAt should be set")
 	}
 	if o.running != 1 {
 		t.Errorf("running = %d, want 1", o.running)
-	}
-
-	inst, _ := s.GetInstance(context.Background(), "local")
-	if inst.RunningContainers != 1 {
-		t.Errorf("RunningContainers = %d, want 1", inst.RunningContainers)
 	}
 
 	types := n.eventTypes()
@@ -320,33 +178,8 @@ func TestDispatch_Success(t *testing.T) {
 	}
 }
 
-func TestDispatch_FindInstanceDBError(t *testing.T) {
-	s := newMockStore()
-	s.listInstancesErr = fmt.Errorf("db connection pool exhausted")
-
-	task := &models.Task{
-		ID:      "bf_dberr",
-		Status:  models.TaskStatusPending,
-		RepoURL: "https://github.com/test/repo",
-		Prompt:  "should fail with DB error",
-	}
-	s.CreateTask(context.Background(), task)
-
-	bus, _ := newTestBus()
-	defer bus.Close()
-	o := newTestOrchestrator(s, bus)
-
-	task, _ = s.GetTask(context.Background(), "bf_dberr")
-	err := o.dispatch(context.Background(), task)
-	// A real DB error should propagate, not be silently treated as no-capacity
-	if err == nil {
-		t.Fatal("expected error from dispatch when ListInstances fails, got nil")
-	}
-}
-
 func TestDispatch_ReadTaskWithoutEmbedder_Fails(t *testing.T) {
 	s := newMockStore()
-	s.CreateInstance(context.Background(), newLocalInstance())
 	task := &models.Task{
 		ID:       "bf_read_no_embedder",
 		Status:   models.TaskStatusPending,
@@ -391,7 +224,6 @@ func TestDispatch_ReadTaskWithoutEmbedder_Fails(t *testing.T) {
 // Protects against cross-orchestrator mis-dispatch in shared-DB setups.
 func TestDispatch_ReadTask_OrchestratorMissingReaderImage_Fails(t *testing.T) {
 	s := newMockStore()
-	s.CreateInstance(context.Background(), newLocalInstance())
 	task := &models.Task{
 		ID:         "bf_read_no_reader",
 		Status:     models.TaskStatusPending,
@@ -431,7 +263,6 @@ func TestDispatch_ReadTask_OrchestratorMissingReaderImage_Fails(t *testing.T) {
 
 func TestDispatch_RunAgentError(t *testing.T) {
 	s := newMockStore()
-	s.CreateInstance(context.Background(), newLocalInstance())
 	task := &models.Task{
 		ID:      "bf_derr",
 		Status:  models.TaskStatusPending,
@@ -466,11 +297,10 @@ func TestDispatch_RunAgentError(t *testing.T) {
 
 // TestDispatch_ReadDuplicate_NonForce_FailsWithoutContainer verifies that a
 // read-mode task for a URL already in the readings table short-circuits at
-// dispatch time: no instance reserved, no container launched, no embedding
-// call, and a task.failed event with a duplicate-URL message is emitted.
+// dispatch time: no container launched, no embedding call, and a task.failed
+// event with a duplicate-URL message is emitted.
 func TestDispatch_ReadDuplicate_NonForce_FailsWithoutContainer(t *testing.T) {
 	s := newMockStore()
-	s.CreateInstance(context.Background(), newLocalInstance())
 	const url = "https://example.com/post"
 	s.readingsByURL[url] = &models.Reading{
 		ID:             "bf_existing_reading",
@@ -517,15 +347,8 @@ func TestDispatch_ReadDuplicate_NonForce_FailsWithoutContainer(t *testing.T) {
 	if got.ContainerID != "" {
 		t.Errorf("ContainerID = %q, want empty (no container should launch)", got.ContainerID)
 	}
-	if got.InstanceID != "" {
-		t.Errorf("InstanceID = %q, want empty (no instance should be reserved)", got.InstanceID)
-	}
 	if o.running != 0 {
 		t.Errorf("running = %d, want 0", o.running)
-	}
-	inst, _ := s.GetInstance(context.Background(), "local")
-	if inst.RunningContainers != 0 {
-		t.Errorf("RunningContainers = %d, want 0", inst.RunningContainers)
 	}
 	if len(embedder.calls) != 0 {
 		t.Errorf("embedder calls = %d, want 0", len(embedder.calls))
@@ -553,7 +376,6 @@ func TestDispatch_ReadDuplicate_NonForce_FailsWithoutContainer(t *testing.T) {
 // bypasses the pre-dispatch duplicate check and launches the container.
 func TestDispatch_ReadDuplicate_Force_ProceedsNormally(t *testing.T) {
 	s := newMockStore()
-	s.CreateInstance(context.Background(), newLocalInstance())
 	const url = "https://example.com/post"
 	s.readingsByURL[url] = &models.Reading{
 		ID:  "bf_existing_reading",
@@ -605,7 +427,6 @@ func TestDispatch_ReadDuplicate_Force_ProceedsNormally(t *testing.T) {
 // failed via its generic error path, rather than silently proceeding.
 func TestDispatch_ReadDuplicate_LookupError_ReturnsError(t *testing.T) {
 	s := newMockStore()
-	s.CreateInstance(context.Background(), newLocalInstance())
 	s.getReadingByURLErr = fmt.Errorf("db connection pool exhausted")
 
 	task := &models.Task{

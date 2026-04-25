@@ -388,7 +388,7 @@ func TestSQLite_WithTx_Commit(t *testing.T) {
 		if err := tx.AssignTask(ctx, "bf_TX01"); err != nil {
 			return err
 		}
-		return tx.StartTask(ctx, "bf_TX01", "container-tx01")
+		return tx.StartTask(ctx, "bf_TX01", "container-tx01", "")
 	})
 	if err != nil {
 		t.Fatalf("WithTx: %v", err)
@@ -425,7 +425,7 @@ func TestSQLite_WithTx_Rollback(t *testing.T) {
 	// Transaction that fails — the assign should roll back
 	err := s.WithTx(ctx, func(tx Store) error {
 		tx.AssignTask(ctx, "bf_TX02")
-		tx.StartTask(ctx, "bf_TX02", "container-tx02")
+		tx.StartTask(ctx, "bf_TX02", "container-tx02", "")
 		return fmt.Errorf("something failed")
 	})
 	if err == nil {
@@ -462,7 +462,7 @@ func TestSQLite_ListTasks(t *testing.T) {
 	sqliteTestTask(t, s)
 
 	// Start the task so it becomes running
-	s.StartTask(ctx, "bf_TEST001", "container-1")
+	s.StartTask(ctx, "bf_TEST001", "container-1", "")
 
 	// List all
 	tasks, err := s.ListTasks(ctx, TaskFilter{Limit: 10})
@@ -551,7 +551,7 @@ func TestSQLite_StartTask(t *testing.T) {
 	ctx := context.Background()
 	sqliteTestTask(t, s)
 
-	if err := s.StartTask(ctx, "bf_TEST001", "container-abc"); err != nil {
+	if err := s.StartTask(ctx, "bf_TEST001", "container-abc", "skill-agent:v1"); err != nil {
 		t.Fatalf("StartTask: %v", err)
 	}
 
@@ -561,6 +561,9 @@ func TestSQLite_StartTask(t *testing.T) {
 	}
 	if got.ContainerID != "container-abc" {
 		t.Errorf("ContainerID = %q, want %q", got.ContainerID, "container-abc")
+	}
+	if got.AgentImage != "skill-agent:v1" {
+		t.Errorf("AgentImage = %q, want %q (StartTask must persist the routed image)", got.AgentImage, "skill-agent:v1")
 	}
 	if got.StartedAt == nil {
 		t.Fatal("StartedAt should be set")
@@ -666,7 +669,7 @@ func TestSQLite_RequeueTask(t *testing.T) {
 	}
 
 	s.AssignTask(ctx, task.ID)
-	s.StartTask(ctx, task.ID, "container-abc")
+	s.StartTask(ctx, task.ID, "container-abc", "")
 
 	if err := s.RequeueTask(ctx, task.ID, "container gone"); err != nil {
 		t.Fatalf("RequeueTask: %v", err)
@@ -717,7 +720,7 @@ func TestSQLite_ClearTaskAssignment(t *testing.T) {
 	sqliteTestTask(t, s)
 
 	s.AssignTask(ctx, "bf_TEST001")
-	s.StartTask(ctx, "bf_TEST001", "container-abc")
+	s.StartTask(ctx, "bf_TEST001", "container-abc", "")
 
 	if err := s.ClearTaskAssignment(ctx, "bf_TEST001"); err != nil {
 		t.Fatalf("ClearTaskAssignment: %v", err)

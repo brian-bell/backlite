@@ -420,7 +420,7 @@ func TestDeleteTask_EmitsCancelledEvent(t *testing.T) {
 	taskID := resp.Data.ID
 
 	// Transition task to running so cancel path is triggered
-	s.StartTask(ctx, taskID, "container-abc")
+	s.StartTask(ctx, taskID, "container-abc", "")
 
 	// Clear events from creation
 	emitter.events = nil

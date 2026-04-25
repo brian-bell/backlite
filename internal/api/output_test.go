@@ -365,7 +365,7 @@ func TestGetTaskOutput_RetryDoesNotLeakPreviousAttemptFile(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("GET /output.json after retry status = %d, want 404 (body: %s)", rec.Code, rec.Body.String())
 	}
-	if bytes.Contains(rec.Body.Bytes(), []byte(`"status":"failed"`)) {
+	if bytes.Contains(rec.Body.Bytes(), []byte(staleJSON)) {
 		t.Fatalf("response leaked previous attempt task.json: %s", rec.Body.String())
 	}
 }

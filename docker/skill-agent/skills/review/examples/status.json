@@ -1,0 +1,12 @@
+{
+  "exit_code": 0,
+  "complete": true,
+  "needs_input": false,
+  "question": "",
+  "error": "",
+  "pr_url": "https://github.com/owner/repo/pull/42",
+  "cost_usd": 0.18,
+  "elapsed_time_sec": 84,
+  "repo_url": "https://github.com/owner/repo",
+  "task_mode": "review"
+}

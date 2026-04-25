@@ -215,5 +215,41 @@ EOF
 )
 pass "installs requested skill bundle into ~/.claude/skills/<mode>/"
 
+# --- Review skill bundle installs end-to-end ---
+(
+    tmp=$(mktemp -d)
+    trap 'rm -rf "$tmp"' EXIT
+    export HOME="$tmp"
+    mkdir -p "$tmp/.claude"
+
+    cat >"$tmp/claude" <<'EOF'
+#!/usr/bin/env bash
+mkdir -p "$HOME/workspace"
+cat >"$HOME/workspace/status.json" <<JSON
+{"complete": true, "needs_input": false, "task_mode": "review", "pr_url": "https://github.com/o/r/pull/1"}
+JSON
+exit 0
+EOF
+    chmod +x "$tmp/claude"
+    export PATH="$tmp:$PATH"
+    export BACKFLOW_SKILLS_DIR="$DIR/skills"
+
+    export PROMPT="review https://github.com/o/r/pull/1"
+    export TASK_ID="bf_test"
+    export TASK_MODE="review"
+    export ANTHROPIC_API_KEY="sk-test"
+
+    if ! "$ENTRYPOINT" >/dev/null 2>&1; then
+        fail "review skill happy path: expected exit 0"
+    fi
+    if [ ! -f "$tmp/.claude/skills/review/SKILL.md" ]; then
+        fail "review skill install: expected ~/.claude/skills/review/SKILL.md"
+    fi
+    if ! grep -q "backlite-review" "$tmp/.claude/skills/review/SKILL.md"; then
+        fail "review skill: expected SKILL.md to identify itself as backlite-review"
+    fi
+)
+pass "installs review skill and runs to completion"
+
 echo
 echo "All skill-agent entrypoint tests passed."

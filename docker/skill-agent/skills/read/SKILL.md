@@ -84,6 +84,12 @@ best-effort hint mid-run.
    matching the same JSON. Both writes are required: the marker is for live
    log streaming, the file is for the orchestrator's post-exit read.
 
+8. **Send email summary.** After `status.json` is written, invoke
+   `~/.claude/skills/read/send-email.sh`. The script reads
+   `$HOME/workspace/status.json`, formats a plain-text summary, and POSTs
+   it to Resend. It is a no-op (`exit 0` with a log line) when
+   `RESEND_API_KEY` is unset, so it's safe to invoke unconditionally.
+
 ## status.json schema (read mode)
 
 ```json

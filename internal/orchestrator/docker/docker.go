@@ -186,6 +186,15 @@ func (m *Manager) buildSecretEnvPairs(task *models.Task) []string {
 	if m.config.APIKey != "" {
 		pairs = append(pairs, "BACKFLOW_API_KEY="+m.config.APIKey)
 	}
+	if m.config.ResendAPIKey != "" {
+		pairs = append(pairs, "RESEND_API_KEY="+m.config.ResendAPIKey)
+	}
+	if m.config.NotifyEmailFrom != "" {
+		pairs = append(pairs, "NOTIFY_EMAIL_FROM="+m.config.NotifyEmailFrom)
+	}
+	if m.config.NotifyEmailTo != "" {
+		pairs = append(pairs, "NOTIFY_EMAIL_TO="+m.config.NotifyEmailTo)
+	}
 	return pairs
 }
 

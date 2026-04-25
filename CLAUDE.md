@@ -215,6 +215,7 @@ Create new migrations in `migrations/` with the next numeric prefix, `-- +goose 
 Additional docs in `docs/`:
 - `schema.md` — Database schema (tables, columns, indexes, status lifecycles)
 - `self-hosting.md` — Single-host deployment walkthrough
+- `resend-setup.md` — Operator setup for the read skill's email summary delivery (Resend account, sender-domain DNS, env vars)
 - `adrs/` — Architecture Decision Records (historical; see individual files for current status)
 
 The OpenAPI 3.0 spec lives at `api/openapi.yaml`. `make test-schema` runs Schemathesis fuzz tests against it.

@@ -204,3 +204,112 @@ func TestLoad_ReaderImage_RequiresReadMaxTurns(t *testing.T) {
 		t.Errorf("error should name the missing env var, got: %v", err)
 	}
 }
+
+func setNotifyEnv(t *testing.T) {
+	t.Helper()
+	setBaseEnv(t)
+	t.Setenv("BACKFLOW_RESEND_API_KEY", "re_test")
+	t.Setenv("BACKFLOW_NOTIFY_EMAIL_FROM", "from@example.com")
+	t.Setenv("BACKFLOW_NOTIFY_EMAIL_TO", "to@example.com")
+}
+
+func TestLoad_NotifyConfig(t *testing.T) {
+	setNotifyEnv(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+	if cfg.ResendAPIKey != "re_test" {
+		t.Errorf("ResendAPIKey = %q, want %q", cfg.ResendAPIKey, "re_test")
+	}
+	if cfg.NotifyEmailFrom != "from@example.com" {
+		t.Errorf("NotifyEmailFrom = %q, want %q", cfg.NotifyEmailFrom, "from@example.com")
+	}
+	if cfg.NotifyEmailTo != "to@example.com" {
+		t.Errorf("NotifyEmailTo = %q, want %q", cfg.NotifyEmailTo, "to@example.com")
+	}
+}
+
+func TestLoad_NotifyConfig_AllUnset(t *testing.T) {
+	setBaseEnv(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+	if cfg.ResendAPIKey != "" {
+		t.Errorf("ResendAPIKey = %q, want empty when unset", cfg.ResendAPIKey)
+	}
+	if cfg.NotifyEmailFrom != "" {
+		t.Errorf("NotifyEmailFrom = %q, want empty when unset", cfg.NotifyEmailFrom)
+	}
+	if cfg.NotifyEmailTo != "" {
+		t.Errorf("NotifyEmailTo = %q, want empty when unset", cfg.NotifyEmailTo)
+	}
+}
+
+func TestLoad_NotifyConfig_RequiresResendAPIKey(t *testing.T) {
+	setNotifyEnv(t)
+	t.Setenv("BACKFLOW_RESEND_API_KEY", "")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error when BACKFLOW_RESEND_API_KEY is unset with email vars")
+	}
+	if !strings.Contains(err.Error(), "BACKFLOW_RESEND_API_KEY") {
+		t.Errorf("error should name the missing env var, got: %v", err)
+	}
+}
+
+func TestLoad_NotifyConfig_RequiresEmailFrom(t *testing.T) {
+	setNotifyEnv(t)
+	t.Setenv("BACKFLOW_NOTIFY_EMAIL_FROM", "")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error when BACKFLOW_NOTIFY_EMAIL_FROM is unset with other notify vars")
+	}
+	if !strings.Contains(err.Error(), "BACKFLOW_NOTIFY_EMAIL_FROM") {
+		t.Errorf("error should name the missing env var, got: %v", err)
+	}
+}
+
+func TestLoad_NotifyConfig_RequiresEmailTo(t *testing.T) {
+	setNotifyEnv(t)
+	t.Setenv("BACKFLOW_NOTIFY_EMAIL_TO", "")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error when BACKFLOW_NOTIFY_EMAIL_TO is unset with other notify vars")
+	}
+	if !strings.Contains(err.Error(), "BACKFLOW_NOTIFY_EMAIL_TO") {
+		t.Errorf("error should name the missing env var, got: %v", err)
+	}
+}
+
+func TestLoad_NotifyConfig_FromMissingAt(t *testing.T) {
+	setNotifyEnv(t)
+	t.Setenv("BACKFLOW_NOTIFY_EMAIL_FROM", "notanemail")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error when BACKFLOW_NOTIFY_EMAIL_FROM lacks '@'")
+	}
+	if !strings.Contains(err.Error(), "BACKFLOW_NOTIFY_EMAIL_FROM") || !strings.Contains(err.Error(), "@") {
+		t.Errorf("error should name the var and mention '@', got: %v", err)
+	}
+}
+
+func TestLoad_NotifyConfig_ToMissingAt(t *testing.T) {
+	setNotifyEnv(t)
+	t.Setenv("BACKFLOW_NOTIFY_EMAIL_TO", "notanemail")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error when BACKFLOW_NOTIFY_EMAIL_TO lacks '@'")
+	}
+	if !strings.Contains(err.Error(), "BACKFLOW_NOTIFY_EMAIL_TO") || !strings.Contains(err.Error(), "@") {
+		t.Errorf("error should name the var and mention '@', got: %v", err)
+	}
+}

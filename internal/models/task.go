@@ -154,6 +154,9 @@ var reservedEnvVarKeys = map[string]bool{
 	"ANTHROPIC_API_KEY":     true,
 	"OPENAI_API_KEY":        true,
 	"GITHUB_TOKEN":          true,
+	"RESEND_API_KEY":        true,
+	"NOTIFY_EMAIL_FROM":     true,
+	"NOTIFY_EMAIL_TO":       true,
 }
 
 // containsNullByte returns true if s contains a null byte, which PostgreSQL

@@ -43,6 +43,7 @@ Stores agent tasks submitted via the REST API.
 | `ready_for_retry` | `BOOLEAN` | `false` | Whether the task is ready for user retry. Set `true` after container cleanup completes (for failed/cancelled/interrupted tasks under the retry cap). Reset to `false` on requeue. |
 | `agent_image` | `TEXT` | `''` | Docker image the orchestrator used for this task's container. Populated at creation time — code/review tasks get the default agent image; read tasks get `BACKFLOW_READER_IMAGE`. Not user-settable via the API. |
 | `force` | `BOOLEAN` | `false` | For reading tasks, skip the exact-URL duplicate check and upsert the existing `readings` row on completion. Ignored for `code`/`review` tasks. |
+| `parent_task_id` | `TEXT` | `NULL` | Optional pointer to the task that spawned this one (e.g. retry chains, follow-ups, sub-tasks). Foreign key to `tasks(id)` with `ON DELETE SET NULL` — deleting a parent nulls the reference rather than cascading. |
 | `created_at` | `TEXT` | current UTC timestamp | When the task was created. |
 | `updated_at` | `TEXT` | current UTC timestamp | Last modification time. |
 | `started_at` | `TEXT` | `NULL` | When the agent container started. Nullable. |
@@ -51,6 +52,7 @@ Stores agent tasks submitted via the REST API.
 **Indexes:**
 - `idx_tasks_status` on `status` — used by the orchestrator to find pending/running tasks.
 - `idx_tasks_created` on `created_at` — used for ordered listing.
+- `idx_tasks_parent_task_id` on `parent_task_id` — used to look up the children of a given task.
 
 ### `api_keys`
 

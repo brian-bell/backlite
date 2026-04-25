@@ -180,7 +180,7 @@ func TestMarkRecovering_RunningOrphan_PreservesAssignment(t *testing.T) {
 	ctx := context.Background()
 	task := seedTask(t, s, "bf_MR_RUN", models.TaskStatusRunning)
 	_ = s.AssignTask(ctx, task.ID)
-	_ = s.StartTask(ctx, task.ID, "cont_123")
+	_ = s.StartTask(ctx, task.ID, "cont_123", "")
 	task, _ = s.GetTask(ctx, task.ID)
 
 	emitter := &captureEmitter{}
@@ -258,7 +258,7 @@ func TestRecover_WasRunning_ReleasesSlot(t *testing.T) {
 	ctx := context.Background()
 	task := seedTask(t, s, "bf_REC_WASRUN", models.TaskStatusRecovering)
 	_ = s.AssignTask(ctx, task.ID)
-	_ = s.StartTask(ctx, task.ID, "cont_wasrun")
+	_ = s.StartTask(ctx, task.ID, "cont_wasrun", "")
 	task, _ = s.GetTask(ctx, task.ID)
 
 	emitter := &captureEmitter{}
@@ -281,6 +281,40 @@ func TestRecover_WasRunning_ReleasesSlot(t *testing.T) {
 	}
 }
 
+// TestStart_PersistsAgentImage pins that lifecycle.Start writes the routed
+// agent image to the DB, not just the in-memory pointer. Without persistence,
+// the task.json snapshot written by saveOutputMetadata (after Complete reloads
+// the row) and the task.completed webhook payload both report the
+// creation-time image instead of the image actually used by the container —
+// silently breaking the Task.AgentImage contract whenever the image router
+// overrides it (e.g. BACKFLOW_SKILL_AGENT_IMAGE).
+func TestStart_PersistsAgentImage(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	task := seedTask(t, s, "bf_START_IMG", models.TaskStatusPending)
+	task.AgentImage = "creation-time-image"
+	if err := s.AssignTask(ctx, task.ID); err != nil {
+		t.Fatalf("AssignTask: %v", err)
+	}
+
+	emitter := &captureEmitter{}
+	c := New(s, emitter, WithSlots(&trackingSlots{}))
+
+	// Simulate the orchestrator's image-router override after Assign.
+	task.AgentImage = "routed-skill-image"
+	if err := c.Start(ctx, task, "cont_img"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	got, err := s.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.AgentImage != "routed-skill-image" {
+		t.Errorf("persisted AgentImage = %q, want %q (Start must write the routed image, not the creation-time value)", got.AgentImage, "routed-skill-image")
+	}
+}
+
 // seedRunningTask creates a task already in the running state with a container
 // set, mirroring what Dispatch leaves behind before Complete fires.
 func seedRunningTask(t *testing.T, s store.Store, id string) *models.Task {
@@ -290,7 +324,7 @@ func seedRunningTask(t *testing.T, s store.Store, id string) *models.Task {
 	if err := s.AssignTask(ctx, task.ID); err != nil {
 		t.Fatalf("AssignTask: %v", err)
 	}
-	if err := s.StartTask(ctx, task.ID, "cont_"+id); err != nil {
+	if err := s.StartTask(ctx, task.ID, "cont_"+id, ""); err != nil {
 		t.Fatalf("StartTask: %v", err)
 	}
 	got, err := s.GetTask(ctx, task.ID)
@@ -419,7 +453,7 @@ func TestComplete_FailurePath_RetryCapReached(t *testing.T) {
 		t.Fatalf("CreateTask: %v", err)
 	}
 	_ = s.AssignTask(ctx, seed.ID)
-	_ = s.StartTask(ctx, seed.ID, "cont_limit")
+	_ = s.StartTask(ctx, seed.ID, "cont_limit", "")
 	task, _ := s.GetTask(ctx, seed.ID)
 
 	emitter := &captureEmitter{}

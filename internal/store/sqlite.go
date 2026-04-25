@@ -198,11 +198,11 @@ func (s *SQLiteStore) AssignTask(ctx context.Context, id string) error {
 	return err
 }
 
-func (s *SQLiteStore) StartTask(ctx context.Context, id string, containerID string) error {
-	now := time.Now().UTC()
+func (s *SQLiteStore) StartTask(ctx context.Context, id string, containerID string, agentImage string) error {
+	now := timeString(time.Now().UTC())
 	_, err := s.q.ExecContext(ctx,
-		"UPDATE tasks SET status=?, container_id=?, started_at=?, updated_at=? WHERE id=?",
-		models.TaskStatusRunning, containerID, timeString(now), timeString(now), id,
+		"UPDATE tasks SET status=?, container_id=?, agent_image=?, started_at=?, updated_at=? WHERE id=?",
+		models.TaskStatusRunning, containerID, agentImage, now, now, id,
 	)
 	return err
 }

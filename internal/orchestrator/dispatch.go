@@ -8,6 +8,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/brian-bell/backlite/internal/models"
+	"github.com/brian-bell/backlite/internal/orchestrator/imagerouter"
 	"github.com/brian-bell/backlite/internal/store"
 )
 
@@ -50,8 +51,8 @@ func (o *Orchestrator) dispatch(ctx context.Context, task *models.Task) error {
 		if o.embedder == nil {
 			return fmt.Errorf("cannot dispatch read task: no embedder configured (set OPENAI_API_KEY)")
 		}
-		if o.config.ReaderImage == "" {
-			return fmt.Errorf("cannot dispatch read task: no reader image configured (set BACKFLOW_READER_IMAGE)")
+		if !imagerouter.CanRunRead(task, o.config) {
+			return fmt.Errorf("cannot dispatch read task: set BACKFLOW_READER_IMAGE, or BACKFLOW_SKILL_AGENT_IMAGE for claude_code")
 		}
 		if !task.Force {
 			existing, err := o.store.GetReadingByURL(ctx, task.Prompt)
@@ -63,6 +64,8 @@ func (o *Orchestrator) dispatch(ctx context.Context, task *models.Task) error {
 			}
 		}
 	}
+
+	task.AgentImage = imagerouter.Resolve(task, o.config)
 
 	if err := o.lifecycle.Assign(ctx, task.ID); err != nil {
 		return err

@@ -131,9 +131,11 @@ func (c *Coordinator) Assign(ctx context.Context, taskID string) error {
 
 // Start transitions a task provisioning → running, bumps the local running
 // counter, and emits task.running. The caller is responsible for invoking
-// docker.RunAgent between Assign and Start.
+// docker.RunAgent between Assign and Start. task.AgentImage is persisted at
+// this point so the DB records the image actually used (after any image-router
+// override), not just the creation-time default.
 func (c *Coordinator) Start(ctx context.Context, task *models.Task, containerID string) error {
-	if err := c.store.StartTask(ctx, task.ID, containerID); err != nil {
+	if err := c.store.StartTask(ctx, task.ID, containerID, task.AgentImage); err != nil {
 		return fmt.Errorf("start task: %w", err)
 	}
 	c.slots.Acquire()

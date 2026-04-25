@@ -100,6 +100,93 @@ func TestDispatchPending_DispatchesTask(t *testing.T) {
 	}
 }
 
+// TestDispatch_RoutesToSkillAgentImage verifies dispatch consults the
+// imagerouter and overrides task.AgentImage with the resolved value before
+// calling docker.RunAgent. With BACKFLOW_SKILL_AGENT_IMAGE configured and a
+// claude_code task, the skill image should win regardless of the value the
+// task carried in (which would be the default agent image set at creation).
+func TestDispatch_RoutesToSkillAgentImage(t *testing.T) {
+	s := newMockStore()
+	s.CreateTask(context.Background(), &models.Task{
+		ID:         "bf_skill",
+		Status:     models.TaskStatusPending,
+		Harness:    models.HarnessClaudeCode,
+		TaskMode:   models.TaskModeCode,
+		AgentImage: "backlite-agent",
+		RepoURL:    "https://github.com/test/repo",
+		Prompt:     "use the skill image",
+	})
+
+	var captured *models.Task
+	bus, _ := newTestBus()
+	mock := &mockDockerManager{
+		runAgentFn: func(_ context.Context, task *models.Task) (string, error) {
+			cp := *task
+			captured = &cp
+			return "container-skill", nil
+		},
+		inspectResults: map[string]ContainerStatus{},
+	}
+	o := newTestOrchestrator(s, bus, withDocker(mock))
+	o.config.AgentImage = "backlite-agent"
+	o.config.SkillAgentImage = "backlite-skill-agent:v1"
+
+	task, _ := s.GetTask(context.Background(), "bf_skill")
+	if err := o.dispatch(context.Background(), task); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	bus.Close()
+
+	if captured == nil {
+		t.Fatal("RunAgent was not called")
+	}
+	if captured.AgentImage != "backlite-skill-agent:v1" {
+		t.Errorf("captured AgentImage = %q, want %q", captured.AgentImage, "backlite-skill-agent:v1")
+	}
+}
+
+// TestDispatch_RoutesCodexToOldImage pins that codex tasks ignore the skill
+// image even when BACKFLOW_SKILL_AGENT_IMAGE is set.
+func TestDispatch_RoutesCodexToOldImage(t *testing.T) {
+	s := newMockStore()
+	s.CreateTask(context.Background(), &models.Task{
+		ID:         "bf_codex",
+		Status:     models.TaskStatusPending,
+		Harness:    models.HarnessCodex,
+		TaskMode:   models.TaskModeCode,
+		AgentImage: "backlite-agent",
+		RepoURL:    "https://github.com/test/repo",
+		Prompt:     "codex task",
+	})
+
+	var captured *models.Task
+	bus, _ := newTestBus()
+	mock := &mockDockerManager{
+		runAgentFn: func(_ context.Context, task *models.Task) (string, error) {
+			cp := *task
+			captured = &cp
+			return "container-codex", nil
+		},
+		inspectResults: map[string]ContainerStatus{},
+	}
+	o := newTestOrchestrator(s, bus, withDocker(mock))
+	o.config.AgentImage = "backlite-agent"
+	o.config.SkillAgentImage = "backlite-skill-agent:v1"
+
+	task, _ := s.GetTask(context.Background(), "bf_codex")
+	if err := o.dispatch(context.Background(), task); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	bus.Close()
+
+	if captured == nil {
+		t.Fatal("RunAgent was not called")
+	}
+	if captured.AgentImage != "backlite-agent" {
+		t.Errorf("captured AgentImage = %q, want %q (codex ignores skill image)", captured.AgentImage, "backlite-agent")
+	}
+}
+
 func TestDispatchPending_FailedDispatch(t *testing.T) {
 	s := newMockStore()
 	s.CreateTask(context.Background(), &models.Task{
@@ -222,12 +309,17 @@ func TestDispatch_ReadTaskWithoutEmbedder_Fails(t *testing.T) {
 // orchestrator that doesn't have a reader image configured refuses to dispatch
 // read tasks rather than silently running them on the default agent image.
 // Protects against cross-orchestrator mis-dispatch in shared-DB setups.
+//
+// Uses Harness=Codex to isolate the ReaderImage path: SkillAgentImage is
+// claude_code-only, so a codex read task with no ReaderImage is the only
+// scenario where the guard must still fire even with SkillAgentImage set.
 func TestDispatch_ReadTask_OrchestratorMissingReaderImage_Fails(t *testing.T) {
 	s := newMockStore()
 	task := &models.Task{
 		ID:         "bf_read_no_reader",
 		Status:     models.TaskStatusPending,
 		TaskMode:   models.TaskModeRead,
+		Harness:    models.HarnessCodex,
 		Prompt:     "https://example.com/post",
 		AgentImage: "backlite-reader", // set by the creating orchestrator
 	}
@@ -258,6 +350,50 @@ func TestDispatch_ReadTask_OrchestratorMissingReaderImage_Fails(t *testing.T) {
 	}
 	if got.Status == models.TaskStatusRunning {
 		t.Errorf("task should not be running, got %q", got.Status)
+	}
+}
+
+// TestDispatch_ReadTask_SkillImageWithoutReaderImage_Succeeds pins that an
+// operator who configures BACKFLOW_SKILL_AGENT_IMAGE for a claude_code-only
+// fleet can dispatch read tasks without separately configuring
+// BACKFLOW_READER_IMAGE — the skill bundle ships the read skill, so the
+// router resolves the skill image and dispatch must let it through.
+func TestDispatch_ReadTask_SkillImageWithoutReaderImage_Succeeds(t *testing.T) {
+	s := newMockStore()
+	s.CreateTask(context.Background(), &models.Task{
+		ID:       "bf_read_skill_no_reader",
+		Status:   models.TaskStatusPending,
+		TaskMode: models.TaskModeRead,
+		Harness:  models.HarnessClaudeCode,
+		Prompt:   "https://example.com/post",
+	})
+
+	var captured *models.Task
+	bus, _ := newTestBus()
+	defer bus.Close()
+	mock := &mockDockerManager{
+		runAgentFn: func(_ context.Context, task *models.Task) (string, error) {
+			cp := *task
+			captured = &cp
+			return "container-skill-read", nil
+		},
+		inspectResults: map[string]ContainerStatus{},
+	}
+	o := newTestOrchestrator(s, bus, withDocker(mock), withEmbedder(&mockEmbedder{}))
+	o.config.AgentImage = "backlite-agent"
+	o.config.ReaderImage = ""                            // intentionally unset
+	o.config.SkillAgentImage = "backlite-skill-agent:v1" // covers read via skill bundle
+
+	task, _ := s.GetTask(context.Background(), "bf_read_skill_no_reader")
+	if err := o.dispatch(context.Background(), task); err != nil {
+		t.Fatalf("dispatch: %v (skill image should let read tasks through without ReaderImage)", err)
+	}
+
+	if captured == nil {
+		t.Fatal("RunAgent was not called")
+	}
+	if captured.AgentImage != "backlite-skill-agent:v1" {
+		t.Errorf("captured AgentImage = %q, want %q", captured.AgentImage, "backlite-skill-agent:v1")
 	}
 }
 

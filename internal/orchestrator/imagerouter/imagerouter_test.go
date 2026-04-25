@@ -32,14 +32,13 @@ func TestResolve_TableDriven(t *testing.T) {
 		{"codex+read, skill unset", models.HarnessCodex, models.TaskModeRead, "", readerImg, readerImg},
 
 		// SkillAgentImage set + claude_code: route to skill image for every
-		// mode whose bundle is real (code + auto + review, slice 5). The read
-		// bundle is still a stub (slice 6), so read keeps its existing routing
-		// to ReaderImage rather than regressing the working read path.
+		// mode (code + auto + review + read, slice 6 populated the read
+		// bundle so the skill image is now the unified path for claude_code).
 		{"claude_code+code, skill set", models.HarnessClaudeCode, models.TaskModeCode, skillImg, readerImg, skillImg},
 		{"claude_code+auto, skill set", models.HarnessClaudeCode, models.TaskModeAuto, skillImg, readerImg, skillImg},
 		{"claude_code+review, skill set", models.HarnessClaudeCode, models.TaskModeReview, skillImg, readerImg, skillImg},
-		{"claude_code+read, skill set (reader wins)", models.HarnessClaudeCode, models.TaskModeRead, skillImg, readerImg, readerImg},
-		{"claude_code+read, skill set + reader unset (no fallback to skill stub)", models.HarnessClaudeCode, models.TaskModeRead, skillImg, "", agentImg},
+		{"claude_code+read, skill set (skill wins over reader)", models.HarnessClaudeCode, models.TaskModeRead, skillImg, readerImg, skillImg},
+		{"claude_code+read, skill set + reader unset", models.HarnessClaudeCode, models.TaskModeRead, skillImg, "", skillImg},
 
 		// SkillAgentImage set + codex: codex tasks still use old images.
 		{"codex+code, skill set", models.HarnessCodex, models.TaskModeCode, skillImg, readerImg, agentImg},
@@ -68,10 +67,11 @@ func TestResolve_TableDriven(t *testing.T) {
 	}
 }
 
-// TestCanRunRead_TableDriven pins that read-mode dispatch is gated only by
-// ReaderImage. The skill image's read bundle is still a stub (slice 6), so
-// SkillAgentImage doesn't unlock read on its own — claiming it could would
-// silently route working read tasks into the stub.
+// TestCanRunRead_TableDriven pins that read-mode dispatch is gated by either
+// ReaderImage (any harness) or SkillAgentImage on a claude_code task — slice
+// 6 populated the read bundle, so the skill image is now a valid host for
+// read tasks. Codex tasks still need ReaderImage because the skill image is
+// claude_code-only.
 func TestCanRunRead_TableDriven(t *testing.T) {
 	const (
 		readerImg = "backlite-reader:v1"
@@ -87,12 +87,12 @@ func TestCanRunRead_TableDriven(t *testing.T) {
 	}{
 		{"claude_code, both unset", models.HarnessClaudeCode, "", "", false},
 		{"claude_code, reader set", models.HarnessClaudeCode, "", readerImg, true},
-		{"claude_code, skill set only (read bundle is a stub)", models.HarnessClaudeCode, skillImg, "", false},
+		{"claude_code, skill set only", models.HarnessClaudeCode, skillImg, "", true},
 		{"claude_code, both set", models.HarnessClaudeCode, skillImg, readerImg, true},
 
 		{"codex, both unset", models.HarnessCodex, "", "", false},
 		{"codex, reader set", models.HarnessCodex, "", readerImg, true},
-		{"codex, skill set only", models.HarnessCodex, skillImg, "", false},
+		{"codex, skill set only (codex can't use skill image)", models.HarnessCodex, skillImg, "", false},
 		{"codex, both set", models.HarnessCodex, skillImg, readerImg, true},
 	}
 

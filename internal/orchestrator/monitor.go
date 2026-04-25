@@ -9,6 +9,7 @@ import (
 	"github.com/oklog/ulid/v2"
 	"github.com/rs/zerolog/log"
 
+	"github.com/brian-bell/backlite/internal/config"
 	"github.com/brian-bell/backlite/internal/models"
 	"github.com/brian-bell/backlite/internal/notify"
 	"github.com/brian-bell/backlite/internal/orchestrator/chain"
@@ -128,14 +129,19 @@ func (o *Orchestrator) handleCompletion(ctx context.Context, task *models.Task, 
 	}
 
 	switch {
-	case status.Complete || (status.ExitCode == 0 && !status.NeedsInput):
-		result.Status = models.TaskStatusCompleted
-		result.EventType = notify.EventTaskCompleted
 	case status.NeedsInput:
 		result.Status = models.TaskStatusFailed
 		result.Error = "agent needs input"
 		result.EventType = notify.EventTaskNeedsInput
+	case status.Complete:
+		result.Status = models.TaskStatusCompleted
+		result.EventType = notify.EventTaskCompleted
 	default:
+		// complete=false (or unset) means failure regardless of exit code:
+		// the agent's self-report wins over what the harness happened to
+		// return. An exit-code-only success arm here would let skill-authored
+		// failure branches (e.g. "no repo URL") slip through as task.completed
+		// whenever the underlying harness exited 0.
 		result.Status = models.TaskStatusFailed
 		result.Error = status.Error
 		result.EventType = notify.EventTaskFailed
@@ -182,6 +188,25 @@ func (o *Orchestrator) handleCompletion(ctx context.Context, task *models.Task, 
 			projected.TaskMode = result.TaskMode
 		}
 		if child, ok := chain.Plan(&projected); ok {
+			// Plan leaves MaxRuntimeSec/MaxTurns/AgentImage zero — fill them
+			// from review-mode defaults so the chained task gets bounded
+			// runtime/turn caps. Force CreatePR=false and SelfReview=false on
+			// the child (the recursion guard in Plan covers SelfReview, but
+			// being explicit avoids picking up the global default), and pin
+			// SaveAgentOutput to whatever the parent had so we don't drift to
+			// the global default for chained children.
+			falseVal := false
+			saveOutput := projected.SaveAgentOutput
+			o.config.TaskDefaults(models.TaskModeReview).Apply(child, &config.BoolOverrides{
+				CreatePR:        &falseVal,
+				SelfReview:      &falseVal,
+				SaveAgentOutput: &saveOutput,
+			})
+			log.Info().
+				Str("parent_task_id", task.ID).
+				Str("child_task_id", child.ID).
+				Str("pr_url", result.PRURL).
+				Msg("self-review chain planned")
 			result.ChainTx = func(txCtx context.Context, tx store.Store) (*models.Task, error) {
 				return child, chain.CreateChild(txCtx, tx, child)
 			}

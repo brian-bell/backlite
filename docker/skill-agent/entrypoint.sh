@@ -61,8 +61,21 @@ if [ ! -d "$SKILL_DIR" ]; then
     echo "ERROR: no skill bundle for task_mode='${TASK_MODE}' at ${SKILL_DIR}" >&2
     exit 2
 fi
-mkdir -p "${HOME}/.claude/skills"
-cp -r "$SKILL_DIR" "${HOME}/.claude/skills/${TASK_MODE}"
+mkdir -p "${HOME}/.claude/skills/${TASK_MODE}"
+cp -r "${SKILL_DIR}/." "${HOME}/.claude/skills/${TASK_MODE}/"
+
+# Auto mode dispatches to code or review at runtime, so the auto skill needs
+# both bundles installed alongside it. Skip any sub-bundle that's already in
+# place (e.g. when TASK_MODE itself is code/review) to keep the copy idempotent.
+if [ "$TASK_MODE" = "auto" ]; then
+    for sub in code review; do
+        sub_src="${SKILLS_SRC}/${sub}"
+        sub_dst="${HOME}/.claude/skills/${sub}"
+        if [ -d "$sub_src" ] && [ ! -d "$sub_dst" ]; then
+            cp -r "$sub_src" "$sub_dst"
+        fi
+    done
+fi
 
 WORKSPACE="${HOME}/workspace"
 mkdir -p "$WORKSPACE"

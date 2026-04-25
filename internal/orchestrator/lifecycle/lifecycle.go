@@ -136,9 +136,11 @@ func (c *Coordinator) Assign(ctx context.Context, taskID string) error {
 
 // Start transitions a task provisioning → running, bumps the local running
 // counter, and emits task.running. The caller is responsible for invoking
-// docker.RunAgent between Assign and Start.
+// docker.RunAgent between Assign and Start. task.AgentImage is persisted at
+// this point so the DB records the image actually used (after any image-router
+// override), not just the creation-time default.
 func (c *Coordinator) Start(ctx context.Context, task *models.Task, containerID string) error {
-	if err := c.store.StartTask(ctx, task.ID, containerID); err != nil {
+	if err := c.store.StartTask(ctx, task.ID, containerID, task.AgentImage); err != nil {
 		return fmt.Errorf("start task: %w", err)
 	}
 	c.slots.Acquire()
@@ -217,8 +219,9 @@ func (c *Coordinator) Complete(ctx context.Context, task *models.Task, r Result)
 	}
 
 	var (
-		writeErr   error
-		chainChild *models.Task
+		writeErr      error
+		chainChild    *models.Task
+		parentWritten bool
 	)
 	if r.ChainTx != nil {
 		// Atomic path: parent COMPLETE + chain hook (e.g. child INSERT) run in
@@ -234,22 +237,35 @@ func (c *Coordinator) Complete(ctx context.Context, task *models.Task, r Result)
 			chainChild = child
 			return nil
 		})
-		if err != nil {
-			log.Error().Err(err).Str("task_id", task.ID).Msg("lifecycle.Complete: tx (parent + chain) failed; rolling back")
-			applyTaskResult(task, storeResult, now)
-			writeErr = err
-			chainChild = nil
-		} else {
+		if err == nil {
 			c.refreshTask(ctx, task, storeResult, now)
+			parentWritten = true
+		} else {
+			// Chain tx rolled back. Fall through to the non-chain path so the
+			// parent still commits — losing the chained review is preferable
+			// to leaving the parent stuck in `running` and re-firing this code
+			// path on every monitor tick.
+			log.Warn().Err(err).Str("task_id", task.ID).Msg("lifecycle.Complete: chain tx failed; falling back to non-chain completion")
+			chainChild = nil
 		}
-	} else {
+	}
+	if !parentWritten {
 		if err := c.store.CompleteTask(ctx, task.ID, storeResult); err != nil {
 			log.Error().Err(err).Str("task_id", task.ID).Msg("lifecycle.Complete: failed to complete task in store")
-			applyTaskResult(task, storeResult, now)
 			writeErr = err
 		} else {
 			c.refreshTask(ctx, task, storeResult, now)
 		}
+	}
+
+	if writeErr != nil {
+		// We never persisted the terminal state. Don't release the slot,
+		// don't emit, don't flip ready_for_retry — those would lie about
+		// state we couldn't write, and (because the DB row is still
+		// running) the next monitor tick will reprocess the exited
+		// container and call Complete again. Releasing here would also
+		// drop the slot accounting below the live container count.
+		return writeErr
 	}
 
 	c.slots.Release(ctx, task)
@@ -269,7 +285,7 @@ func (c *Coordinator) Complete(ctx context.Context, task *models.Task, r Result)
 	if chainChild != nil {
 		c.emitter.Emit(notify.NewEvent(notify.EventTaskCreated, chainChild))
 	}
-	return writeErr
+	return nil
 }
 
 // refreshTask reloads the task row from the store so the caller's pointer

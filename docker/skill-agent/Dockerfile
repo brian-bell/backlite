@@ -21,7 +21,7 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 # Claude Code CLI only (this image is claude_code-only by design)
 RUN npm install -g @anthropic-ai/claude-code
 
-# Skill bundles baked at /opt/backflow/skills/{code,review,read}/
+# Skill bundles baked at /opt/backflow/skills/{auto,code,review,read}/
 COPY skills/ /opt/backflow/skills/
 
 # Agent user

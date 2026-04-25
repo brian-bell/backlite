@@ -31,11 +31,15 @@ func TestResolve_TableDriven(t *testing.T) {
 		{"codex+review, skill unset", models.HarnessCodex, models.TaskModeReview, "", readerImg, agentImg},
 		{"codex+read, skill unset", models.HarnessCodex, models.TaskModeRead, "", readerImg, readerImg},
 
-		// SkillAgentImage set + claude_code: route to skill image regardless of mode.
+		// SkillAgentImage set + claude_code: route to skill image only for the
+		// modes whose bundles are real (code + auto). Review and read bundles
+		// are still stubs (slices 5/6) and would regress working paths, so
+		// they keep their existing routing.
 		{"claude_code+code, skill set", models.HarnessClaudeCode, models.TaskModeCode, skillImg, readerImg, skillImg},
-		{"claude_code+review, skill set", models.HarnessClaudeCode, models.TaskModeReview, skillImg, readerImg, skillImg},
-		{"claude_code+read, skill set", models.HarnessClaudeCode, models.TaskModeRead, skillImg, readerImg, skillImg},
 		{"claude_code+auto, skill set", models.HarnessClaudeCode, models.TaskModeAuto, skillImg, readerImg, skillImg},
+		{"claude_code+review, skill set (stub avoided)", models.HarnessClaudeCode, models.TaskModeReview, skillImg, readerImg, agentImg},
+		{"claude_code+read, skill set (reader wins)", models.HarnessClaudeCode, models.TaskModeRead, skillImg, readerImg, readerImg},
+		{"claude_code+read, skill set + reader unset (no fallback to skill stub)", models.HarnessClaudeCode, models.TaskModeRead, skillImg, "", agentImg},
 
 		// SkillAgentImage set + codex: codex tasks still use old images.
 		{"codex+code, skill set", models.HarnessCodex, models.TaskModeCode, skillImg, readerImg, agentImg},
@@ -59,6 +63,49 @@ func TestResolve_TableDriven(t *testing.T) {
 			if got != tt.want {
 				t.Errorf("Resolve(%s, %s, skill=%q) = %q, want %q",
 					tt.harness, tt.mode, tt.skillImg, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCanRunRead_TableDriven pins that read-mode dispatch is gated only by
+// ReaderImage. The skill image's read bundle is still a stub (slice 6), so
+// SkillAgentImage doesn't unlock read on its own — claiming it could would
+// silently route working read tasks into the stub.
+func TestCanRunRead_TableDriven(t *testing.T) {
+	const (
+		readerImg = "backlite-reader:v1"
+		skillImg  = "backlite-skill-agent:v1"
+	)
+
+	tests := []struct {
+		name      string
+		harness   models.Harness
+		skillImg  string
+		readerImg string
+		want      bool
+	}{
+		{"claude_code, both unset", models.HarnessClaudeCode, "", "", false},
+		{"claude_code, reader set", models.HarnessClaudeCode, "", readerImg, true},
+		{"claude_code, skill set only (read bundle is a stub)", models.HarnessClaudeCode, skillImg, "", false},
+		{"claude_code, both set", models.HarnessClaudeCode, skillImg, readerImg, true},
+
+		{"codex, both unset", models.HarnessCodex, "", "", false},
+		{"codex, reader set", models.HarnessCodex, "", readerImg, true},
+		{"codex, skill set only", models.HarnessCodex, skillImg, "", false},
+		{"codex, both set", models.HarnessCodex, skillImg, readerImg, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{
+				ReaderImage:     tt.readerImg,
+				SkillAgentImage: tt.skillImg,
+			}
+			task := &models.Task{Harness: tt.harness, TaskMode: models.TaskModeRead}
+			if got := CanRunRead(task, cfg); got != tt.want {
+				t.Errorf("CanRunRead(harness=%s, skill=%q, reader=%q) = %v, want %v",
+					tt.harness, tt.skillImg, tt.readerImg, got, tt.want)
 			}
 		})
 	}

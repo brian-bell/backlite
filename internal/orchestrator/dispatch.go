@@ -51,8 +51,8 @@ func (o *Orchestrator) dispatch(ctx context.Context, task *models.Task) error {
 		if o.embedder == nil {
 			return fmt.Errorf("cannot dispatch read task: no embedder configured (set OPENAI_API_KEY)")
 		}
-		if o.config.ReaderImage == "" {
-			return fmt.Errorf("cannot dispatch read task: no reader image configured (set BACKFLOW_READER_IMAGE)")
+		if !imagerouter.CanRunRead(task, o.config) {
+			return fmt.Errorf("cannot dispatch read task: set BACKFLOW_READER_IMAGE")
 		}
 		if !task.Force {
 			existing, err := o.store.GetReadingByURL(ctx, task.Prompt)

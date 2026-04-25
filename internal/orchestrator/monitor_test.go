@@ -1104,19 +1104,12 @@ func TestMonitorRunning_SaveMetadataRunsAfterCompleteTask(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()
 
-	s.CreateInstance(context.Background(), &models.Instance{
-		InstanceID:        "local",
-		Status:            models.InstanceStatusRunning,
-		MaxContainers:     4,
-		RunningContainers: 1,
-	})
 	s.CreateTask(context.Background(), &models.Task{
 		ID:              "bf_order",
 		Status:          models.TaskStatusRunning,
 		RepoURL:         "https://github.com/test/repo",
 		Prompt:          "finish me",
 		SaveAgentOutput: true,
-		InstanceID:      "local",
 		ContainerID:     "cont1",
 		StartedAt:       &now,
 		CreatedAt:       now,
@@ -1126,7 +1119,7 @@ func TestMonitorRunning_SaveMetadataRunsAfterCompleteTask(t *testing.T) {
 	root := t.TempDir()
 	mock := &mockDockerManager{
 		inspectResults: map[string]ContainerStatus{
-			"local/cont1": {
+			"cont1": {
 				Done:         true,
 				Complete:     true,
 				ExitCode:     0,

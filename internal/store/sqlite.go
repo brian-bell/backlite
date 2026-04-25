@@ -182,20 +182,6 @@ func (s *SQLiteStore) DeleteTask(ctx context.Context, id string) error {
 	return err
 }
 
-// CountActiveTasks returns the number of tasks currently consuming a container
-// slot — either about to be started (provisioning) or actively running. Used by
-// the orchestrator at startup to reconcile its in-memory concurrency counter
-// against the database, in place of the removed instances.running_containers
-// column.
-func (s *SQLiteStore) CountActiveTasks(ctx context.Context) (int, error) {
-	var n int
-	err := s.q.QueryRowContext(ctx,
-		"SELECT count(*) FROM tasks WHERE status IN (?, ?)",
-		models.TaskStatusProvisioning, models.TaskStatusRunning,
-	).Scan(&n)
-	return n, err
-}
-
 func (s *SQLiteStore) UpdateTaskStatus(ctx context.Context, id string, status models.TaskStatus, taskErr string) error {
 	_, err := s.q.ExecContext(ctx,
 		"UPDATE tasks SET status=?, error=?, updated_at=? WHERE id=?",

@@ -91,18 +91,6 @@ func (s *mockStore) DeleteTask(_ context.Context, id string) error {
 	return nil
 }
 
-func (s *mockStore) CountActiveTasks(_ context.Context) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	n := 0
-	for _, t := range s.tasks {
-		if t.Status == models.TaskStatusProvisioning || t.Status == models.TaskStatusRunning {
-			n++
-		}
-	}
-	return n, nil
-}
-
 func (s *mockStore) UpdateTaskStatus(_ context.Context, id string, status models.TaskStatus, taskErr string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

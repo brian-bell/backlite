@@ -46,7 +46,6 @@ type Store interface {
 	GetTask(ctx context.Context, id string) (*models.Task, error)
 	ListTasks(ctx context.Context, filter TaskFilter) ([]*models.Task, error)
 	DeleteTask(ctx context.Context, id string) error
-	CountActiveTasks(ctx context.Context) (int, error)
 
 	// Named task updates
 	UpdateTaskStatus(ctx context.Context, id string, status models.TaskStatus, taskErr string) error

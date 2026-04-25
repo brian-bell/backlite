@@ -318,42 +318,6 @@ func TestSQLite_WithTx_Rollback(t *testing.T) {
 
 // --- ErrNotFound ---
 
-func TestSQLite_CountActiveTasks(t *testing.T) {
-	s := testSQLiteStore(t)
-	ctx := context.Background()
-	now := time.Now().UTC().Truncate(time.Microsecond)
-
-	mk := func(id string, status models.TaskStatus) {
-		task := &models.Task{
-			ID:        id,
-			Status:    status,
-			TaskMode:  models.TaskModeCode,
-			Harness:   models.HarnessClaudeCode,
-			Prompt:    "x",
-			CreatedAt: now,
-			UpdatedAt: now,
-		}
-		if err := s.CreateTask(ctx, task); err != nil {
-			t.Fatalf("CreateTask %s: %v", id, err)
-		}
-	}
-
-	mk("bf_ACTIVE01", models.TaskStatusRunning)
-	mk("bf_ACTIVE02", models.TaskStatusProvisioning)
-	mk("bf_IDLE0001", models.TaskStatusPending)
-	mk("bf_DONE0001", models.TaskStatusCompleted)
-	mk("bf_DONE0002", models.TaskStatusFailed)
-	mk("bf_RECOV001", models.TaskStatusRecovering)
-
-	got, err := s.CountActiveTasks(ctx)
-	if err != nil {
-		t.Fatalf("CountActiveTasks: %v", err)
-	}
-	if got != 2 {
-		t.Errorf("CountActiveTasks = %d, want 2 (running + provisioning only)", got)
-	}
-}
-
 func TestSQLite_GetTaskNotFound(t *testing.T) {
 	s := testSQLiteStore(t)
 	got, err := s.GetTask(context.Background(), "nonexistent")

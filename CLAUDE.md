@@ -115,7 +115,7 @@ Reading-mode env vars:
 
 ## Skill-based agent image (opt-in)
 
-- `BACKFLOW_SKILL_AGENT_IMAGE` — Optional. When set and `task.harness == "claude_code"`, the orchestrator routes the task to this image regardless of mode. The image is expected to ship per-mode skill bundles (`code`, `review`, `read`) under `/opt/backflow/skills/`. Codex tasks are unaffected and continue to use the existing agent / reader images. Image-routing logic lives in `internal/orchestrator/imagerouter`.
+- `BACKFLOW_SKILL_AGENT_IMAGE` — Optional. When set and `task.harness == "claude_code"`, the orchestrator routes the task to this image regardless of mode. The image ships per-mode skill bundles (`auto`, `code`, `review`, `read`) under `/opt/backflow/skills/`. The `auto` bundle handles tasks the API persists with `task_mode=auto` (the default for non-read POSTs) by inspecting the prompt and dispatching to the `code` or `review` skill at runtime; the entrypoint installs both sub-bundles alongside `auto` so the dispatch can find them. Codex tasks are unaffected and continue to use the existing agent / reader images. Image-routing logic lives in `internal/orchestrator/imagerouter`.
 
 The `tasks` table carries a `force` boolean column. REST callers can set `force` on `POST /api/v1/tasks`; `Force=true` bypasses the dispatch-time duplicate check and allows an existing reading row to be overwritten on completion.
 

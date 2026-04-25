@@ -215,5 +215,42 @@ EOF
 )
 pass "installs requested skill bundle into ~/.claude/skills/<mode>/"
 
+# --- Auto mode: succeeds and installs code+review sub-bundles for dispatch ---
+(
+    tmp=$(mktemp -d)
+    trap 'rm -rf "$tmp"' EXIT
+    export HOME="$tmp"
+    mkdir -p "$tmp/.claude"
+
+    # Stub claude that pretends the auto skill picked code: writes a valid
+    # status.json with the resolved concrete mode.
+    cat >"$tmp/claude" <<'EOF'
+#!/usr/bin/env bash
+mkdir -p "$HOME/workspace"
+cat >"$HOME/workspace/status.json" <<JSON
+{"complete": true, "needs_input": false, "task_mode": "code", "pr_url": "https://github.com/o/r/pull/9"}
+JSON
+exit 0
+EOF
+    chmod +x "$tmp/claude"
+    export PATH="$tmp:$PATH"
+    export BACKFLOW_SKILLS_DIR="$DIR/skills"
+
+    export PROMPT="implement a thing"
+    export TASK_ID="bf_auto"
+    export TASK_MODE="auto"
+    export ANTHROPIC_API_KEY="sk-test"
+
+    if ! "$ENTRYPOINT" >/dev/null 2>&1; then
+        fail "auto-mode entrypoint should succeed when the auto bundle exists"
+    fi
+    for sub in auto code review; do
+        if [ ! -f "$tmp/.claude/skills/${sub}/SKILL.md" ]; then
+            fail "auto mode: expected ~/.claude/skills/${sub}/SKILL.md to be installed for dispatch"
+        fi
+    done
+)
+pass "auto mode installs auto + code + review bundles for runtime dispatch"
+
 echo
 echo "All skill-agent entrypoint tests passed."

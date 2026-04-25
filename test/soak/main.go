@@ -76,7 +76,7 @@ func main() {
 
 	// --- Task submission loop ---
 	var wg sync.WaitGroup
-	multiStepSem := make(chan struct{}, 3) // limit concurrent multi-step scenarios (server needs BACKFLOW_CONTAINERS_PER_INSTANCE >= 4)
+	multiStepSem := make(chan struct{}, 3) // limit concurrent multi-step scenarios (server needs BACKFLOW_MAX_CONTAINERS >= 4)
 
 	go func() {
 		submitTicker := time.NewTicker(*taskInterval)
@@ -492,7 +492,6 @@ func truncateTasks(databasePath string) {
 	if _, err := db.ExecContext(ctx, `
 		DELETE FROM readings;
 		DELETE FROM api_keys;
-		DELETE FROM instances;
 		DELETE FROM tasks;`); err != nil {
 		fmt.Printf("  [warn] failed to truncate tasks: %v\n", err)
 		return

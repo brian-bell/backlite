@@ -71,7 +71,7 @@ type testStore struct{ store.Store }
 
 type noopLogFetcher struct{}
 
-func (noopLogFetcher) GetLogs(_ context.Context, _, _ string, _ int) (string, error) {
+func (noopLogFetcher) GetLogs(_ context.Context, _ string, _ int) (string, error) {
 	return "", nil
 }
 

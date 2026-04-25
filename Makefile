@@ -92,10 +92,10 @@ db-pending:
 	$(DB_QUERY) "SELECT id, repo_url, branch, harness, created_at FROM tasks WHERE status = 'pending' ORDER BY created_at ASC;"
 
 db-provisioning:
-	$(DB_QUERY) "SELECT id, repo_url, branch, harness, instance_id, created_at FROM tasks WHERE status = 'provisioning' ORDER BY created_at ASC;"
+	$(DB_QUERY) "SELECT id, repo_url, branch, harness, created_at FROM tasks WHERE status = 'provisioning' ORDER BY created_at ASC;"
 
 db-running:
-	$(DB_QUERY) "SELECT id, repo_url, branch, harness, model, instance_id, started_at, elapsed_time_sec FROM tasks WHERE status = 'running' ORDER BY started_at ASC;"
+	$(DB_QUERY) "SELECT id, repo_url, branch, harness, model, started_at, elapsed_time_sec FROM tasks WHERE status = 'running' ORDER BY started_at ASC;"
 
 db-completed:
 	$(DB_QUERY) "SELECT id, repo_url, branch, harness, pr_url, cost_usd, elapsed_time_sec, completed_at FROM tasks WHERE status = 'completed' ORDER BY completed_at DESC;"
@@ -110,7 +110,7 @@ db-cancelled:
 	$(DB_QUERY) "SELECT id, repo_url, branch, harness, completed_at FROM tasks WHERE status = 'cancelled' ORDER BY completed_at DESC;"
 
 db-recovering:
-	$(DB_QUERY) "SELECT id, repo_url, branch, harness, instance_id, container_id, updated_at FROM tasks WHERE status = 'recovering' ORDER BY updated_at ASC;"
+	$(DB_QUERY) "SELECT id, repo_url, branch, harness, container_id, updated_at FROM tasks WHERE status = 'recovering' ORDER BY updated_at ASC;"
 
 deps:
 	go mod tidy

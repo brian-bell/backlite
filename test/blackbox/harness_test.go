@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -193,7 +194,7 @@ func buildSubprocessEnv(port int, dbPath, webhookURL string) []string {
 		"ANTHROPIC_API_KEY=sk-test-fake",
 		"BACKFLOW_CONTAINER_CPUS=1",
 		"BACKFLOW_CONTAINER_MEMORY_GB=1",
-		"BACKFLOW_CONTAINERS_PER_INSTANCE=1",
+		"BACKFLOW_MAX_CONTAINERS=1",
 		"BACKFLOW_DEFAULT_SAVE_AGENT_OUTPUT=false",
 		"BACKFLOW_DEFAULT_CREATE_PR=false",
 		"BACKFLOW_DEFAULT_SELF_REVIEW=false",
@@ -253,8 +254,8 @@ func waitForHealthWithToken(baseURL, token string, timeout time.Duration) error 
 	return fmt.Errorf("health endpoint did not become ready within %s", timeout)
 }
 
-// resetBetweenTests truncates all tables, re-creates the synthetic local
-// instance, and resets the webhook listener. Call at the start of each test.
+// resetBetweenTests truncates all tables and resets the webhook listener.
+// Call at the start of each test.
 func resetBetweenTests(t *testing.T) {
 	t.Helper()
 
@@ -268,28 +269,15 @@ func resetBetweenTests(t *testing.T) {
 	_, err := dbPool.ExecContext(ctx, `
 		DELETE FROM readings;
 		DELETE FROM api_keys;
-		DELETE FROM tasks;
-		DELETE FROM instances;`)
+		DELETE FROM tasks;`)
 	if err != nil {
 		t.Fatalf("truncate tables: %v", err)
-	}
-
-	// Re-create the synthetic local instance. The orchestrator's initInstance()
-	// only runs at startup, so after truncation we must re-insert it manually.
-	_, err = dbPool.ExecContext(ctx, `
-		INSERT INTO instances (instance_id, status, max_containers, running_containers, created_at, updated_at)
-		VALUES ('local', 'running', 1, 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-		ON CONFLICT (instance_id) DO UPDATE
-		SET status = 'running', running_containers = 0, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`)
-	if err != nil {
-		t.Fatalf("re-create local instance: %v", err)
 	}
 
 	listener.Reset()
 }
 
-// waitForOrchestratorIdle waits until there are no non-terminal tasks left and
-// the synthetic local instance has no running containers.
+// waitForOrchestratorIdle waits until there are no non-terminal tasks left.
 func waitForOrchestratorIdle(t *testing.T, timeout time.Duration) {
 	t.Helper()
 
@@ -297,27 +285,30 @@ func waitForOrchestratorIdle(t *testing.T, timeout time.Duration) {
 	ctx := context.Background()
 
 	for {
-		activeTasks, runningContainers, err := orchestratorState(ctx)
+		activeTasks, err := orchestratorActiveTaskCount(ctx)
 		if err != nil {
 			t.Fatalf("check orchestrator idle state: %v", err)
 		}
-		if activeTasks == 0 && runningContainers == 0 {
+		runningTasks, err := orchestratorRunningTaskCount(ctx)
+		if err != nil {
+			t.Fatalf("check orchestrator running state: %v", err)
+		}
+		if activeTasks == 0 && runningTasks == 0 {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("orchestrator did not go idle within %s: %d active tasks, local running_containers=%d",
-				timeout, activeTasks, runningContainers)
+			t.Fatalf("orchestrator did not go idle within %s: %d active tasks, %d running slots",
+				timeout, activeTasks, runningTasks)
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
 }
 
-// orchestratorState returns the number of non-terminal tasks and the synthetic
-// local instance's running container count.
-func orchestratorState(ctx context.Context) (int, int, error) {
+// orchestratorActiveTaskCount returns the number of non-terminal tasks.
+func orchestratorActiveTaskCount(ctx context.Context) (int, error) {
 	rows, err := dbPool.QueryContext(ctx, "SELECT id, status FROM tasks ORDER BY created_at ASC")
 	if err != nil {
-		return 0, 0, err
+		return 0, err
 	}
 	defer rows.Close()
 
@@ -325,22 +316,40 @@ func orchestratorState(ctx context.Context) (int, int, error) {
 	for rows.Next() {
 		var id, status string
 		if err := rows.Scan(&id, &status); err != nil {
-			return 0, 0, err
+			return 0, err
 		}
 		if !isTerminal(status) {
 			activeTasks++
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return 0, 0, err
+	return activeTasks, rows.Err()
+}
+
+func orchestratorRunningTaskCount(ctx context.Context) (int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, backflowURL+"/debug/stats", nil)
+	if err != nil {
+		return 0, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("GET /debug/stats: status %d", resp.StatusCode)
 	}
 
-	var runningContainers int
-	if err := dbPool.QueryRowContext(ctx, "SELECT running_containers FROM instances WHERE instance_id = 'local'").Scan(&runningContainers); err != nil {
-		return 0, 0, err
+	var envelope struct {
+		Data struct {
+			Orchestrator struct {
+				RunningTasks int `json:"running_tasks"`
+			} `json:"orchestrator"`
+		} `json:"data"`
 	}
-
-	return activeTasks, runningContainers, nil
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		return 0, err
+	}
+	return envelope.Data.Orchestrator.RunningTasks, nil
 }
 
 // dumpLogsOnFailure returns a cleanup function that dumps the Backlite

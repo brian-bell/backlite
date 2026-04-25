@@ -34,15 +34,13 @@ Stores agent tasks submitted via the REST API.
 | `allowed_tools` | `TEXT` | `'[]'` | JSON array of allowed Claude Code tool names. |
 | `claude_md` | `TEXT` | `''` | Custom CLAUDE.md content injected into the agent container. |
 | `env_vars` | `TEXT` | `'{}'` | JSON object of environment variables passed to the container. |
-| `instance_id` | `TEXT` | `''` | FK-like reference to `instances.instance_id` — `'local'` in the current local-Docker runtime. |
-| `container_id` | `TEXT` | `''` | Docker container ID on the assigned instance. |
+| `container_id` | `TEXT` | `''` | Docker container ID assigned by the orchestrator after `docker run`. |
 | `retry_count` | `INTEGER` | `0` | Number of times this task has been re-queued (includes both auto-requeues and user retries). |
 | `user_retry_count` | `INTEGER` | `0` | Number of user-initiated retries (separate from auto-requeues like spot interruption). Capped by `BACKFLOW_MAX_USER_RETRIES`. |
 | `cost_usd` | `REAL` | `0` | Tracked cost in USD. |
 | `elapsed_time_sec` | `INTEGER` | `0` | Wall-clock seconds the agent ran. |
 | `error` | `TEXT` | `''` | Error message if the task failed. |
 | `ready_for_retry` | `BOOLEAN` | `false` | Whether the task is ready for user retry. Set `true` after container cleanup completes (for failed/cancelled/interrupted tasks under the retry cap). Reset to `false` on requeue. |
-| `reply_channel` | `TEXT` | `''` | Messaging reply channel. Legacy field from the removed SMS/Discord integrations; kept on the column set but no longer populated. |
 | `agent_image` | `TEXT` | `''` | Docker image the orchestrator used for this task's container. Populated at creation time — code/review tasks get the default agent image; read tasks get `BACKFLOW_READER_IMAGE`. Not user-settable via the API. |
 | `force` | `BOOLEAN` | `false` | For reading tasks, skip the exact-URL duplicate check and upsert the existing `readings` row on completion. Ignored for `code`/`review` tasks. |
 | `created_at` | `TEXT` | current UTC timestamp | When the task was created. |
@@ -53,22 +51,6 @@ Stores agent tasks submitted via the REST API.
 **Indexes:**
 - `idx_tasks_status` on `status` — used by the orchestrator to find pending/running tasks.
 - `idx_tasks_created` on `created_at` — used for ordered listing.
-
-### `instances`
-
-Tracks the container-execution slots the orchestrator dispatches against. With the current local-Docker runtime there is a single synthetic row with `instance_id = 'local'` created on startup by `Orchestrator.initInstance()`; `running_containers` is the live concurrency counter and `max_containers` comes from `BACKFLOW_CONTAINERS_PER_INSTANCE`.
-
-| Column | Type | Default | Description |
-|--------|------|---------|-------------|
-| `instance_id` | `TEXT` | — | **Primary key.** `'local'` in the current runtime. |
-| `status` | `TEXT` | `'pending'` | Instance lifecycle state. One of: `pending`, `running`, `draining`, `terminated`. |
-| `max_containers` | `INTEGER` | `4` | Maximum concurrent agent containers on this instance. |
-| `running_containers` | `INTEGER` | `0` | Current number of running containers. |
-| `created_at` | `TEXT` | current UTC timestamp | When the instance record was created. |
-| `updated_at` | `TEXT` | current UTC timestamp | Last modification time. |
-
-**Indexes:**
-- `idx_instances_status` on `status` — used to find running/pending instances for task dispatch.
 
 ### `api_keys`
 
@@ -124,19 +106,12 @@ pending → provisioning → running → completed
          (any non-terminal)      → cancelled
 running/provisioning → recovering → running (container still alive)
                                   → completed/failed (container exited)
-                                  → pending (re-queued, container/instance gone)
+                                  → pending (re-queued, container gone)
 ```
 
 Terminal states: `completed`, `failed`, `cancelled`.
 
 The `recovering` status is set on startup for tasks orphaned by a server restart. The orchestrator inspects their containers and resolves them on each tick.
-
-### Instance statuses
-
-```
-pending → running → draining → terminated
-                  → terminated
-```
 
 ## Notes
 

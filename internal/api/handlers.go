@@ -26,7 +26,7 @@ var taskIDPattern = regexp.MustCompile(`^bf_[0-9A-Z]{26}$`)
 
 // LogFetcher retrieves container logs for a running task.
 type LogFetcher interface {
-	GetLogs(ctx context.Context, instanceID, containerID string, tail int) (string, error)
+	GetLogs(ctx context.Context, containerID string, tail int) (string, error)
 }
 
 type Handlers struct {
@@ -61,7 +61,6 @@ func (h *Handlers) CreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task.RedactReplyChannel()
 	writeJSON(w, http.StatusCreated, task)
 }
 
@@ -76,7 +75,6 @@ func (h *Handlers) GetTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to get task")
 		return
 	}
-	task.RedactReplyChannel()
 	writeJSON(w, http.StatusOK, task)
 }
 
@@ -106,9 +104,6 @@ func (h *Handlers) ListTasks(w http.ResponseWriter, r *http.Request) {
 	}
 	if tasks == nil {
 		tasks = []*models.Task{}
-	}
-	for _, t := range tasks {
-		t.RedactReplyChannel()
 	}
 	writeJSON(w, http.StatusOK, tasks)
 }
@@ -154,7 +149,7 @@ func (h *Handlers) GetTaskLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if task.InstanceID == "" || task.ContainerID == "" {
+	if task.ContainerID == "" {
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
 		msg := "status: " + string(task.Status) + "\n"
@@ -172,7 +167,7 @@ func (h *Handlers) GetTaskLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	logs, err := h.logs.GetLogs(r.Context(), task.InstanceID, task.ContainerID, tail)
+	logs, err := h.logs.GetLogs(r.Context(), task.ContainerID, tail)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "failed to fetch logs: "+err.Error())
 		return
@@ -199,7 +194,6 @@ func (h *Handlers) RetryTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to get task after retry")
 		return
 	}
-	task.RedactReplyChannel()
 	writeJSON(w, http.StatusOK, task)
 }
 

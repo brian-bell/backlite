@@ -25,7 +25,6 @@ CREATE TABLE tasks (
     allowed_tools    TEXT NOT NULL DEFAULT '[]',
     claude_md        TEXT NOT NULL DEFAULT '',
     env_vars         TEXT NOT NULL DEFAULT '{}',
-    instance_id      TEXT NOT NULL DEFAULT '',
     container_id     TEXT NOT NULL DEFAULT '',
     retry_count      INTEGER NOT NULL DEFAULT 0,
     user_retry_count INTEGER NOT NULL DEFAULT 0,
@@ -33,7 +32,6 @@ CREATE TABLE tasks (
     elapsed_time_sec INTEGER NOT NULL DEFAULT 0,
     error            TEXT NOT NULL DEFAULT '',
     ready_for_retry  BOOLEAN NOT NULL DEFAULT false,
-    reply_channel    TEXT NOT NULL DEFAULT '',
     agent_image      TEXT NOT NULL DEFAULT '',
     force            BOOLEAN NOT NULL DEFAULT false,
     created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
@@ -44,17 +42,6 @@ CREATE TABLE tasks (
 
 CREATE INDEX idx_tasks_status ON tasks(status);
 CREATE INDEX idx_tasks_created ON tasks(created_at);
-
-CREATE TABLE instances (
-    instance_id        TEXT PRIMARY KEY,
-    status             TEXT NOT NULL DEFAULT 'pending',
-    max_containers     INTEGER NOT NULL DEFAULT 4,
-    running_containers INTEGER NOT NULL DEFAULT 0,
-    created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    updated_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-);
-
-CREATE INDEX idx_instances_status ON instances(status);
 
 CREATE TABLE api_keys (
     key_hash    TEXT PRIMARY KEY,
@@ -91,5 +78,4 @@ CREATE UNIQUE INDEX idx_readings_url ON readings(url);
 
 DROP TABLE IF EXISTS readings;
 DROP TABLE IF EXISTS api_keys;
-DROP TABLE IF EXISTS instances;
 DROP TABLE IF EXISTS tasks;

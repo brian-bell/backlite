@@ -45,8 +45,9 @@ case "$FAKE_OUTCOME" in
         ;;
     timeout)
         # Use a signal-aware sleep so Docker stop terminates quickly.
-        # PID 1 ignores SIGTERM by default; installing a trap exits cleanly.
-        trap 'exit 0' TERM INT
+        # PID 1 ignores SIGTERM by default; installing a trap preserves a
+        # non-zero signal-style exit for timeout/cancellation tests.
+        trap 'exit 143' TERM INT
         sleep infinity &
         wait
         ;;

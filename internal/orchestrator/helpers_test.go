@@ -10,29 +10,21 @@ import (
 	"github.com/brian-bell/backlite/internal/embeddings"
 	"github.com/brian-bell/backlite/internal/models"
 	"github.com/brian-bell/backlite/internal/notify"
+	"github.com/brian-bell/backlite/internal/orchestrator/lifecycle"
 	"github.com/brian-bell/backlite/internal/store"
 )
 
 // --- Mock store ---
 
 type mockStore struct {
-	tasks     map[string]*models.Task
-	instances map[string]*models.Instance
-	mu        sync.Mutex
+	tasks map[string]*models.Task
+	mu    sync.Mutex
 
-	// Error injection: if set, GetInstance returns this error instead of
-	// looking up the instance map.
-	getInstanceErr error
-
-	// Error injection: if set, CompleteTask returns this error.
-	completeTaskErr error
-
-	// Error injection: if set, the corresponding mock method returns this error.
+	// Error injection.
+	completeTaskErr        error
 	updateTaskStatusErr    error
 	clearTaskAssignmentErr error
 	markReadyForRetryErr   error
-	decrementContainersErr error
-	listInstancesErr       error
 	upsertReadingErr       error
 	getReadingByURLErr     error
 
@@ -46,7 +38,6 @@ type mockStore struct {
 func newMockStore() *mockStore {
 	return &mockStore{
 		tasks:         make(map[string]*models.Task),
-		instances:     make(map[string]*models.Instance),
 		readingsByURL: make(map[string]*models.Reading),
 	}
 }
@@ -100,45 +91,6 @@ func (s *mockStore) DeleteTask(_ context.Context, id string) error {
 	return nil
 }
 
-func (s *mockStore) CreateInstance(_ context.Context, inst *models.Instance) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	cp := *inst
-	s.instances[inst.InstanceID] = &cp
-	return nil
-}
-
-func (s *mockStore) GetInstance(_ context.Context, id string) (*models.Instance, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.getInstanceErr != nil {
-		return nil, s.getInstanceErr
-	}
-	i, ok := s.instances[id]
-	if !ok {
-		return nil, store.ErrNotFound
-	}
-	cp := *i
-	return &cp, nil
-}
-
-func (s *mockStore) ListInstances(_ context.Context, status *models.InstanceStatus) ([]*models.Instance, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.listInstancesErr != nil {
-		return nil, s.listInstancesErr
-	}
-	var result []*models.Instance
-	for _, i := range s.instances {
-		if status != nil && i.Status != *status {
-			continue
-		}
-		cp := *i
-		result = append(result, &cp)
-	}
-	return result, nil
-}
-
 func (s *mockStore) UpdateTaskStatus(_ context.Context, id string, status models.TaskStatus, taskErr string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -152,12 +104,11 @@ func (s *mockStore) UpdateTaskStatus(_ context.Context, id string, status models
 	return nil
 }
 
-func (s *mockStore) AssignTask(_ context.Context, id string, instanceID string) error {
+func (s *mockStore) AssignTask(_ context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if t, ok := s.tasks[id]; ok {
 		t.Status = models.TaskStatusProvisioning
-		t.InstanceID = instanceID
 	}
 	return nil
 }
@@ -207,7 +158,6 @@ func (s *mockStore) RequeueTask(_ context.Context, id string, reason string) err
 	defer s.mu.Unlock()
 	if t, ok := s.tasks[id]; ok {
 		t.Status = models.TaskStatusPending
-		t.InstanceID = ""
 		t.ContainerID = ""
 		t.StartedAt = nil
 		t.RetryCount++
@@ -234,7 +184,6 @@ func (s *mockStore) ClearTaskAssignment(_ context.Context, id string) error {
 		return s.clearTaskAssignmentErr
 	}
 	if t, ok := s.tasks[id]; ok {
-		t.InstanceID = ""
 		t.ContainerID = ""
 	}
 	return nil
@@ -257,56 +206,10 @@ func (s *mockStore) RetryTask(_ context.Context, id string, _ int) error {
 	defer s.mu.Unlock()
 	if t, ok := s.tasks[id]; ok {
 		t.Status = models.TaskStatusPending
-		t.InstanceID = ""
 		t.ContainerID = ""
 		t.ReadyForRetry = false
 		t.RetryCount++
 		t.UserRetryCount++
-	}
-	return nil
-}
-
-func (s *mockStore) UpdateInstanceStatus(_ context.Context, id string, status models.InstanceStatus) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if i, ok := s.instances[id]; ok {
-		i.Status = status
-		if status == models.InstanceStatusTerminated {
-			i.RunningContainers = 0
-		}
-	}
-	return nil
-}
-
-func (s *mockStore) IncrementRunningContainers(_ context.Context, id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if i, ok := s.instances[id]; ok {
-		i.RunningContainers++
-	}
-	return nil
-}
-
-func (s *mockStore) DecrementRunningContainers(_ context.Context, id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.decrementContainersErr != nil {
-		return s.decrementContainersErr
-	}
-	if i, ok := s.instances[id]; ok {
-		i.RunningContainers--
-		if i.RunningContainers < 0 {
-			i.RunningContainers = 0
-		}
-	}
-	return nil
-}
-
-func (s *mockStore) ResetRunningContainers(_ context.Context, id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if i, ok := s.instances[id]; ok {
-		i.RunningContainers = 0
 	}
 	return nil
 }
@@ -380,7 +283,7 @@ type mockDockerManager struct {
 
 	// RunAgent behavior: if runAgentFn is set it takes priority; otherwise
 	// returns runAgentID/runAgentErr.
-	runAgentFn  func(ctx context.Context, instance *models.Instance, task *models.Task) (string, error)
+	runAgentFn  func(ctx context.Context, task *models.Task) (string, error)
 	runAgentID  string
 	runAgentErr error
 
@@ -392,9 +295,9 @@ type mockDockerManager struct {
 	agentOutputErr error
 }
 
-func (m *mockDockerManager) RunAgent(ctx context.Context, instance *models.Instance, task *models.Task) (string, error) {
+func (m *mockDockerManager) RunAgent(ctx context.Context, task *models.Task) (string, error) {
 	if m.runAgentFn != nil {
-		return m.runAgentFn(ctx, instance, task)
+		return m.runAgentFn(ctx, task)
 	}
 	if m.runAgentErr != nil {
 		return "", m.runAgentErr
@@ -405,26 +308,25 @@ func (m *mockDockerManager) RunAgent(ctx context.Context, instance *models.Insta
 	return "", fmt.Errorf("not implemented")
 }
 
-func (m *mockDockerManager) InspectContainer(_ context.Context, instanceID, containerID string) (ContainerStatus, error) {
-	key := instanceID + "/" + containerID
-	if err, ok := m.inspectErrors[key]; ok {
+func (m *mockDockerManager) InspectContainer(_ context.Context, containerID string) (ContainerStatus, error) {
+	if err, ok := m.inspectErrors[containerID]; ok {
 		return ContainerStatus{}, err
 	}
-	if status, ok := m.inspectResults[key]; ok {
+	if status, ok := m.inspectResults[containerID]; ok {
 		return status, nil
 	}
-	return ContainerStatus{}, fmt.Errorf("unknown container %s", key)
+	return ContainerStatus{}, fmt.Errorf("unknown container %s", containerID)
 }
 
-func (m *mockDockerManager) StopContainer(_ context.Context, _, _ string) error {
+func (m *mockDockerManager) StopContainer(_ context.Context, _ string) error {
 	return m.stopContainerErr
 }
 
-func (m *mockDockerManager) GetLogs(_ context.Context, _, _ string, _ int) (string, error) {
+func (m *mockDockerManager) GetLogs(_ context.Context, _ string, _ int) (string, error) {
 	return "", nil
 }
 
-func (m *mockDockerManager) GetAgentOutput(_ context.Context, _, _ string) (string, error) {
+func (m *mockDockerManager) GetAgentOutput(_ context.Context, _ string) (string, error) {
 	if m.agentOutputErr != nil {
 		return "", m.agentOutputErr
 	}
@@ -478,9 +380,9 @@ func newTestBus() (*notify.EventBus, *mockNotifier) {
 
 func newTestOrchestrator(s store.Store, bus *notify.EventBus, opts ...func(*Orchestrator)) *Orchestrator {
 	cfg := &config.Config{
-		ContainersPerInst: 4,
-		MaxUserRetries:    2,
-		PollInterval:      5 * time.Second,
+		MaxContainers:  4,
+		MaxUserRetries: 2,
+		PollInterval:   5 * time.Second,
 	}
 	o := &Orchestrator{
 		store:           s,
@@ -490,6 +392,10 @@ func newTestOrchestrator(s store.Store, bus *notify.EventBus, opts ...func(*Orch
 		stopCh:          make(chan struct{}),
 		inspectFailures: make(map[string]int),
 	}
+	o.lifecycle = lifecycle.New(s, bus,
+		lifecycle.WithSlots(slotsAdapter{o: o}),
+		lifecycle.WithMaxUserRetries(cfg.MaxUserRetries),
+	)
 	for _, opt := range opts {
 		opt(o)
 	}
@@ -524,14 +430,4 @@ func (m *mockEmbedder) Embed(_ context.Context, text string) ([]float32, error) 
 		return nil, m.errToFn
 	}
 	return m.vector, nil
-}
-
-// newLocalInstance creates a standard local instance for tests.
-func newLocalInstance() *models.Instance {
-	return &models.Instance{
-		InstanceID:        "local",
-		Status:            models.InstanceStatusRunning,
-		MaxContainers:     4,
-		RunningContainers: 0,
-	}
 }

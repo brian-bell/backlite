@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/brian-bell/backlite/internal/models"
@@ -35,7 +34,6 @@ type Event struct {
 	Message           string    `json:"message,omitempty"`
 	PRURL             string    `json:"pr_url,omitempty"`
 	AgentLogTail      string    `json:"agent_log_tail,omitempty"`
-	ReplyChannel      string    `json:"reply_channel,omitempty"`
 	ReadyForRetry     bool      `json:"ready_for_retry,omitempty"`
 	RetryLimitReached bool      `json:"retry_limit_reached,omitempty"`
 	Timestamp         time.Time `json:"timestamp"`
@@ -50,35 +48,6 @@ type Event struct {
 // Emitter emits task lifecycle events.
 type Emitter interface {
 	Emit(event Event)
-}
-
-// MarshalJSON redacts sensitive reply channel details before serialization.
-func (e Event) MarshalJSON() ([]byte, error) {
-	type eventJSON struct {
-		Type          EventType `json:"event"`
-		TaskID        string    `json:"task_id"`
-		RepoURL       string    `json:"repo_url,omitempty"`
-		Prompt        string    `json:"prompt,omitempty"`
-		Message       string    `json:"message,omitempty"`
-		PRURL         string    `json:"pr_url,omitempty"`
-		AgentLogTail  string    `json:"agent_log_tail,omitempty"`
-		ReplyChannel  string    `json:"reply_channel,omitempty"`
-		ReadyForRetry bool      `json:"ready_for_retry,omitempty"`
-		Timestamp     time.Time `json:"timestamp"`
-	}
-
-	return json.Marshal(eventJSON{
-		Type:          e.Type,
-		TaskID:        e.TaskID,
-		RepoURL:       e.RepoURL,
-		Prompt:        e.Prompt,
-		Message:       e.Message,
-		PRURL:         e.PRURL,
-		AgentLogTail:  e.AgentLogTail,
-		ReplyChannel:  redactReplyChannel(e.ReplyChannel),
-		ReadyForRetry: e.ReadyForRetry,
-		Timestamp:     e.Timestamp,
-	})
 }
 
 // Notifier sends notifications for task lifecycle events.
@@ -163,13 +132,3 @@ func (w *WebhookNotifier) Notify(event Event) error {
 }
 
 func (w *WebhookNotifier) Name() string { return "webhook" }
-
-func redactReplyChannel(replyChannel string) string {
-	if replyChannel == "" {
-		return ""
-	}
-	if idx := strings.Index(replyChannel, ":"); idx >= 0 {
-		return replyChannel[:idx]
-	}
-	return replyChannel
-}

@@ -88,8 +88,8 @@ const taskColumns = `id, status, task_mode, harness, repo_url, branch, target_br
 	model, effort, max_budget_usd, max_runtime_sec, max_turns,
 	create_pr, self_review, save_agent_output, pr_title, pr_body, pr_url, output_url,
 	allowed_tools, claude_md, env_vars,
-	instance_id, container_id, retry_count, user_retry_count, cost_usd, elapsed_time_sec, error,
-	ready_for_retry, reply_channel, agent_image, force,
+	container_id, retry_count, user_retry_count, cost_usd, elapsed_time_sec, error,
+	ready_for_retry, agent_image, force,
 	created_at, updated_at, started_at, completed_at`
 
 func (s *SQLiteStore) CreateTask(ctx context.Context, task *models.Task) error {
@@ -109,8 +109,8 @@ func (s *SQLiteStore) CreateTask(ctx context.Context, task *models.Task) error {
 			model, effort, max_budget_usd, max_runtime_sec, max_turns,
 			create_pr, self_review, save_agent_output, pr_title, pr_body, pr_url, output_url,
 			allowed_tools, claude_md, env_vars,
-			instance_id, container_id, retry_count, user_retry_count, cost_usd, elapsed_time_sec, error,
-			ready_for_retry, reply_channel, agent_image, force,
+			container_id, retry_count, user_retry_count, cost_usd, elapsed_time_sec, error,
+			ready_for_retry, agent_image, force,
 			created_at, updated_at, started_at, completed_at
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?,
@@ -118,8 +118,8 @@ func (s *SQLiteStore) CreateTask(ctx context.Context, task *models.Task) error {
 			?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?,
-			?, ?, ?, ?, ?, ?, ?,
-			?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?,
+			?, ?, ?,
 			?, ?, ?, ?
 		)`,
 		task.ID, task.Status, task.TaskMode, task.Harness, task.RepoURL, task.Branch, task.TargetBranch,
@@ -128,8 +128,8 @@ func (s *SQLiteStore) CreateTask(ctx context.Context, task *models.Task) error {
 		task.CreatePR, task.SelfReview, task.SaveAgentOutput,
 		task.PRTitle, task.PRBody, task.PRURL, task.OutputURL,
 		allowedTools, task.ClaudeMD, envVars,
-		task.InstanceID, task.ContainerID, task.RetryCount, task.UserRetryCount, task.CostUSD, task.ElapsedTimeSec, task.Error,
-		task.ReadyForRetry, task.ReplyChannel, task.AgentImage, task.Force,
+		task.ContainerID, task.RetryCount, task.UserRetryCount, task.CostUSD, task.ElapsedTimeSec, task.Error,
+		task.ReadyForRetry, task.AgentImage, task.Force,
 		timeString(task.CreatedAt), timeString(task.UpdatedAt), nullableTimeString(task.StartedAt), nullableTimeString(task.CompletedAt),
 	)
 	return err
@@ -190,10 +190,10 @@ func (s *SQLiteStore) UpdateTaskStatus(ctx context.Context, id string, status mo
 	return err
 }
 
-func (s *SQLiteStore) AssignTask(ctx context.Context, id string, instanceID string) error {
+func (s *SQLiteStore) AssignTask(ctx context.Context, id string) error {
 	_, err := s.q.ExecContext(ctx,
-		"UPDATE tasks SET status=?, instance_id=?, updated_at=? WHERE id=?",
-		models.TaskStatusProvisioning, instanceID, timeString(time.Now().UTC()), id,
+		"UPDATE tasks SET status=?, updated_at=? WHERE id=?",
+		models.TaskStatusProvisioning, timeString(time.Now().UTC()), id,
 	)
 	return err
 }
@@ -233,7 +233,6 @@ func (s *SQLiteStore) RequeueTask(ctx context.Context, id string, reason string)
 	now := time.Now().UTC()
 	_, err := s.q.ExecContext(ctx, `UPDATE tasks SET
 			status=?,
-			instance_id='',
 			container_id='',
 			started_at=NULL,
 			retry_count=retry_count+1,
@@ -258,7 +257,7 @@ func (s *SQLiteStore) CancelTask(ctx context.Context, id string) error {
 
 func (s *SQLiteStore) ClearTaskAssignment(ctx context.Context, id string) error {
 	_, err := s.q.ExecContext(ctx,
-		"UPDATE tasks SET instance_id='', container_id='', updated_at=? WHERE id=?",
+		"UPDATE tasks SET container_id='', updated_at=? WHERE id=?",
 		timeString(time.Now().UTC()), id,
 	)
 	return err
@@ -276,7 +275,6 @@ func (s *SQLiteStore) RetryTask(ctx context.Context, id string, maxRetries int) 
 	now := time.Now().UTC()
 	result, err := s.q.ExecContext(ctx, `UPDATE tasks SET
 			status=?,
-			instance_id='',
 			container_id='',
 			started_at=NULL,
 			completed_at=NULL,
@@ -302,91 +300,6 @@ func (s *SQLiteStore) RetryTask(ctx context.Context, id string, maxRetries int) 
 		return fmt.Errorf("task %s is not ready for retry", id)
 	}
 	return nil
-}
-
-const instanceColumns = `instance_id, status, max_containers, running_containers, created_at, updated_at`
-
-func (s *SQLiteStore) CreateInstance(ctx context.Context, inst *models.Instance) error {
-	_, err := s.q.ExecContext(ctx, `
-		INSERT INTO instances (instance_id, status, max_containers, running_containers, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		inst.InstanceID,
-		inst.Status, inst.MaxContainers, inst.RunningContainers,
-		timeString(inst.CreatedAt), timeString(inst.UpdatedAt),
-	)
-	return err
-}
-
-func (s *SQLiteStore) GetInstance(ctx context.Context, id string) (*models.Instance, error) {
-	row := s.q.QueryRowContext(ctx, `SELECT `+instanceColumns+` FROM instances WHERE instance_id = ?`, id)
-	return scanInstance(row)
-}
-
-func (s *SQLiteStore) ListInstances(ctx context.Context, status *models.InstanceStatus) ([]*models.Instance, error) {
-	query := "SELECT " + instanceColumns + " FROM instances"
-	var args []any
-	if status != nil {
-		query += " WHERE status = ?"
-		args = append(args, string(*status))
-	}
-	query += " ORDER BY created_at ASC"
-
-	rows, err := s.q.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var instances []*models.Instance
-	for rows.Next() {
-		inst, err := scanInstance(rows)
-		if err != nil {
-			return nil, err
-		}
-		instances = append(instances, inst)
-	}
-	return instances, rows.Err()
-}
-
-func (s *SQLiteStore) UpdateInstanceStatus(ctx context.Context, id string, status models.InstanceStatus) error {
-	now := time.Now().UTC()
-	var (
-		query string
-		args  []any
-	)
-	if status == models.InstanceStatusTerminated {
-		query = "UPDATE instances SET status=?, running_containers=0, updated_at=? WHERE instance_id=?"
-		args = []any{status, timeString(now), id}
-	} else {
-		query = "UPDATE instances SET status=?, updated_at=? WHERE instance_id=?"
-		args = []any{status, timeString(now), id}
-	}
-	_, err := s.q.ExecContext(ctx, query, args...)
-	return err
-}
-
-func (s *SQLiteStore) IncrementRunningContainers(ctx context.Context, id string) error {
-	_, err := s.q.ExecContext(ctx,
-		"UPDATE instances SET running_containers=running_containers+1, updated_at=? WHERE instance_id=?",
-		timeString(time.Now().UTC()), id,
-	)
-	return err
-}
-
-func (s *SQLiteStore) DecrementRunningContainers(ctx context.Context, id string) error {
-	_, err := s.q.ExecContext(ctx,
-		"UPDATE instances SET running_containers=max(running_containers-1, 0), updated_at=? WHERE instance_id=?",
-		timeString(time.Now().UTC()), id,
-	)
-	return err
-}
-
-func (s *SQLiteStore) ResetRunningContainers(ctx context.Context, id string) error {
-	_, err := s.q.ExecContext(ctx,
-		"UPDATE instances SET running_containers=0, updated_at=? WHERE instance_id=?",
-		timeString(time.Now().UTC()), id,
-	)
-	return err
 }
 
 func (s *SQLiteStore) HasAPIKeys(ctx context.Context) (bool, error) {
@@ -628,8 +541,8 @@ func scanTask(row sqlScanner) (*models.Task, error) {
 		&t.CreatePR, &t.SelfReview, &t.SaveAgentOutput,
 		&t.PRTitle, &t.PRBody, &t.PRURL, &t.OutputURL,
 		&allowedToolsJSON, &t.ClaudeMD, &envVarsJSON,
-		&t.InstanceID, &t.ContainerID, &t.RetryCount, &t.UserRetryCount, &t.CostUSD, &t.ElapsedTimeSec, &t.Error,
-		&t.ReadyForRetry, &t.ReplyChannel, &t.AgentImage, &t.Force,
+		&t.ContainerID, &t.RetryCount, &t.UserRetryCount, &t.CostUSD, &t.ElapsedTimeSec, &t.Error,
+		&t.ReadyForRetry, &t.AgentImage, &t.Force,
 		&createdAt, &updatedAt, &startedAt, &completedAt,
 	)
 	if err != nil {
@@ -667,34 +580,6 @@ func scanTask(row sqlScanner) (*models.Task, error) {
 	}
 
 	return &t, nil
-}
-
-func scanInstance(row sqlScanner) (*models.Instance, error) {
-	var (
-		inst      models.Instance
-		createdAt string
-		updatedAt string
-		err       error
-	)
-
-	err = row.Scan(
-		&inst.InstanceID, &inst.Status, &inst.MaxContainers,
-		&inst.RunningContainers, &createdAt, &updatedAt,
-	)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrNotFound
-		}
-		return nil, err
-	}
-
-	if inst.CreatedAt, err = parseTime(createdAt); err != nil {
-		return nil, err
-	}
-	if inst.UpdatedAt, err = parseTime(updatedAt); err != nil {
-		return nil, err
-	}
-	return &inst, nil
 }
 
 func readingArgs(r *models.Reading) ([]any, error) {

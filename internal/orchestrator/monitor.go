@@ -9,8 +9,10 @@ import (
 	"github.com/oklog/ulid/v2"
 	"github.com/rs/zerolog/log"
 
+	"github.com/brian-bell/backlite/internal/config"
 	"github.com/brian-bell/backlite/internal/models"
 	"github.com/brian-bell/backlite/internal/notify"
+	"github.com/brian-bell/backlite/internal/orchestrator/chain"
 	"github.com/brian-bell/backlite/internal/orchestrator/lifecycle"
 	"github.com/brian-bell/backlite/internal/store"
 )
@@ -165,6 +167,45 @@ func (o *Orchestrator) handleCompletion(ctx context.Context, task *models.Task, 
 		result.EventOpts = []notify.EventOption{notify.WithContainerStatus("", status.Question, status.LogTail)}
 	default:
 		result.EventOpts = []notify.EventOption{notify.WithContainerStatus("", result.Error, status.LogTail)}
+	}
+
+	// Chain self-review on a successful code task. We pre-compute the child
+	// from the projected post-completion parent state and let lifecycle.Complete
+	// run the parent COMPLETE + child INSERT atomically.
+	if result.Status == models.TaskStatusCompleted {
+		projected := *task
+		projected.Status = models.TaskStatusCompleted
+		projected.PRURL = result.PRURL
+		if result.RepoURL != "" {
+			projected.RepoURL = result.RepoURL
+		}
+		if result.TaskMode != "" {
+			projected.TaskMode = result.TaskMode
+		}
+		if child, ok := chain.Plan(&projected); ok {
+			// Plan leaves MaxRuntimeSec/MaxTurns/AgentImage zero — fill them
+			// from review-mode defaults so the chained task gets bounded
+			// runtime/turn caps. Force CreatePR=false and SelfReview=false on
+			// the child (the recursion guard in Plan covers SelfReview, but
+			// being explicit avoids picking up the global default), and pin
+			// SaveAgentOutput to whatever the parent had so we don't drift to
+			// the global default for chained children.
+			falseVal := false
+			saveOutput := projected.SaveAgentOutput
+			o.config.TaskDefaults(models.TaskModeReview).Apply(child, &config.BoolOverrides{
+				CreatePR:        &falseVal,
+				SelfReview:      &falseVal,
+				SaveAgentOutput: &saveOutput,
+			})
+			log.Info().
+				Str("parent_task_id", task.ID).
+				Str("child_task_id", child.ID).
+				Str("pr_url", result.PRURL).
+				Msg("self-review chain planned")
+			result.ChainTx = func(txCtx context.Context, tx store.Store) (*models.Task, error) {
+				return child, chain.CreateChild(txCtx, tx, child)
+			}
+		}
 	}
 
 	if err := o.lifecycle.Complete(ctx, task, result); err != nil {

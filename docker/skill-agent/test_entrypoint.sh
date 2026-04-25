@@ -541,5 +541,294 @@ JSON
 )
 pass "send-email.sh exits 0 without POSTing when RESEND_API_KEY is unset"
 
+# --- send-email.sh: rich payload — all optional fields populated ---
+(
+    tmp=$(mktemp -d)
+    capture="$tmp/captured-request"
+    pid_file="$tmp/server.pid"
+    port_file="$tmp/port"
+    trap '[ -f "$pid_file" ] && kill "$(cat "$pid_file")" 2>/dev/null || true; rm -rf "$tmp"' EXIT
+
+    python3 - "$capture" "$port_file" "$pid_file" >/dev/null 2>&1 <<'PYEOF' &
+import json, sys, os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+capture = sys.argv[1]
+port_file = sys.argv[2]
+pid_file = sys.argv[3]
+
+class H(BaseHTTPRequestHandler):
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length).decode("utf-8")
+        with open(capture, "w") as f:
+            json.dump({
+                "method": self.command,
+                "path": self.path,
+                "headers": dict(self.headers),
+                "body": body,
+            }, f)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(b'{"id":"fake"}')
+    def log_message(self, *a, **kw):
+        pass
+
+srv = HTTPServer(("127.0.0.1", 0), H)
+with open(port_file, "w") as f:
+    f.write(str(srv.server_address[1]))
+with open(pid_file, "w") as f:
+    f.write(str(os.getpid()))
+srv.serve_forever()
+PYEOF
+
+    for _ in $(seq 1 30); do
+        if [ -s "$port_file" ]; then break; fi
+        sleep 0.1
+    done
+    if [ ! -s "$port_file" ]; then
+        fail "send-email rich: fake Resend server did not start"
+    fi
+    PORT=$(cat "$port_file")
+
+    cat >"$tmp/status.json" <<'JSON'
+{
+  "url": "https://example.com/post",
+  "title": "Concurrency in Go",
+  "tldr": "A practical tour of Go concurrency primitives.",
+  "tags": ["go", "systems"],
+  "keywords": ["channels", "goroutines"],
+  "people": ["Alice"],
+  "orgs": ["ACME"],
+  "novelty_verdict": "novel",
+  "connections": [
+    {"reading_id": "bf_x", "reason": "covers same topic"},
+    {"reading_id": "bf_y", "reason": "different angle"}
+  ],
+  "summary_markdown": "## Summary\n\nKey points about concurrency."
+}
+JSON
+
+    export RESEND_API_KEY="re_test"
+    export NOTIFY_EMAIL_FROM="from@example.com"
+    export NOTIFY_EMAIL_TO="to@example.com"
+    export RESEND_BASE_URL="http://127.0.0.1:$PORT"
+    export TASK_ID="bf_rich"
+
+    SCRIPT="$DIR/skills/read/send-email.sh"
+    if ! "$SCRIPT" "$tmp/status.json" >/dev/null 2>&1; then
+        fail "send-email rich: script exited non-zero"
+    fi
+    if [ ! -s "$capture" ]; then
+        fail "send-email rich: fake server did not record any request"
+    fi
+    body_subject=$(jq -r '.body | fromjson | .subject' "$capture")
+    if [ "$body_subject" != "Concurrency in Go" ]; then
+        fail "send-email rich: expected subject 'Concurrency in Go', got '$body_subject'"
+    fi
+    body_text=$(jq -r '.body | fromjson | .text' "$capture")
+    for needle in \
+        "URL: https://example.com/post" \
+        "Title: Concurrency in Go" \
+        "Novelty: novel" \
+        "Tags: go, systems" \
+        "Keywords: channels, goroutines" \
+        "People: Alice" \
+        "Orgs: ACME" \
+        "TL;DR: A practical tour of Go concurrency primitives." \
+        "Summary:" \
+        "## Summary" \
+        "Key points about concurrency." \
+        "Connections:" \
+        "- bf_x: covers same topic" \
+        "- bf_y: different angle" \
+        "Task: bf_rich"; do
+        if [[ "$body_text" != *"$needle"* ]]; then
+            fail "send-email rich: body.text missing '$needle', got: $body_text"
+        fi
+    done
+)
+pass "send-email.sh renders all optional sections when fields are populated"
+
+# --- send-email.sh: sparse payload + hostname fallback ---
+(
+    tmp=$(mktemp -d)
+    capture="$tmp/captured-request"
+    pid_file="$tmp/server.pid"
+    port_file="$tmp/port"
+    trap '[ -f "$pid_file" ] && kill "$(cat "$pid_file")" 2>/dev/null || true; rm -rf "$tmp"' EXIT
+
+    python3 - "$capture" "$port_file" "$pid_file" >/dev/null 2>&1 <<'PYEOF' &
+import json, sys, os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+capture = sys.argv[1]
+port_file = sys.argv[2]
+pid_file = sys.argv[3]
+
+class H(BaseHTTPRequestHandler):
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length).decode("utf-8")
+        with open(capture, "w") as f:
+            json.dump({"body": body}, f)
+        self.send_response(200); self.end_headers()
+        self.wfile.write(b'{"id":"fake"}')
+    def log_message(self, *a, **kw):
+        pass
+
+srv = HTTPServer(("127.0.0.1", 0), H)
+with open(port_file, "w") as f:
+    f.write(str(srv.server_address[1]))
+with open(pid_file, "w") as f:
+    f.write(str(os.getpid()))
+srv.serve_forever()
+PYEOF
+
+    for _ in $(seq 1 30); do
+        if [ -s "$port_file" ]; then break; fi
+        sleep 0.1
+    done
+    if [ ! -s "$port_file" ]; then
+        fail "send-email sparse: fake Resend server did not start"
+    fi
+    PORT=$(cat "$port_file")
+
+    cat >"$tmp/status.json" <<'JSON'
+{
+  "url": "https://news.example.org/some/path",
+  "title": "",
+  "tldr": "Quick summary."
+}
+JSON
+
+    export RESEND_API_KEY="re_test"
+    export NOTIFY_EMAIL_FROM="from@example.com"
+    export NOTIFY_EMAIL_TO="to@example.com"
+    export RESEND_BASE_URL="http://127.0.0.1:$PORT"
+    export TASK_ID="bf_sparse"
+
+    SCRIPT="$DIR/skills/read/send-email.sh"
+    if ! "$SCRIPT" "$tmp/status.json" >/dev/null 2>&1; then
+        fail "send-email sparse: script exited non-zero"
+    fi
+    if [ ! -s "$capture" ]; then
+        fail "send-email sparse: fake server did not record any request"
+    fi
+    body_subject=$(jq -r '.body | fromjson | .subject' "$capture")
+    if [ "$body_subject" != "news.example.org" ]; then
+        fail "send-email sparse: expected subject 'news.example.org' (hostname fallback), got '$body_subject'"
+    fi
+    body_text=$(jq -r '.body | fromjson | .text' "$capture")
+    for needle in \
+        "URL: https://news.example.org/some/path" \
+        "TL;DR: Quick summary." \
+        "Task: bf_sparse"; do
+        if [[ "$body_text" != *"$needle"* ]]; then
+            fail "send-email sparse: body.text missing '$needle', got: $body_text"
+        fi
+    done
+    for forbidden in "Tags:" "Keywords:" "People:" "Orgs:" "Novelty:" "Summary:" "Connections:"; do
+        if [[ "$body_text" == *"$forbidden"* ]]; then
+            fail "send-email sparse: body.text should not contain '$forbidden', got: $body_text"
+        fi
+    done
+)
+pass "send-email.sh falls back to URL hostname for subject and skips empty optional sections"
+
+# --- send-email.sh: mixed populated/empty optional fields ---
+(
+    tmp=$(mktemp -d)
+    capture="$tmp/captured-request"
+    pid_file="$tmp/server.pid"
+    port_file="$tmp/port"
+    trap '[ -f "$pid_file" ] && kill "$(cat "$pid_file")" 2>/dev/null || true; rm -rf "$tmp"' EXIT
+
+    python3 - "$capture" "$port_file" "$pid_file" >/dev/null 2>&1 <<'PYEOF' &
+import json, sys, os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+capture = sys.argv[1]
+port_file = sys.argv[2]
+pid_file = sys.argv[3]
+
+class H(BaseHTTPRequestHandler):
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length).decode("utf-8")
+        with open(capture, "w") as f:
+            json.dump({"body": body}, f)
+        self.send_response(200); self.end_headers()
+        self.wfile.write(b'{"id":"fake"}')
+    def log_message(self, *a, **kw):
+        pass
+
+srv = HTTPServer(("127.0.0.1", 0), H)
+with open(port_file, "w") as f:
+    f.write(str(srv.server_address[1]))
+with open(pid_file, "w") as f:
+    f.write(str(os.getpid()))
+srv.serve_forever()
+PYEOF
+
+    for _ in $(seq 1 30); do
+        if [ -s "$port_file" ]; then break; fi
+        sleep 0.1
+    done
+    if [ ! -s "$port_file" ]; then
+        fail "send-email mixed: fake Resend server did not start"
+    fi
+    PORT=$(cat "$port_file")
+
+    cat >"$tmp/status.json" <<'JSON'
+{
+  "url": "https://example.com/p",
+  "title": "Mixed Post",
+  "tldr": "A summary.",
+  "tags": ["one"],
+  "keywords": [],
+  "people": [],
+  "orgs": [],
+  "novelty_verdict": "",
+  "connections": [
+    {"reading_id": "bf_y", "reason": "r"}
+  ],
+  "summary_markdown": ""
+}
+JSON
+
+    export RESEND_API_KEY="re_test"
+    export NOTIFY_EMAIL_FROM="from@example.com"
+    export NOTIFY_EMAIL_TO="to@example.com"
+    export RESEND_BASE_URL="http://127.0.0.1:$PORT"
+    export TASK_ID="bf_mixed"
+
+    SCRIPT="$DIR/skills/read/send-email.sh"
+    if ! "$SCRIPT" "$tmp/status.json" >/dev/null 2>&1; then
+        fail "send-email mixed: script exited non-zero"
+    fi
+    if [ ! -s "$capture" ]; then
+        fail "send-email mixed: fake server did not record any request"
+    fi
+    body_text=$(jq -r '.body | fromjson | .text' "$capture")
+    for needle in \
+        "Title: Mixed Post" \
+        "Tags: one" \
+        "Connections:" \
+        "- bf_y: r" \
+        "Task: bf_mixed"; do
+        if [[ "$body_text" != *"$needle"* ]]; then
+            fail "send-email mixed: body.text missing '$needle', got: $body_text"
+        fi
+    done
+    for forbidden in "Keywords:" "People:" "Orgs:" "Novelty:" "Summary:"; do
+        if [[ "$body_text" == *"$forbidden"* ]]; then
+            fail "send-email mixed: body.text should not contain '$forbidden', got: $body_text"
+        fi
+    done
+)
+pass "send-email.sh renders only populated sections in a mixed payload"
+
 echo
 echo "All skill-agent entrypoint tests passed."

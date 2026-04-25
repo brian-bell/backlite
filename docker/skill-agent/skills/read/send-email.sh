@@ -30,15 +30,39 @@ fi
 URL=$(jq -r '.url // ""' "$STATUS_JSON")
 TITLE=$(jq -r '.title // ""' "$STATUS_JSON")
 TLDR=$(jq -r '.tldr // ""' "$STATUS_JSON")
+NOVELTY=$(jq -r '.novelty_verdict // ""' "$STATUS_JSON")
+TAGS=$(jq -r '(.tags // []) | join(", ")' "$STATUS_JSON")
+KEYWORDS=$(jq -r '(.keywords // []) | join(", ")' "$STATUS_JSON")
+PEOPLE=$(jq -r '(.people // []) | join(", ")' "$STATUS_JSON")
+ORGS=$(jq -r '(.orgs // []) | join(", ")' "$STATUS_JSON")
+SUMMARY_MD=$(jq -r '.summary_markdown // ""' "$STATUS_JSON")
+CONNECTIONS=$(jq -r '.connections[]? | "- \(.reading_id): \(.reason)"' "$STATUS_JSON")
 TASK_ID_VAL="${TASK_ID:-}"
 
-BODY=$(printf 'URL: %s\nTitle: %s\nTL;DR: %s\n\nTask: %s\n' \
-    "$URL" "$TITLE" "$TLDR" "$TASK_ID_VAL")
+# Subject: page title; fallback to URL hostname when title is empty.
+host="${URL#*://}"; host="${host%%/*}"
+SUBJECT="${TITLE:-$host}"
+
+BODY="URL: ${URL}"$'\n'
+BODY+="Title: ${TITLE}"$'\n'
+[ -n "$NOVELTY" ]  && BODY+="Novelty: ${NOVELTY}"$'\n'
+[ -n "$TAGS" ]     && BODY+="Tags: ${TAGS}"$'\n'
+[ -n "$KEYWORDS" ] && BODY+="Keywords: ${KEYWORDS}"$'\n'
+[ -n "$PEOPLE" ]   && BODY+="People: ${PEOPLE}"$'\n'
+[ -n "$ORGS" ]     && BODY+="Orgs: ${ORGS}"$'\n'
+BODY+=$'\n'"TL;DR: ${TLDR}"$'\n'
+if [ -n "$SUMMARY_MD" ]; then
+    BODY+=$'\n'"Summary:"$'\n'"${SUMMARY_MD}"$'\n'
+fi
+if [ -n "$CONNECTIONS" ]; then
+    BODY+=$'\n'"Connections:"$'\n'"${CONNECTIONS}"$'\n'
+fi
+BODY+=$'\n'"Task: ${TASK_ID_VAL}"$'\n'
 
 PAYLOAD=$(jq -n \
     --arg from "$NOTIFY_EMAIL_FROM" \
     --arg to "$NOTIFY_EMAIL_TO" \
-    --arg subject "$TITLE" \
+    --arg subject "$SUBJECT" \
     --arg text "$BODY" \
     '{from: $from, to: [$to], subject: $subject, text: $text}')
 

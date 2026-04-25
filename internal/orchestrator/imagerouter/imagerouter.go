@@ -5,10 +5,9 @@
 //  1. Read mode → cfg.ReaderImage when set. The skill image's read bundle
 //     is a stub today (slice 6), so we never route around the working
 //     reader image.
-//  2. claude_code + (code | auto) + cfg.SkillAgentImage set → skill image.
-//     Other modes' bundles are still stubs (review = slice 5, read =
-//     slice 6), so they keep their existing routing to avoid regressing
-//     working paths. Once those bundles are real, broaden the gate.
+//  2. claude_code + (code | auto | review) + cfg.SkillAgentImage set →
+//     skill image. The read bundle is still a stub (slice 6), so read keeps
+//     its existing routing. Once the read bundle is real, broaden the gate.
 //  3. Fall back to cfg.AgentImage.
 //
 // Codex tasks never go to the skill image (it's claude_code-only).
@@ -26,7 +25,7 @@ func Resolve(task *models.Task, cfg *config.Config) string {
 	}
 	if cfg.SkillAgentImage != "" && task.Harness == models.HarnessClaudeCode {
 		switch task.TaskMode {
-		case models.TaskModeCode, models.TaskModeAuto:
+		case models.TaskModeCode, models.TaskModeAuto, models.TaskModeReview:
 			return cfg.SkillAgentImage
 		}
 	}

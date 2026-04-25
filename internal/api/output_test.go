@@ -314,7 +314,7 @@ func TestGetTaskOutput_RetryDoesNotLeakPreviousAttemptFile(t *testing.T) {
 	id := extractID(t, rec.Body.Bytes())
 
 	const staleLog = "previous attempt log bytes that must not leak"
-	const staleJSON = `{"id":"` + "stale" + `","status":"failed"}`
+	const staleJSON = `{"id":"stale","status":"failed"}`
 	writeOutputFiles(t, dataDir, id, staleLog, staleJSON)
 
 	if err := s.CompleteTask(ctx, id, store.TaskResult{

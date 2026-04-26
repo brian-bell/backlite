@@ -104,6 +104,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/readings/{id}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the extracted markdown for a reading
+         * @description Streams the markdown extraction (Mozilla Readability + turndown) of a captured reading. Returns 404 when the reading was not captured (`content_status != "captured"`) or no extraction is available (non-HTML payloads).
+         */
+        get: operations["getReadingContent"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/readings/{id}/content/raw": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the raw captured bytes for a reading
+         * @description Streams the raw bytes captured for a reading with the original Content-Type as recorded on the reading row. Returns 404 when the reading was not captured (`content_status != "captured"`).
+         */
+        get: operations["getReadingContentRaw"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/tasks": {
         parameters: {
             query?: never;
@@ -574,6 +614,33 @@ export interface components {
             summary: string;
             /** Format: date-time */
             created_at: string;
+            /**
+             * @description MIME type of the captured raw bytes. Empty when no capture ran.
+             * @example text/html; charset=utf-8
+             */
+            content_type?: string;
+            /**
+             * @description Capture state: `captured` (raw bytes saved; if HTML, extracted markdown also saved), `fetch_failed`, `over_size_cap`, `unsupported_type`, or empty (legacy / no capture).
+             * @example captured
+             */
+            content_status?: string;
+            /**
+             * Format: int64
+             * @description Size in bytes of the raw captured payload.
+             */
+            content_bytes?: number;
+            /**
+             * Format: int64
+             * @description Size in bytes of the extracted markdown (HTML only).
+             */
+            extracted_bytes?: number;
+            /** @description Hex SHA-256 of the raw captured bytes. */
+            content_sha256?: string;
+            /**
+             * Format: date-time
+             * @description When the reader container fetched the URL.
+             */
+            fetched_at?: string | null;
         };
         ReadingConnection: {
             /** @example bf_01ARZ3NDEKTSV4RRFFQ69G5FAV */
@@ -812,6 +879,143 @@ export interface operations {
                 };
             };
             /** @description Reading not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getReadingContent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Reading ID */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Extracted markdown */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/markdown": string;
+                };
+            };
+            /** @description Malformed reading ID */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Missing or invalid bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API key lacks required scope */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Reading content not available */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getReadingContentRaw: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Reading ID */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Raw captured content */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description Malformed reading ID */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Missing or invalid bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API key lacks required scope */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Reading content not available */
             404: {
                 headers: {
                     [name: string]: unknown;

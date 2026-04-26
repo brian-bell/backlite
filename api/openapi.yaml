@@ -158,6 +158,7 @@ paths:
           description: Reading ID
           schema:
             type: string
+            pattern: "^bf_[0-9A-Z]{26}$"
       responses:
         "200":
           description: Reading details
@@ -208,6 +209,7 @@ paths:
           description: Reading ID
           schema:
             type: string
+            pattern: "^bf_[0-9A-Z]{26}$"
       responses:
         "200":
           description: Extracted markdown
@@ -263,6 +265,7 @@ paths:
           description: Reading ID
           schema:
             type: string
+            pattern: "^bf_[0-9A-Z]{26}$"
       responses:
         "200":
           description: Raw captured content

@@ -296,6 +296,30 @@ func TestBuildEnvFlags_ReadModeFallsBackToHostGatewayURL(t *testing.T) {
 	}
 }
 
+func TestBuildEnvFlags_ReadModeIncludesMaxContentBytes(t *testing.T) {
+	cfg := &config.Config{DefaultReadMaxContentBytes: 2097152}
+	dm := NewManager(cfg)
+	task := &models.Task{ID: "bf_01ABC", TaskMode: models.TaskModeRead}
+
+	joined := strings.Join(dm.buildEnvFlags(task), " ")
+
+	if !strings.Contains(joined, "-e MAX_CONTENT_BYTES=2097152") {
+		t.Errorf("read-mode flags must include MAX_CONTENT_BYTES, got: %s", joined)
+	}
+}
+
+func TestBuildEnvFlags_NonReadModeOmitsMaxContentBytes(t *testing.T) {
+	cfg := &config.Config{DefaultReadMaxContentBytes: 2097152}
+	dm := NewManager(cfg)
+	task := &models.Task{ID: "bf_01ABC", TaskMode: models.TaskModeCode}
+
+	joined := strings.Join(dm.buildEnvFlags(task), " ")
+
+	if strings.Contains(joined, "MAX_CONTENT_BYTES") {
+		t.Errorf("non-read flags must not include MAX_CONTENT_BYTES, got: %s", joined)
+	}
+}
+
 func TestBuildRunCommand_UsesTaskAgentImage(t *testing.T) {
 	cfg := &config.Config{
 		ContainerCPUs:  2,

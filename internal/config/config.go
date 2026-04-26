@@ -33,19 +33,20 @@ type Config struct {
 	ContainerMemGB int
 
 	// Agent
-	AgentImage            string
-	ReaderImage           string
-	SkillAgentImage       string
-	DefaultHarness        string
-	DefaultClaudeModel    string
-	DefaultCodexModel     string
-	DefaultEffort         string
-	DefaultMaxBudget      float64
-	DefaultMaxRuntime     time.Duration
-	DefaultMaxTurns       int
-	DefaultReadMaxBudget  float64
-	DefaultReadMaxRuntime time.Duration
-	DefaultReadMaxTurns   int
+	AgentImage                 string
+	ReaderImage                string
+	SkillAgentImage            string
+	DefaultHarness             string
+	DefaultClaudeModel         string
+	DefaultCodexModel          string
+	DefaultEffort              string
+	DefaultMaxBudget           float64
+	DefaultMaxRuntime          time.Duration
+	DefaultMaxTurns            int
+	DefaultReadMaxBudget       float64
+	DefaultReadMaxRuntime      time.Duration
+	DefaultReadMaxTurns        int
+	DefaultReadMaxContentBytes int64
 
 	// Internal API used by reader containers to query local readings.
 	InternalAPIBaseURL string
@@ -94,41 +95,42 @@ func (c *Config) MaxConcurrent() int {
 
 func Load() (*Config, error) {
 	c := &Config{
-		ListenAddr:            envOr("BACKFLOW_LISTEN_ADDR", ":8080"),
-		APIKey:                os.Getenv("BACKFLOW_API_KEY"),
-		AnthropicAPIKey:       os.Getenv("ANTHROPIC_API_KEY"),
-		OpenAIAPIKey:          os.Getenv("OPENAI_API_KEY"),
-		ResendAPIKey:          os.Getenv("BACKFLOW_RESEND_API_KEY"),
-		NotifyEmailFrom:       os.Getenv("BACKFLOW_NOTIFY_EMAIL_FROM"),
-		NotifyEmailTo:         os.Getenv("BACKFLOW_NOTIFY_EMAIL_TO"),
-		MaxContainers:         envInt("BACKFLOW_MAX_CONTAINERS", 1),
-		ContainerCPUs:         envInt("BACKFLOW_CONTAINER_CPUS", 2),
-		ContainerMemGB:        envInt("BACKFLOW_CONTAINER_MEMORY_GB", 8),
-		AgentImage:            envOr("BACKFLOW_AGENT_IMAGE", "backlite-agent"),
-		ReaderImage:           os.Getenv("BACKFLOW_READER_IMAGE"),
-		SkillAgentImage:       os.Getenv("BACKFLOW_SKILL_AGENT_IMAGE"),
-		DefaultHarness:        envOr("BACKFLOW_DEFAULT_HARNESS", "claude_code"),
-		DefaultClaudeModel:    envOr("BACKFLOW_DEFAULT_CLAUDE_MODEL", "claude-opus-4-7"),
-		DefaultCodexModel:     envOr("BACKFLOW_DEFAULT_CODEX_MODEL", "gpt-5.4"),
-		DefaultEffort:         envOr("BACKFLOW_DEFAULT_EFFORT", "xhigh"),
-		DefaultMaxBudget:      envFloat("BACKFLOW_DEFAULT_MAX_BUDGET", 10.0),
-		DefaultMaxRuntime:     time.Duration(envInt("BACKFLOW_DEFAULT_MAX_RUNTIME_SEC", 1800)) * time.Second,
-		DefaultMaxTurns:       envInt("BACKFLOW_DEFAULT_MAX_TURNS", 200),
-		DefaultReadMaxBudget:  envFloat("BACKFLOW_DEFAULT_READ_MAX_BUDGET", 0),
-		DefaultReadMaxRuntime: time.Duration(envInt("BACKFLOW_DEFAULT_READ_MAX_RUNTIME_SEC", 0)) * time.Second,
-		DefaultReadMaxTurns:   envInt("BACKFLOW_DEFAULT_READ_MAX_TURNS", 0),
-		InternalAPIBaseURL:    os.Getenv("BACKFLOW_INTERNAL_API_BASE_URL"),
-		DataDir:               envOr("BACKFLOW_DATA_DIR", "./data"),
-		WebDir:                envOr("BACKFLOW_WEB_DIR", "./web/dist"),
-		GitHubToken:           os.Getenv("GITHUB_TOKEN"),
-		WebhookURL:            os.Getenv("BACKFLOW_WEBHOOK_URL"),
-		LogFile:               os.Getenv("BACKFLOW_LOG_FILE"),
-		DatabasePath:          envOr("BACKFLOW_DATABASE_PATH", "./backlite.db"),
-		LocalBackupDir:        envOr("BACKFLOW_LOCAL_BACKUP_DIR", defaultLocalBackupDir()),
-		LocalBackupInterval:   time.Duration(envInt("BACKFLOW_LOCAL_BACKUP_INTERVAL_SEC", 86400)) * time.Second,
-		LocalBackupRetention:  time.Duration(envInt("BACKFLOW_LOCAL_BACKUP_RETENTION_SEC", 604800)) * time.Second,
-		MaxUserRetries:        envInt("BACKFLOW_MAX_USER_RETRIES", 2),
-		PollInterval:          time.Duration(envInt("BACKFLOW_POLL_INTERVAL_SEC", 5)) * time.Second,
+		ListenAddr:                 envOr("BACKFLOW_LISTEN_ADDR", ":8080"),
+		APIKey:                     os.Getenv("BACKFLOW_API_KEY"),
+		AnthropicAPIKey:            os.Getenv("ANTHROPIC_API_KEY"),
+		OpenAIAPIKey:               os.Getenv("OPENAI_API_KEY"),
+		ResendAPIKey:               os.Getenv("BACKFLOW_RESEND_API_KEY"),
+		NotifyEmailFrom:            os.Getenv("BACKFLOW_NOTIFY_EMAIL_FROM"),
+		NotifyEmailTo:              os.Getenv("BACKFLOW_NOTIFY_EMAIL_TO"),
+		MaxContainers:              envInt("BACKFLOW_MAX_CONTAINERS", 1),
+		ContainerCPUs:              envInt("BACKFLOW_CONTAINER_CPUS", 2),
+		ContainerMemGB:             envInt("BACKFLOW_CONTAINER_MEMORY_GB", 8),
+		AgentImage:                 envOr("BACKFLOW_AGENT_IMAGE", "backlite-agent"),
+		ReaderImage:                os.Getenv("BACKFLOW_READER_IMAGE"),
+		SkillAgentImage:            os.Getenv("BACKFLOW_SKILL_AGENT_IMAGE"),
+		DefaultHarness:             envOr("BACKFLOW_DEFAULT_HARNESS", "claude_code"),
+		DefaultClaudeModel:         envOr("BACKFLOW_DEFAULT_CLAUDE_MODEL", "claude-opus-4-7"),
+		DefaultCodexModel:          envOr("BACKFLOW_DEFAULT_CODEX_MODEL", "gpt-5.4"),
+		DefaultEffort:              envOr("BACKFLOW_DEFAULT_EFFORT", "xhigh"),
+		DefaultMaxBudget:           envFloat("BACKFLOW_DEFAULT_MAX_BUDGET", 10.0),
+		DefaultMaxRuntime:          time.Duration(envInt("BACKFLOW_DEFAULT_MAX_RUNTIME_SEC", 1800)) * time.Second,
+		DefaultMaxTurns:            envInt("BACKFLOW_DEFAULT_MAX_TURNS", 200),
+		DefaultReadMaxBudget:       envFloat("BACKFLOW_DEFAULT_READ_MAX_BUDGET", 0),
+		DefaultReadMaxRuntime:      time.Duration(envInt("BACKFLOW_DEFAULT_READ_MAX_RUNTIME_SEC", 0)) * time.Second,
+		DefaultReadMaxTurns:        envInt("BACKFLOW_DEFAULT_READ_MAX_TURNS", 0),
+		DefaultReadMaxContentBytes: int64(envInt("BACKFLOW_DEFAULT_READ_MAX_CONTENT_BYTES", 5*1024*1024)),
+		InternalAPIBaseURL:         os.Getenv("BACKFLOW_INTERNAL_API_BASE_URL"),
+		DataDir:                    envOr("BACKFLOW_DATA_DIR", "./data"),
+		WebDir:                     envOr("BACKFLOW_WEB_DIR", "./web/dist"),
+		GitHubToken:                os.Getenv("GITHUB_TOKEN"),
+		WebhookURL:                 os.Getenv("BACKFLOW_WEBHOOK_URL"),
+		LogFile:                    os.Getenv("BACKFLOW_LOG_FILE"),
+		DatabasePath:               envOr("BACKFLOW_DATABASE_PATH", "./backlite.db"),
+		LocalBackupDir:             envOr("BACKFLOW_LOCAL_BACKUP_DIR", defaultLocalBackupDir()),
+		LocalBackupInterval:        time.Duration(envInt("BACKFLOW_LOCAL_BACKUP_INTERVAL_SEC", 86400)) * time.Second,
+		LocalBackupRetention:       time.Duration(envInt("BACKFLOW_LOCAL_BACKUP_RETENTION_SEC", 604800)) * time.Second,
+		MaxUserRetries:             envInt("BACKFLOW_MAX_USER_RETRIES", 2),
+		PollInterval:               time.Duration(envInt("BACKFLOW_POLL_INTERVAL_SEC", 5)) * time.Second,
 	}
 
 	c.DefaultCreatePR = envBool("BACKFLOW_DEFAULT_CREATE_PR", true)

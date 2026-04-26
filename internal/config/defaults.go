@@ -12,6 +12,7 @@ type TaskDefaults struct {
 	MaxBudgetUSD    float64
 	MaxRuntimeSec   int
 	MaxTurns        int
+	MaxContentBytes int64 // Read-mode size cap; 0 in other modes.
 	CreatePR        bool
 	SelfReview      bool
 	SaveAgentOutput bool
@@ -49,6 +50,7 @@ func (c *Config) TaskDefaults(taskMode string) TaskDefaults {
 		d.MaxBudgetUSD = c.DefaultReadMaxBudget
 		d.MaxRuntimeSec = int(c.DefaultReadMaxRuntime.Seconds())
 		d.MaxTurns = c.DefaultReadMaxTurns
+		d.MaxContentBytes = c.DefaultReadMaxContentBytes
 		d.CreatePR = false
 	}
 	// Auto mode uses the same defaults as code mode (superset).

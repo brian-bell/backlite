@@ -150,7 +150,13 @@ On completion, the orchestrator's `handleReadingCompletion` helper (in `internal
 
 If the embedding API call or the DB write fails, the task is marked `failed` rather than silently `completed`, and `task.failed` is emitted. If `embedder` is nil (no `OPENAI_API_KEY` configured), reading tasks fail at completion.
 
-The reader container's pre-fetch + extraction step (`fetch-and-extract.sh` + `extract.js`, both in `docker/reader/`) runs before the harness. It downloads the URL with `curl`, computes a SHA-256, and — for HTML payloads — runs the in-container Node pipeline (`@mozilla/readability` + `jsdom` + `turndown`) to produce `extracted.md`. Capture is independent of summarization: the agent's prompt is unchanged, and the agent continues to use `WebFetch` (claude_code) or `curl` (codex) as the primary read path. Capture failures log a warning and the agent runs anyway. Slice 1 ships only the HTML happy path on `docker/reader/`; richer failure-mode statuses (`fetch_failed`, `over_size_cap`, `unsupported_type`), non-HTML payload coverage, size caps, force/duplicate semantics for content overwrite, and the `docker/skill-agent/` image are deferred to follow-up slices.
+The reader container's pre-fetch + extraction step (`fetch-and-extract.sh` + `extract.js`, both in `docker/reader/`) runs before the harness. It downloads the URL with `curl --max-filesize $MAX_CONTENT_BYTES`, computes a SHA-256, derives an extension from `Content-Type`, and writes `raw.<ext>` (`html`/`pdf`/`json`/`txt`/`bin`). For HTML payloads it then runs the in-container Node pipeline (`@mozilla/readability` + `jsdom` + `turndown`) to produce `extracted.md`. Capture is independent of summarization: the agent's prompt is unchanged, and the agent continues to use `WebFetch` (claude_code) or `curl` (codex) as the primary read path. Capture failures log a warning and the agent runs anyway. Failure modes recorded on the `readings` row via `content_status`:
+
+- `captured` — raw saved (and `extracted.md` for HTML).
+- `fetch_failed` — curl exited non-zero (TLS/network error), HTTP 4xx/5xx, or empty body. No files on disk.
+- `over_size_cap` — `curl --max-filesize` tripped (exit 63). No files on disk.
+
+`force=true` resubmissions overwrite the existing reading row and the on-disk content under the same `readings/{id}/` directory (the orchestrator looks up the existing row by URL before generating an id, so the upsert and the on-disk persist target the same id). When the agent reports `novelty_verdict=duplicate` without `force`, `handleReadingCompletion` returns early — no `GetReadingContent`, no `SaveReadingContent`, no `UpsertReading` — preserving the existing row and discarding the pre-fetched container artifacts. Skill-agent (`docker/skill-agent/`) parity for capture is deferred to a follow-up slice.
 
 The reading agent image and reader-side shell scripts live in `docker/reader/`:
 
@@ -167,6 +173,7 @@ Reading-mode env vars:
 
 - `BACKFLOW_READER_IMAGE` — Docker image for reading-mode containers
 - `BACKFLOW_DEFAULT_READ_MAX_BUDGET` / `BACKFLOW_DEFAULT_READ_MAX_RUNTIME_SEC` / `BACKFLOW_DEFAULT_READ_MAX_TURNS` — Tighter defaults applied by `TaskDefaults("read")`
+- `BACKFLOW_DEFAULT_READ_MAX_CONTENT_BYTES` — Hard cap on the reader's pre-fetch download size; passed into reader containers as `MAX_CONTENT_BYTES` and enforced via `curl --max-filesize`. Over-cap responses produce `content_status=over_size_cap` with no files on disk. See config for the current default.
 - `OPENAI_API_KEY` — Required for the orchestrator's embeddings client (and for the reader container's `read-embed.sh`)
 - `BACKFLOW_INTERNAL_API_BASE_URL` — Optional override for the Backlite API base URL used by reader containers; defaults to `http://host.docker.internal:<listen-port>`
 

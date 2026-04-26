@@ -191,6 +191,67 @@ func TestGetReadingContent_400_RejectsMalformedID(t *testing.T) {
 	}
 }
 
+func TestGetReadingContentRaw_ServesPDFByContentType(t *testing.T) {
+	// Non-HTML readings store raw.<ext> instead of raw.html. The handler must
+	// derive the on-disk filename from the row's recorded content_type rather
+	// than serving a hardcoded raw.html path.
+	srv, s, dataDir := readingContentTestServer(t)
+
+	const id = "bf_01HX00000000000000000RDPDF"
+	seedReadingWithContent(t, s, dataDir, id, "bf_01HX00000000000000000RDPDT",
+		"captured", "application/pdf")
+
+	dir := filepath.Join(dataDir, "readings", id)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	pdfBytes := []byte("%PDF-1.4\nminimal pdf body\n")
+	if err := os.WriteFile(filepath.Join(dir, "raw.pdf"), pdfBytes, 0o644); err != nil {
+		t.Fatalf("write raw.pdf: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/readings/"+id+"/content/raw", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/pdf" {
+		t.Errorf("Content-Type = %q, want application/pdf", got)
+	}
+	if got := rec.Body.String(); got != string(pdfBytes) {
+		t.Errorf("body length = %d, want %d", len(got), len(pdfBytes))
+	}
+}
+
+func TestGetReadingContent_404_ForNonHTMLReading(t *testing.T) {
+	// A non-HTML reading is captured but has no extracted.md. /content must
+	// 404 even though content_status="captured" — only HTML readings have
+	// markdown to serve.
+	srv, s, dataDir := readingContentTestServer(t)
+
+	const id = "bf_01HX00000000000000000RDNHX"
+	seedReadingWithContent(t, s, dataDir, id, "bf_01HX00000000000000000RDNHT",
+		"captured", "application/json")
+
+	dir := filepath.Join(dataDir, "readings", id)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "raw.json"), []byte(`{"x":1}`), 0o644); err != nil {
+		t.Fatalf("write raw.json: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/readings/"+id+"/content", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 (body: %s)", rec.Code, rec.Body.String())
+	}
+}
+
 func TestGetReadingContent_RejectsPathTraversal(t *testing.T) {
 	// Slash-bearing IDs don't match the chi route (the {id} param is a
 	// single path segment), so they should never reach the handler and

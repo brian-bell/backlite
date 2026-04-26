@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -469,22 +470,55 @@ func (h *Handlers) FindSimilarReadings(w http.ResponseWriter, r *http.Request) {
 
 // GetReadingContent streams the extracted markdown for a reading.
 // Returns 404 when the reading is missing, when content was not captured
-// (content_status != "captured"), or when the file is missing.
+// (content_status != "captured"), or when the extracted markdown is absent
+// (e.g. non-HTML payloads).
 func (h *Handlers) GetReadingContent(w http.ResponseWriter, r *http.Request) {
-	h.serveReadingContent(w, r, "extracted.md", "text/markdown; charset=utf-8")
+	h.serveReadingContent(w, r, func(*models.Reading) string { return "extracted.md" }, "text/markdown; charset=utf-8")
 }
 
-// GetReadingContentRaw streams the captured raw bytes for a reading,
-// reporting the original Content-Type recorded on the row.
+// GetReadingContentRaw streams the captured raw bytes for a reading. The on-disk
+// filename is derived from the reading's recorded content_type (raw.html,
+// raw.pdf, raw.json, raw.txt, raw.bin). The response reports the row's
+// Content-Type so clients see the original payload type.
 func (h *Handlers) GetReadingContentRaw(w http.ResponseWriter, r *http.Request) {
-	h.serveReadingContent(w, r, "raw.html", "")
+	h.serveReadingContent(w, r, rawFilenameForReading, "")
 }
 
-// serveReadingContent streams a single file from {DataDir}/readings/{id}/{name}.
-// Returns 400 when the reading ID is malformed and 404 when the reading does
-// not exist, content_status != "captured", or the file is missing. When
-// contentType is empty, falls back to the reading row's recorded content_type.
-func (h *Handlers) serveReadingContent(w http.ResponseWriter, r *http.Request, name, contentType string) {
+// rawFilenameForReading maps the reading's content_type onto the on-disk raw
+// file. Must stay in sync with extension_for_content_type in
+// docker/reader/fetch-and-extract.sh.
+func rawFilenameForReading(reading *models.Reading) string {
+	return "raw." + extensionForContentType(reading.ContentType)
+}
+
+// extensionForContentType returns the stable extension used to name raw.<ext>.
+// Unknown types fall back to "bin". Keep in sync with
+// extension_for_content_type in docker/reader/fetch-and-extract.sh.
+func extensionForContentType(contentType string) string {
+	ct := strings.ToLower(strings.TrimSpace(contentType))
+	if i := strings.IndexAny(ct, "; "); i >= 0 {
+		ct = ct[:i]
+	}
+	switch ct {
+	case "text/html":
+		return "html"
+	case "application/pdf":
+		return "pdf"
+	case "application/json":
+		return "json"
+	case "text/plain":
+		return "txt"
+	default:
+		return "bin"
+	}
+}
+
+// serveReadingContent streams a single file from {DataDir}/readings/{id}/.
+// nameFor selects the on-disk filename per reading row. Returns 400 when the
+// reading ID is malformed and 404 when the reading does not exist,
+// content_status != "captured", or the file is missing. When contentType is
+// empty, falls back to the reading row's recorded content_type.
+func (h *Handlers) serveReadingContent(w http.ResponseWriter, r *http.Request, nameFor func(*models.Reading) string, contentType string) {
 	id := chi.URLParam(r, "id")
 	if !taskIDPattern.MatchString(id) {
 		writeError(w, http.StatusBadRequest, "invalid reading id")
@@ -505,7 +539,7 @@ func (h *Handlers) serveReadingContent(w http.ResponseWriter, r *http.Request, n
 		return
 	}
 
-	path := filepath.Join(h.config.DataDir, "readings", id, name)
+	path := filepath.Join(h.config.DataDir, "readings", id, nameFor(reading))
 	if _, err := os.Stat(path); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			writeError(w, http.StatusNotFound, "reading content not found")

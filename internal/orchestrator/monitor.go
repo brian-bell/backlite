@@ -277,8 +277,20 @@ func (o *Orchestrator) handleReadingCompletion(ctx context.Context, task *models
 	}
 	captured := parseCapturedSidecar(sidecarBytes)
 
+	// If a reading already exists for this URL (force=true overwrite path),
+	// reuse its id so the upsert hits the same row and the on-disk persister
+	// overwrites the existing readings/{id}/ directory atomically. Without
+	// this, the upsert keeps the old row id (per ON CONFLICT(url)) but the
+	// orchestrator would persist files under a never-stored id, orphaning
+	// them on disk and leaving the API endpoints unable to find the new
+	// content.
+	readingID := "bf_" + ulid.Make().String()
+	if existing, err := o.store.GetReadingByURL(ctx, url); err == nil && existing != nil {
+		readingID = existing.ID
+	}
+
 	reading := &models.Reading{
-		ID:             "bf_" + ulid.Make().String(),
+		ID:             readingID,
 		TaskID:         task.ID,
 		URL:            url,
 		Title:          status.Title,

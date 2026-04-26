@@ -208,6 +208,7 @@ func TestLoad_ReaderConfig(t *testing.T) {
 	t.Setenv("BACKFLOW_DEFAULT_READ_MAX_BUDGET", "0.5")
 	t.Setenv("BACKFLOW_DEFAULT_READ_MAX_RUNTIME_SEC", "300")
 	t.Setenv("BACKFLOW_DEFAULT_READ_MAX_TURNS", "20")
+	t.Setenv("BACKFLOW_DEFAULT_READ_MAX_CONTENT_BYTES", "1048576")
 	t.Setenv("BACKFLOW_INTERNAL_API_BASE_URL", "http://host.docker.internal:8080")
 
 	cfg, err := Load()
@@ -226,8 +227,21 @@ func TestLoad_ReaderConfig(t *testing.T) {
 	if cfg.DefaultReadMaxTurns != 20 {
 		t.Errorf("DefaultReadMaxTurns = %d, want %d", cfg.DefaultReadMaxTurns, 20)
 	}
+	if cfg.DefaultReadMaxContentBytes != 1048576 {
+		t.Errorf("DefaultReadMaxContentBytes = %d, want %d", cfg.DefaultReadMaxContentBytes, 1048576)
+	}
 	if cfg.InternalAPIBaseURL != "http://host.docker.internal:8080" {
 		t.Errorf("InternalAPIBaseURL = %q", cfg.InternalAPIBaseURL)
+	}
+
+	// Defaults flow into TaskDefaults("read"); the size cap is read-mode only.
+	d := cfg.TaskDefaults("read")
+	if d.MaxContentBytes != 1048576 {
+		t.Errorf("TaskDefaults(\"read\").MaxContentBytes = %d, want %d", d.MaxContentBytes, 1048576)
+	}
+	code := cfg.TaskDefaults("code")
+	if code.MaxContentBytes != 0 {
+		t.Errorf("TaskDefaults(\"code\").MaxContentBytes = %d, want 0 (size cap is read-mode only)", code.MaxContentBytes)
 	}
 }
 

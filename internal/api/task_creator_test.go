@@ -2,8 +2,12 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/brian-bell/backlite/internal/config"
@@ -352,4 +356,144 @@ func TestNewReadTask_IgnoresPRFields(t *testing.T) {
 	if task.SelfReview {
 		t.Error("SelfReview = true, want false (ignored for read mode)")
 	}
+}
+
+func TestNewTask_RejectsInlineContentOnAutoMode(t *testing.T) {
+	cfg := &config.Config{
+		AgentImage: "backlite-agent",
+	}
+	s := &mockStore{}
+	body := "# title\nbody\n"
+	req := &models.CreateTaskRequest{
+		Prompt:        "Fix the bug",
+		InlineContent: &body,
+	}
+
+	_, err := NewTask(context.Background(), req, s, cfg, nil)
+	if err == nil {
+		t.Fatal("expected error rejecting inline_content on auto mode; got nil")
+	}
+	if errors.Is(err, ErrStoreFailure) {
+		t.Errorf("error should be a validation error, not ErrStoreFailure: %v", err)
+	}
+	if s.createCalls != 0 {
+		t.Errorf("CreateTask should not be called on validation failure; got %d calls", s.createCalls)
+	}
+}
+
+func TestNewReadTask_RejectsInlineContentWithURLPrompt(t *testing.T) {
+	cfg := readTestConfig()
+	s := &mockStore{}
+	body := "# title\nbody\n"
+	mode := models.TaskModeRead
+	req := &models.CreateTaskRequest{
+		Prompt:        "https://example.com/post",
+		TaskMode:      &mode,
+		InlineContent: &body,
+	}
+
+	_, err := NewReadTask(context.Background(), req, s, cfg, nil)
+	if err == nil {
+		t.Fatal("expected error rejecting URL prompt with inline_content; got nil")
+	}
+	if errors.Is(err, ErrStoreFailure) {
+		t.Errorf("error should be a validation error, not ErrStoreFailure: %v", err)
+	}
+	if s.createCalls != 0 {
+		t.Errorf("CreateTask should not be called; got %d calls", s.createCalls)
+	}
+}
+
+func TestNewReadTask_AllowsInlineContentWithNonURLPrompt(t *testing.T) {
+	cfg := readTestConfig()
+	cfg.DataDir = t.TempDir()
+	s := &mockStore{}
+	body := "# title\nbody\n"
+	mode := models.TaskModeRead
+	req := &models.CreateTaskRequest{
+		Prompt:        "anything",
+		TaskMode:      &mode,
+		InlineContent: &body,
+	}
+
+	// The URL guard must not fire for a non-URL prompt; the call should
+	// reach persistence and succeed against the in-memory mock store.
+	if _, err := NewReadTask(context.Background(), req, s, cfg, nil); err != nil {
+		t.Errorf("NewReadTask with non-URL prompt should succeed, got: %v", err)
+	}
+}
+
+func TestNewReadTask_WithInlineContent_WritesFileAndRewritesPrompt(t *testing.T) {
+	// Arrange: a config pointing DataDir at a tempdir, and a captured store
+	// that records what task is persisted.
+	dataDir := t.TempDir()
+	cfg := readTestConfig()
+	cfg.DataDir = dataDir
+	bus := &capturingEmitter{}
+
+	captured := &capturingStore{}
+	body := "# Title\n\nbody text\n"
+	mode := models.TaskModeRead
+	req := &models.CreateTaskRequest{
+		Prompt:        "ingest a local note",
+		TaskMode:      &mode,
+		InlineContent: &body,
+	}
+
+	// Act
+	task, err := NewReadTask(context.Background(), req, captured, cfg, bus)
+	if err != nil {
+		t.Fatalf("NewReadTask: %v", err)
+	}
+
+	// Assert: SHA matches the body, prompt rewritten, on-disk file present.
+	wantSHA := sha256Hex([]byte(body))
+	if task.InlineContentSHA256 != wantSHA {
+		t.Errorf("InlineContentSHA256 = %q, want %q", task.InlineContentSHA256, wantSHA)
+	}
+	wantPrompt := "markdown://" + wantSHA
+	if task.Prompt != wantPrompt {
+		t.Errorf("Prompt = %q, want %q", task.Prompt, wantPrompt)
+	}
+
+	wantPath := filepath.Join(dataDir, "ingest", wantSHA+".md")
+	got, err := os.ReadFile(wantPath)
+	if err != nil {
+		t.Fatalf("read persisted ingest file: %v", err)
+	}
+	if string(got) != body {
+		t.Errorf("on-disk body = %q, want %q", got, body)
+	}
+
+	// Store received the rewritten task.
+	if captured.lastTask == nil {
+		t.Fatal("CreateTask was not called")
+	}
+	if captured.lastTask.Prompt != wantPrompt {
+		t.Errorf("store received Prompt = %q, want %q", captured.lastTask.Prompt, wantPrompt)
+	}
+	if captured.lastTask.InlineContentSHA256 != wantSHA {
+		t.Errorf("store received InlineContentSHA256 = %q, want %q", captured.lastTask.InlineContentSHA256, wantSHA)
+	}
+
+	// task.created event was emitted.
+	if len(bus.events) != 1 || bus.events[0].Type != notify.EventTaskCreated {
+		t.Errorf("expected one task.created event, got %+v", bus.events)
+	}
+}
+
+// capturingStore records the task last passed to CreateTask.
+type capturingStore struct {
+	mockStore
+	lastTask *models.Task
+}
+
+func (c *capturingStore) CreateTask(ctx context.Context, t *models.Task) error {
+	c.lastTask = t
+	return c.mockStore.CreateTask(ctx, t)
+}
+
+func sha256Hex(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }

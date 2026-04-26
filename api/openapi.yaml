@@ -1012,6 +1012,13 @@ components:
         container_id:
           type: string
           example: "abc123def456"
+        inline_content_sha256:
+          type: string
+          description: |
+            Set on read-mode tasks whose source is a markdown body persisted to
+            disk under <DataDir>/ingest/<sha>.md instead of a URL fetched at run
+            time. The task's prompt for such tasks is "markdown://<sha>".
+          example: "9caaf00e460351844ec0267af19e123c624aad0a34794e205fe3d02053cd5c06"
         retry_count:
           type: integer
           minimum: 0
@@ -1145,6 +1152,15 @@ components:
           description: Additional environment variables to set in the agent container.
           example:
             CUSTOM_SETTING: "value"
+        inline_content:
+          type: string
+          nullable: true
+          description: |
+            Optional raw markdown body. When set, task_mode must be "read", the
+            prompt must not contain a URL, and the value must be non-empty. The
+            server persists the body to a content-addressed file under the data
+            directory and rewrites the task's prompt to "markdown://<sha256>".
+          example: "# Project notes\n\nbody"
 
     Reading:
       type: object

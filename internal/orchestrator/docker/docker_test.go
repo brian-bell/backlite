@@ -534,3 +534,84 @@ func TestIsHexString(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildRunCommand_ReadModeWithInlineContent(t *testing.T) {
+	cfg := &config.Config{
+		ContainerCPUs:  2,
+		ContainerMemGB: 8,
+		AgentImage:     "backlite-agent",
+		ReaderImage:    "backlite-reader:v1",
+		DataDir:        "/data",
+	}
+	dm := NewManager(cfg)
+
+	task := &models.Task{
+		ID:                  "bf_INLINE001",
+		TaskMode:            models.TaskModeRead,
+		Prompt:              "markdown://abc123",
+		InlineContentSHA256: "abc123",
+		AgentImage:          "backlite-reader:v1",
+	}
+
+	cmd := dm.buildRunCommand(task, "")
+
+	if !strings.Contains(cmd, "-v /data/ingest/abc123.md:/workspace/inline.md:ro") {
+		t.Errorf("command missing inline-content bind-mount, got: %s", cmd)
+	}
+	if !strings.Contains(cmd, "-e INLINE_CONTENT_PATH=/workspace/inline.md") {
+		t.Errorf("command missing INLINE_CONTENT_PATH env var, got: %s", cmd)
+	}
+}
+
+func TestBuildRunCommand_ReadModeNoInlineContentNoMount(t *testing.T) {
+	cfg := &config.Config{
+		ContainerCPUs:  2,
+		ContainerMemGB: 8,
+		AgentImage:     "backlite-agent",
+		ReaderImage:    "backlite-reader:v1",
+		DataDir:        "/data",
+	}
+	dm := NewManager(cfg)
+
+	task := &models.Task{
+		ID:         "bf_URL001",
+		TaskMode:   models.TaskModeRead,
+		Prompt:     "https://example.com/post",
+		AgentImage: "backlite-reader:v1",
+	}
+
+	cmd := dm.buildRunCommand(task, "")
+
+	if strings.Contains(cmd, "/workspace/inline.md") {
+		t.Errorf("URL-source read task should not bind-mount inline.md, got: %s", cmd)
+	}
+	if strings.Contains(cmd, "INLINE_CONTENT_PATH") {
+		t.Errorf("URL-source read task should not set INLINE_CONTENT_PATH, got: %s", cmd)
+	}
+}
+
+func TestBuildRunCommand_NonReadModeNoInlineContent(t *testing.T) {
+	cfg := &config.Config{
+		ContainerCPUs:  2,
+		ContainerMemGB: 8,
+		AgentImage:     "backlite-agent",
+		DataDir:        "/data",
+	}
+	dm := NewManager(cfg)
+
+	// Defensive: even if a code-mode task somehow has InlineContentSHA256 set
+	// (it shouldn't reach here through the API), the command should still
+	// not include the read-only mount or env var.
+	task := &models.Task{
+		ID:                  "bf_CODE001",
+		TaskMode:            models.TaskModeCode,
+		InlineContentSHA256: "abc",
+	}
+	cmd := dm.buildRunCommand(task, "")
+	if strings.Contains(cmd, "INLINE_CONTENT_PATH") {
+		t.Errorf("non-read task should not set INLINE_CONTENT_PATH, got: %s", cmd)
+	}
+	if strings.Contains(cmd, "/workspace/inline.md") {
+		t.Errorf("non-read task should not bind-mount inline.md, got: %s", cmd)
+	}
+}

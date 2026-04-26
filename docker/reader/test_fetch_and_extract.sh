@@ -121,4 +121,57 @@ if WORKSPACE="$TMPROOT/empty" EXTRACT_CMD="$EXTRACT_CMD_STUB" bash "$SCRIPT" >/d
     fail "expected non-zero exit when URL is empty"
 fi
 
+# --- INLINE_CONTENT_PATH short-circuit ---
+INLINE_DIR="$TMPROOT/inline"
+INLINE_WS="$TMPROOT/inline-ws"
+mkdir -p "$INLINE_DIR" "$INLINE_WS"
+
+INLINE_FILE="$INLINE_DIR/note.md"
+cat > "$INLINE_FILE" <<'MARKDOWN'
+# Inline Test Note
+
+Body of the inline-ingested markdown file.
+MARKDOWN
+
+# Run with INLINE_CONTENT_PATH set, no URL.
+unset URL
+INLINE_CONTENT_PATH="$INLINE_FILE" \
+WORKSPACE="$INLINE_WS" \
+EXTRACT_CMD="$EXTRACT_CMD_STUB" \
+    bash "$SCRIPT" || fail "fetch-and-extract.sh inline branch exited non-zero"
+
+# extracted.md must be byte-equal to the input file.
+if ! cmp -s "$INLINE_FILE" "$INLINE_WS/extracted.md"; then
+    fail "extracted.md not byte-equal to INLINE_CONTENT_PATH input"
+fi
+
+# raw.html must NOT exist for the inline branch.
+if [ -e "$INLINE_WS/raw.html" ]; then
+    fail "raw.html should not exist for inline-content branch"
+fi
+
+# content.json sidecar — same fields as URL branch but content_type=text/markdown.
+inline_sidecar="$INLINE_WS/content.json"
+if [ ! -f "$inline_sidecar" ]; then
+    fail "content.json missing for inline branch"
+fi
+if ! jq -e '.content_status == "captured"' "$inline_sidecar" >/dev/null; then
+    fail "inline content.json: content_status != captured ($(cat "$inline_sidecar"))"
+fi
+if ! jq -e '.content_type == "text/markdown"' "$inline_sidecar" >/dev/null; then
+    fail "inline content.json: content_type != text/markdown ($(cat "$inline_sidecar"))"
+fi
+if ! jq -e '.content_bytes > 0' "$inline_sidecar" >/dev/null; then
+    fail "inline content.json: content_bytes not positive ($(cat "$inline_sidecar"))"
+fi
+if ! jq -e '.extracted_bytes > 0' "$inline_sidecar" >/dev/null; then
+    fail "inline content.json: extracted_bytes not positive ($(cat "$inline_sidecar"))"
+fi
+if ! jq -e '.content_sha256 | test("^[0-9a-f]{64}$")' "$inline_sidecar" >/dev/null; then
+    fail "inline content.json: content_sha256 not a hex sha256 ($(cat "$inline_sidecar"))"
+fi
+if ! jq -e '.fetched_at | test("^[0-9]{4}-")' "$inline_sidecar" >/dev/null; then
+    fail "inline content.json: fetched_at not RFC3339-ish ($(cat "$inline_sidecar"))"
+fi
+
 echo "ok"

@@ -29,7 +29,7 @@ HEADERS_PATH="$WORKSPACE/.headers.txt"
 # --- Fetch ---
 # -L: follow redirects. -sS: silent but show errors. -A: identify ourselves.
 # We deliberately do not pass --max-filesize here — slice 2 wires that in.
-if ! curl -L -sS -A "BacklliteReader/1.0" \
+if ! curl -L -sS -A "BackliteReader/1.0" \
         -D "$HEADERS_PATH" \
         -o "$RAW_PATH" \
         "$URL"; then

@@ -149,25 +149,23 @@ func (o *Orchestrator) handleCompletion(ctx context.Context, task *models.Task, 
 
 	// Reading-mode completion: embed TL;DR and write the reading row synchronously.
 	// If embedding or the DB write fails, the task itself fails.
-	var readingOpt notify.EventOption
+	var readingOpts []notify.EventOption
 	if task.TaskMode == models.TaskModeRead && result.Status == models.TaskStatusCompleted {
-		opt, err := o.handleReadingCompletion(ctx, task, status)
+		opts, err := o.handleReadingCompletion(ctx, task, status)
 		if err != nil {
 			log.Error().Err(err).Str("task_id", task.ID).Msg("handleReadingCompletion: reading pipeline failed")
 			result.Status = models.TaskStatusFailed
 			result.EventType = notify.EventTaskFailed
 			result.Error = err.Error()
 		} else {
-			readingOpt = opt
+			readingOpts = opts
 		}
 	}
 
 	switch result.EventType {
 	case notify.EventTaskCompleted:
 		result.EventOpts = []notify.EventOption{notify.WithContainerStatus(status.PRURL, "", status.LogTail)}
-		if readingOpt != nil {
-			result.EventOpts = append(result.EventOpts, readingOpt)
-		}
+		result.EventOpts = append(result.EventOpts, readingOpts...)
 	case notify.EventTaskNeedsInput:
 		result.EventOpts = []notify.EventOption{notify.WithContainerStatus("", status.Question, status.LogTail)}
 	default:
@@ -222,10 +220,22 @@ func (o *Orchestrator) handleCompletion(ctx context.Context, task *models.Task, 
 	log.Info().Str("task_id", task.ID).Str("status", string(result.Status)).Msg("task completed")
 }
 
-// handleReadingCompletion embeds the agent's final TL;DR and writes the reading
-// row. Returns an EventOption that populates the reading fields on the
-// task.completed event. Any error here causes the task itself to fail.
-func (o *Orchestrator) handleReadingCompletion(ctx context.Context, task *models.Task, status ContainerStatus) (notify.EventOption, error) {
+// capturedContent mirrors the JSON sidecar written by docker/reader/fetch-and-extract.sh.
+type capturedContent struct {
+	URL            string `json:"url"`
+	ContentType    string `json:"content_type"`
+	ContentStatus  string `json:"content_status"`
+	ContentBytes   int64  `json:"content_bytes"`
+	ExtractedBytes int64  `json:"extracted_bytes"`
+	ContentSHA256  string `json:"content_sha256"`
+	FetchedAt      string `json:"fetched_at"`
+}
+
+// handleReadingCompletion embeds the agent's final TL;DR, persists the
+// captured content artifacts, and writes the reading row. Returns the slice of
+// EventOptions that populate the reading fields on the task.completed event.
+// Any error here causes the task itself to fail.
+func (o *Orchestrator) handleReadingCompletion(ctx context.Context, task *models.Task, status ContainerStatus) ([]notify.EventOption, error) {
 	if o.embedder == nil {
 		return nil, fmt.Errorf("reading completion: no embedder configured")
 	}
@@ -239,8 +249,12 @@ func (o *Orchestrator) handleReadingCompletion(ctx context.Context, task *models
 
 	// Agent confirmed the URL already exists — complete without overwriting
 	// the existing reading (which has richer content than the duplicate stub).
+	// The captured-but-not-yet-persisted content is dropped on the floor: per
+	// PRD, operators can refresh by resubmitting with force=true.
 	if status.NoveltyVerdict == "duplicate" && !task.Force {
-		return notify.WithReading(status.TLDR, status.NoveltyVerdict, status.Tags, status.Connections), nil
+		return []notify.EventOption{
+			notify.WithReading(status.TLDR, status.NoveltyVerdict, status.Tags, status.Connections),
+		}, nil
 	}
 
 	vec, err := o.embedder.Embed(ctx, status.TLDR)
@@ -252,6 +266,16 @@ func (o *Orchestrator) handleReadingCompletion(ctx context.Context, task *models
 	if err != nil {
 		return nil, fmt.Errorf("marshal raw_output: %w", err)
 	}
+
+	// Pull the captured content (raw + extracted + sidecar) out of the
+	// container. Missing files yield nil byte slices — the reader pipeline
+	// is non-fatal so we tolerate "no capture happened" and just leave the
+	// content-status fields empty on the row.
+	rawContent, extractedContent, sidecarBytes, contentErr := o.docker.GetReadingContent(ctx, task.ContainerID)
+	if contentErr != nil {
+		log.Warn().Err(contentErr).Str("task_id", task.ID).Msg("GetReadingContent failed; persisting reading without captured content")
+	}
+	captured := parseCapturedSidecar(sidecarBytes)
 
 	reading := &models.Reading{
 		ID:             "bf_" + ulid.Make().String(),
@@ -270,12 +294,56 @@ func (o *Orchestrator) handleReadingCompletion(ctx context.Context, task *models
 		Embedding:      vec,
 		CreatedAt:      time.Now().UTC(),
 	}
+	if captured != nil {
+		reading.ContentType = captured.ContentType
+		reading.ContentStatus = captured.ContentStatus
+		reading.ContentBytes = captured.ContentBytes
+		reading.ExtractedBytes = captured.ExtractedBytes
+		reading.ContentSHA256 = captured.ContentSHA256
+		if ts, err := time.Parse(time.RFC3339, captured.FetchedAt); err == nil {
+			ts = ts.UTC()
+			reading.FetchedAt = &ts
+		}
+	}
 
 	if err := o.store.UpsertReading(ctx, reading); err != nil {
 		return nil, fmt.Errorf("upsert reading: %w", err)
 	}
 
-	return notify.WithReading(status.TLDR, status.NoveltyVerdict, status.Tags, status.Connections), nil
+	// Persist captured artifacts to disk after the row commits so a DB
+	// failure can't leave orphan files. Persist failure marks the task
+	// failed (PRD: any error in the reading pipeline fails the task).
+	if rawContent != nil && o.outputs != nil {
+		if err := o.outputs.SaveReadingContent(ctx, reading.ID, rawContent, extractedContent, sidecarBytes); err != nil {
+			return nil, fmt.Errorf("save reading content: %w", err)
+		}
+	}
+
+	opts := []notify.EventOption{
+		notify.WithReading(status.TLDR, status.NoveltyVerdict, status.Tags, status.Connections),
+	}
+	if reading.ContentStatus != "" {
+		opts = append(opts, notify.WithReadingContent(reading.ContentStatus, reading.ContentType))
+	}
+	return opts, nil
+}
+
+// parseCapturedSidecar parses the in-container content.json sidecar. Returns
+// nil when sidecar is empty, malformed, or only partially populated — callers
+// then leave the reading row's content fields at their zero values.
+func parseCapturedSidecar(sidecar []byte) *capturedContent {
+	if len(sidecar) == 0 {
+		return nil
+	}
+	var c capturedContent
+	if err := json.Unmarshal(sidecar, &c); err != nil {
+		log.Warn().Err(err).Msg("malformed content.json sidecar; ignoring")
+		return nil
+	}
+	if c.ContentStatus == "" {
+		return nil
+	}
+	return &c
 }
 
 // agentStatusFromContainer reconstructs the reading-relevant portion of the

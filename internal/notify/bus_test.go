@@ -195,6 +195,20 @@ func TestNewEvent_WithReading_PopulatesFields(t *testing.T) {
 	}
 }
 
+func TestNewEvent_WithReadingContent_PopulatesFields(t *testing.T) {
+	task := &models.Task{ID: "bf_2", TaskMode: models.TaskModeRead}
+
+	event := NewEvent(EventTaskCompleted, task,
+		WithReadingContent("captured", "text/html; charset=utf-8"))
+
+	if event.ContentStatus != "captured" {
+		t.Errorf("ContentStatus = %q, want %q", event.ContentStatus, "captured")
+	}
+	if event.ContentType != "text/html; charset=utf-8" {
+		t.Errorf("ContentType = %q, want %q", event.ContentType, "text/html; charset=utf-8")
+	}
+}
+
 // --- EventBus tests ---
 
 func TestEventBus_FanOutDelivery(t *testing.T) {

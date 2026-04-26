@@ -91,11 +91,19 @@ Structured output of completed `task_mode=read` tasks. Populated by the orchestr
 | `raw_output` | `TEXT` | `'{}'` | Lossless JSON of the agent's parsed `status.json`, kept for future re-normalization. |
 | `embedding` | `TEXT` | `''` | JSON-encoded OpenAI `text-embedding-3-small` vector of the final TL;DR. Embedded by the orchestrator, not the agent. |
 | `created_at` | `TEXT` | current UTC timestamp | When the reading was stored. |
+| `content_type` | `TEXT` | `''` | MIME type of the captured raw bytes (e.g. `text/html; charset=utf-8`). Empty when no capture ran. |
+| `content_status` | `TEXT` | `''` | Capture state: `captured`, `fetch_failed`, `over_size_cap`, `unsupported_type`, or `''` (legacy / no capture attempted). |
+| `content_bytes` | `INTEGER` | `0` | Size in bytes of `raw.<ext>` on disk. |
+| `extracted_bytes` | `INTEGER` | `0` | Size in bytes of `extracted.md` on disk (HTML only). |
+| `content_sha256` | `TEXT` | `''` | Hex SHA-256 of the raw bytes. Change-detection signal for `force=true` re-fetches. |
+| `fetched_at` | `TEXT` | `NULL` | RFC3339 UTC timestamp of when the reader container fetched the URL. NULL when no capture ran. |
 
 **Indexes:**
 - Unique `idx_readings_url` on `url` — duplicate detection and upsert.
 
 Similarity search is computed in the application layer by decoding stored embeddings and ranking cosine similarity in Go.
+
+When `content_status = 'captured'` the orchestrator persists the capture artifacts under `{BACKFLOW_DATA_DIR}/readings/{id}/`: `raw.<ext>`, `extracted.md` (HTML only), and a `content.json` sidecar. The DB row is authoritative for metadata; the sidecar is a debug copy.
 
 ## Status Lifecycles
 

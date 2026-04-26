@@ -317,6 +317,13 @@ type mockDockerManager struct {
 	// GetAgentOutput behavior.
 	agentOutput    string
 	agentOutputErr error
+
+	// GetReadingContent behavior. When zero-valued, the mock reports a
+	// legacy container with no captured content (all-nil bytes, no error).
+	readingRaw       []byte
+	readingExtracted []byte
+	readingSidecar   []byte
+	readingContentFn func(ctx context.Context, containerID string) (raw, extracted, sidecar []byte, err error)
 }
 
 func (m *mockDockerManager) RunAgent(ctx context.Context, task *models.Task) (string, error) {
@@ -357,11 +364,19 @@ func (m *mockDockerManager) GetAgentOutput(_ context.Context, _ string) (string,
 	return m.agentOutput, nil
 }
 
+func (m *mockDockerManager) GetReadingContent(ctx context.Context, containerID string) (raw []byte, extracted []byte, sidecar []byte, err error) {
+	if m.readingContentFn != nil {
+		return m.readingContentFn(ctx, containerID)
+	}
+	return m.readingRaw, m.readingExtracted, m.readingSidecar, nil
+}
+
 // --- Mock filesystem writer ---
 
 type mockWriter struct {
 	logSaves      []mockWriterLogSave
 	metadataSaves []mockWriterMetadataSave
+	readingSaves  []mockWriterReadingSave
 	err           error
 }
 
@@ -373,6 +388,13 @@ type mockWriterLogSave struct {
 type mockWriterMetadataSave struct {
 	taskID   string
 	metadata any
+}
+
+type mockWriterReadingSave struct {
+	readingID string
+	raw       []byte
+	extracted []byte
+	sidecar   []byte
 }
 
 func (m *mockWriter) SaveLog(_ context.Context, taskID string, logBytes []byte) (string, error) {
@@ -388,6 +410,19 @@ func (m *mockWriter) SaveMetadata(_ context.Context, taskID string, metadata any
 		return m.err
 	}
 	m.metadataSaves = append(m.metadataSaves, mockWriterMetadataSave{taskID: taskID, metadata: metadata})
+	return nil
+}
+
+func (m *mockWriter) SaveReadingContent(_ context.Context, readingID string, raw, extracted, sidecar []byte) error {
+	if m.err != nil {
+		return m.err
+	}
+	m.readingSaves = append(m.readingSaves, mockWriterReadingSave{
+		readingID: readingID,
+		raw:       raw,
+		extracted: extracted,
+		sidecar:   sidecar,
+	})
 	return nil
 }
 

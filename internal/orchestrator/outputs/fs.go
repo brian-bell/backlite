@@ -58,6 +58,30 @@ func (w *FSWriter) SaveMetadata(_ context.Context, taskID string, metadata any) 
 	return nil
 }
 
+// SaveReadingContent persists the captured artifacts for readingID under
+// {Root}/readings/{readingID}/. The HTML happy path supplies all three byte
+// slices (raw HTML, extracted markdown, sidecar JSON). For non-HTML payloads
+// extracted may be nil, in which case extracted.md is skipped — raw.html and
+// content.json are still required.
+func (w *FSWriter) SaveReadingContent(_ context.Context, readingID string, raw []byte, extracted []byte, sidecar []byte) error {
+	dir := filepath.Join(w.Root, "readings", readingID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("outputs: mkdir reading dir: %w", err)
+	}
+	if err := writeAtomic(filepath.Join(dir, "raw.html"), raw); err != nil {
+		return err
+	}
+	if extracted != nil {
+		if err := writeAtomic(filepath.Join(dir, "extracted.md"), extracted); err != nil {
+			return err
+		}
+	}
+	if err := writeAtomic(filepath.Join(dir, "content.json"), sidecar); err != nil {
+		return err
+	}
+	return nil
+}
+
 func writeAtomic(finalPath string, data []byte) error {
 	tmp := finalPath + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {

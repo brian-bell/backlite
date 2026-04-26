@@ -391,12 +391,16 @@ func (s *SQLiteStore) UpsertReading(ctx context.Context, r *models.Reading) erro
 			id, task_id, url, title, tldr,
 			tags, keywords, people, orgs,
 			novelty_verdict, connections, summary, raw_output,
-			embedding, created_at
+			embedding, created_at,
+			content_type, content_status, content_bytes,
+			extracted_bytes, content_sha256, fetched_at
 		) VALUES (
 			?, ?, ?, ?, ?,
 			?, ?, ?, ?,
 			?, ?, ?, ?,
-			?, ?
+			?, ?,
+			?, ?, ?,
+			?, ?, ?
 		)
 		ON CONFLICT(url) DO UPDATE SET
 			task_id         = excluded.task_id,
@@ -410,14 +414,22 @@ func (s *SQLiteStore) UpsertReading(ctx context.Context, r *models.Reading) erro
 			connections     = excluded.connections,
 			summary         = excluded.summary,
 			raw_output      = excluded.raw_output,
-			embedding       = excluded.embedding`, args...)
+			embedding       = excluded.embedding,
+			content_type    = excluded.content_type,
+			content_status  = excluded.content_status,
+			content_bytes   = excluded.content_bytes,
+			extracted_bytes = excluded.extracted_bytes,
+			content_sha256  = excluded.content_sha256,
+			fetched_at      = excluded.fetched_at`, args...)
 	return err
 }
 
 const readingColumns = `id, task_id, url, title, tldr,
 	tags, keywords, people, orgs,
 	novelty_verdict, connections, summary, raw_output,
-	created_at`
+	created_at,
+	content_type, content_status, content_bytes,
+	extracted_bytes, content_sha256, fetched_at`
 
 func (s *SQLiteStore) ListReadings(ctx context.Context, filter ReadingFilter) ([]*models.Reading, error) {
 	query := "SELECT " + readingColumns + " FROM readings"
@@ -499,12 +511,15 @@ func scanReading(row sqlScanner) (*models.Reading, error) {
 		connectionsJSON string
 		rawOutputJSON   string
 		createdAt       string
+		fetchedAt       sql.NullString
 	)
 	err := row.Scan(
 		&r.ID, &r.TaskID, &r.URL, &r.Title, &r.TLDR,
 		&tagsJSON, &keywordsJSON, &peopleJSON, &orgsJSON,
 		&r.NoveltyVerdict, &connectionsJSON, &r.Summary, &rawOutputJSON,
 		&createdAt,
+		&r.ContentType, &r.ContentStatus, &r.ContentBytes,
+		&r.ExtractedBytes, &r.ContentSHA256, &fetchedAt,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -532,6 +547,13 @@ func scanReading(row sqlScanner) (*models.Reading, error) {
 	}
 	if r.CreatedAt, err = parseTime(createdAt); err != nil {
 		return nil, err
+	}
+	if fetchedAt.Valid {
+		ft, ferr := parseTime(fetchedAt.String)
+		if ferr != nil {
+			return nil, fmt.Errorf("parse fetched_at: %w", ferr)
+		}
+		r.FetchedAt = &ft
 	}
 	return &r, nil
 }
@@ -688,6 +710,8 @@ func readingArgs(r *models.Reading) ([]any, error) {
 		tagsJSON, keywordsJSON, peopleJSON, orgsJSON,
 		r.NoveltyVerdict, connectionsJSON, r.Summary, string(rawOutput),
 		embeddingJSON, timeString(r.CreatedAt),
+		r.ContentType, r.ContentStatus, r.ContentBytes,
+		r.ExtractedBytes, r.ContentSHA256, nullableTimeString(r.FetchedAt),
 	}, nil
 }
 

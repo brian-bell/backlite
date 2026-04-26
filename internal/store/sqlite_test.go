@@ -1011,6 +1011,95 @@ func TestSQLite_GetReadingByURL(t *testing.T) {
 	}
 }
 
+func TestSQLite_UpsertReading_RoundTripsContentFields(t *testing.T) {
+	s := testSQLiteStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	task := sqliteTestTask(t, s)
+
+	fetchedAt := now.Add(-3 * time.Second)
+	seeded := &models.Reading{
+		ID:             "bf_READ_CONTENT",
+		TaskID:         task.ID,
+		URL:            "https://example.com/content-roundtrip",
+		Title:          "Round-trip target",
+		TLDR:           "verifies content columns persist",
+		Tags:           []string{"content"},
+		Keywords:       []string{},
+		People:         []string{},
+		Orgs:           []string{},
+		NoveltyVerdict: "novel",
+		Connections:    []models.Connection{},
+		Summary:        "",
+		RawOutput:      []byte(`{}`),
+		CreatedAt:      now,
+
+		ContentType:    "text/html; charset=utf-8",
+		ContentStatus:  "captured",
+		ContentBytes:   1234,
+		ExtractedBytes: 567,
+		ContentSHA256:  "deadbeefcafef00d",
+		FetchedAt:      &fetchedAt,
+	}
+	if err := s.UpsertReading(ctx, seeded); err != nil {
+		t.Fatalf("UpsertReading: %v", err)
+	}
+
+	got, err := s.GetReadingByURL(ctx, seeded.URL)
+	if err != nil {
+		t.Fatalf("GetReadingByURL: %v", err)
+	}
+	if got.ContentType != seeded.ContentType {
+		t.Errorf("ContentType = %q, want %q", got.ContentType, seeded.ContentType)
+	}
+	if got.ContentStatus != seeded.ContentStatus {
+		t.Errorf("ContentStatus = %q, want %q", got.ContentStatus, seeded.ContentStatus)
+	}
+	if got.ContentBytes != seeded.ContentBytes {
+		t.Errorf("ContentBytes = %d, want %d", got.ContentBytes, seeded.ContentBytes)
+	}
+	if got.ExtractedBytes != seeded.ExtractedBytes {
+		t.Errorf("ExtractedBytes = %d, want %d", got.ExtractedBytes, seeded.ExtractedBytes)
+	}
+	if got.ContentSHA256 != seeded.ContentSHA256 {
+		t.Errorf("ContentSHA256 = %q, want %q", got.ContentSHA256, seeded.ContentSHA256)
+	}
+	if got.FetchedAt == nil || !got.FetchedAt.Equal(fetchedAt) {
+		t.Errorf("FetchedAt = %v, want %v", got.FetchedAt, fetchedAt)
+	}
+
+	// Legacy/empty content path: zero-value content fields round-trip too.
+	legacy := &models.Reading{
+		ID:             "bf_READ_LEGACY",
+		TaskID:         task.ID,
+		URL:            "https://example.com/legacy",
+		Tags:           []string{},
+		Keywords:       []string{},
+		People:         []string{},
+		Orgs:           []string{},
+		Connections:    []models.Connection{},
+		NoveltyVerdict: "novel",
+		RawOutput:      []byte(`{}`),
+		CreatedAt:      now,
+	}
+	if err := s.UpsertReading(ctx, legacy); err != nil {
+		t.Fatalf("UpsertReading legacy: %v", err)
+	}
+	gotLegacy, err := s.GetReadingByURL(ctx, legacy.URL)
+	if err != nil {
+		t.Fatalf("GetReadingByURL legacy: %v", err)
+	}
+	if gotLegacy.ContentStatus != "" {
+		t.Errorf("legacy ContentStatus = %q, want empty", gotLegacy.ContentStatus)
+	}
+	if gotLegacy.ContentBytes != 0 {
+		t.Errorf("legacy ContentBytes = %d, want 0", gotLegacy.ContentBytes)
+	}
+	if gotLegacy.FetchedAt != nil {
+		t.Errorf("legacy FetchedAt = %v, want nil", gotLegacy.FetchedAt)
+	}
+}
+
 func TestSQLite_ListReadings_NewestFirstWithPagination(t *testing.T) {
 	s := testSQLiteStore(t)
 	ctx := context.Background()

@@ -6,6 +6,7 @@
        docker-agents-build-local \
        test-fake-agent test-blackbox test-schema test-soak \
        test-skill-agent-entrypoint \
+       test-reader-fetch-extract \
        db-pending db-running db-completed db-failed \
        deps
 
@@ -76,6 +77,9 @@ docker-agents-build-local: docker-agent-build-local docker-reader-build-local do
 
 test-skill-agent-entrypoint:
 	bash docker/skill-agent/test_entrypoint.sh
+
+test-reader-fetch-extract:
+	bash docker/reader/test_fetch_and_extract.sh
 
 DB_QUERY = @$(ENV); sqlite3 -json "$$BACKFLOW_DATABASE_PATH"
 

@@ -658,6 +658,162 @@ func TestHandleCompletion_ReadSuccess_EmbedsAndCreatesReading(t *testing.T) {
 	}
 }
 
+func TestHandleCompletion_ReadSuccess_PersistsCapturedContent(t *testing.T) {
+	s := newMockStore()
+	now := time.Now().UTC()
+	s.CreateTask(context.Background(), &models.Task{
+		ID:          "bf_read_capture",
+		Status:      models.TaskStatusRunning,
+		TaskMode:    models.TaskModeRead,
+		Prompt:      "https://example.com/cap",
+		ContainerID: "cont1",
+		StartedAt:   &now,
+	})
+
+	bus, n := newTestBus()
+	emb := &mockEmbedder{vector: []float32{0.1}}
+
+	raw := []byte("<html><title>cap</title></html>")
+	extracted := []byte("# cap\n\nbody")
+	sidecar := []byte(`{
+  "url":"https://example.com/cap",
+  "content_type":"text/html; charset=utf-8",
+  "content_status":"captured",
+  "content_bytes":31,
+  "extracted_bytes":11,
+  "content_sha256":"abc123",
+  "fetched_at":"2026-04-25T12:00:00Z"
+}`)
+
+	mockDocker := &mockDockerManager{
+		readingRaw:       raw,
+		readingExtracted: extracted,
+		readingSidecar:   sidecar,
+	}
+	mockOut := &mockWriter{}
+	o := newTestOrchestrator(s, bus,
+		withEmbedder(emb),
+		withDocker(mockDocker),
+		withOutputs(mockOut),
+	)
+	o.running = 1
+
+	task, _ := s.GetTask(context.Background(), "bf_read_capture")
+	o.handleCompletion(context.Background(), task, ContainerStatus{
+		Done:           true,
+		Complete:       true,
+		TaskMode:       models.TaskModeRead,
+		URL:            "https://example.com/cap",
+		TLDR:           "cap summary",
+		NoveltyVerdict: "new",
+	})
+	bus.Close()
+
+	// Reading row should carry the parsed sidecar fields.
+	s.mu.Lock()
+	if len(s.upsertedReadings) != 1 {
+		t.Fatalf("upsertedReadings = %d, want 1", len(s.upsertedReadings))
+	}
+	r := s.upsertedReadings[0]
+	s.mu.Unlock()
+
+	if r.ContentType != "text/html; charset=utf-8" {
+		t.Errorf("reading.ContentType = %q", r.ContentType)
+	}
+	if r.ContentStatus != "captured" {
+		t.Errorf("reading.ContentStatus = %q, want captured", r.ContentStatus)
+	}
+	if r.ContentBytes != 31 {
+		t.Errorf("reading.ContentBytes = %d, want 31", r.ContentBytes)
+	}
+	if r.ExtractedBytes != 11 {
+		t.Errorf("reading.ExtractedBytes = %d, want 11", r.ExtractedBytes)
+	}
+	if r.ContentSHA256 != "abc123" {
+		t.Errorf("reading.ContentSHA256 = %q", r.ContentSHA256)
+	}
+	if r.FetchedAt == nil {
+		t.Error("reading.FetchedAt = nil, want non-nil")
+	}
+
+	// Outputs writer should have been called with the captured bytes, keyed
+	// by the new reading's ID.
+	if len(mockOut.readingSaves) != 1 {
+		t.Fatalf("SaveReadingContent calls = %d, want 1", len(mockOut.readingSaves))
+	}
+	got := mockOut.readingSaves[0]
+	if got.readingID != r.ID {
+		t.Errorf("SaveReadingContent readingID = %q, want %q", got.readingID, r.ID)
+	}
+	if string(got.raw) != string(raw) {
+		t.Errorf("SaveReadingContent raw mismatch")
+	}
+	if string(got.extracted) != string(extracted) {
+		t.Errorf("SaveReadingContent extracted mismatch")
+	}
+
+	// Webhook event should carry content_status.
+	n.mu.Lock()
+	if len(n.events) != 1 {
+		t.Fatalf("events = %d, want 1", len(n.events))
+	}
+	e := n.events[0]
+	n.mu.Unlock()
+	if e.ContentStatus != "captured" {
+		t.Errorf("event.ContentStatus = %q, want captured", e.ContentStatus)
+	}
+	if e.ContentType != "text/html; charset=utf-8" {
+		t.Errorf("event.ContentType = %q", e.ContentType)
+	}
+}
+
+func TestHandleCompletion_ReadSuccess_NoCaptureLeavesContentStatusEmpty(t *testing.T) {
+	// Legacy / pre-capture container: GetReadingContent returns all-nil.
+	// The reading row gets ContentStatus="" and SaveReadingContent is not
+	// invoked.
+	s := newMockStore()
+	now := time.Now().UTC()
+	s.CreateTask(context.Background(), &models.Task{
+		ID:          "bf_read_legacy",
+		Status:      models.TaskStatusRunning,
+		TaskMode:    models.TaskModeRead,
+		Prompt:      "https://example.com/legacy",
+		ContainerID: "cont1",
+		StartedAt:   &now,
+	})
+
+	bus, _ := newTestBus()
+	emb := &mockEmbedder{vector: []float32{0.1}}
+	mockOut := &mockWriter{}
+	o := newTestOrchestrator(s, bus,
+		withEmbedder(emb),
+		withDocker(&mockDockerManager{}), // returns all-nil bytes
+		withOutputs(mockOut),
+	)
+	o.running = 1
+
+	task, _ := s.GetTask(context.Background(), "bf_read_legacy")
+	o.handleCompletion(context.Background(), task, ContainerStatus{
+		Done:     true,
+		Complete: true,
+		TaskMode: models.TaskModeRead,
+		URL:      "https://example.com/legacy",
+		TLDR:     "x",
+	})
+	bus.Close()
+
+	s.mu.Lock()
+	r := s.upsertedReadings[0]
+	s.mu.Unlock()
+
+	if r.ContentStatus != "" {
+		t.Errorf("reading.ContentStatus = %q, want empty", r.ContentStatus)
+	}
+	if len(mockOut.readingSaves) != 0 {
+		t.Errorf("SaveReadingContent should not be called, got %d", len(mockOut.readingSaves))
+	}
+}
+
 func TestHandleCompletion_ReadSuccess_AssignsUniqueReadingIDs(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()

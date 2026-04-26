@@ -13,6 +13,10 @@ type Runner interface {
 	StopContainer(ctx context.Context, containerID string) error
 	GetLogs(ctx context.Context, containerID string, tail int) (string, error)
 	GetAgentOutput(ctx context.Context, containerID string) (string, error)
+	// GetReadingContent extracts the captured reading artifacts from a
+	// reader container's workspace. Missing files yield nil byte slices
+	// without an error — callers must distinguish nil from empty.
+	GetReadingContent(ctx context.Context, containerID string) (raw []byte, extracted []byte, sidecar []byte, err error)
 }
 
 // ContainerStatus represents the current state of an agent container.

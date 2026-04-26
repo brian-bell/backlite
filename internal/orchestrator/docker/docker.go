@@ -15,14 +15,27 @@ import (
 	"github.com/brian-bell/backlite/internal/orchestrator"
 )
 
+// runCmdFn runs a bash command and returns its stdout (or an error). Manager
+// holds it as a field so tests can swap in a fake without invoking real bash.
+type runCmdFn func(ctx context.Context, command string) (string, error)
+
 // Manager manages agent containers on the local Docker host.
 type Manager struct {
 	config *config.Config
+	runCmd runCmdFn
 }
 
 // NewManager creates a new Manager.
 func NewManager(cfg *config.Config) *Manager {
-	return &Manager{config: cfg}
+	m := &Manager{config: cfg}
+	m.runCmd = m.runCommand
+	return m
+}
+
+// newManagerWithRunner builds a Manager whose command runner is the supplied
+// function instead of the real bash exec. Test-only.
+func newManagerWithRunner(run runCmdFn) *Manager {
+	return &Manager{config: &config.Config{}, runCmd: run}
 }
 
 // RunAgent starts a new agent container on the local Docker host for the task.
@@ -340,7 +353,35 @@ func (m *Manager) enrichFromStatusJSON(ctx context.Context, containerID string, 
 // own git operations cannot clobber it.
 func (m *Manager) GetAgentOutput(ctx context.Context, containerID string) (string, error) {
 	cmd := fmt.Sprintf("f=$(mktemp) && docker cp %s:/tmp/container_output.log \"$f\" && cat \"$f\" && rm -f \"$f\"", containerID)
-	return m.runCommand(ctx, cmd)
+	return m.runCmd(ctx, cmd)
+}
+
+// GetReadingContent extracts the captured reading artifacts written by the
+// reader container's pre-fetch + extraction step. Missing files yield nil byte
+// slices (no error) so callers can record content_status accordingly.
+func (m *Manager) GetReadingContent(ctx context.Context, containerID string) (raw []byte, extracted []byte, sidecar []byte, err error) {
+	raw = m.copyReadingFile(ctx, containerID, "/home/agent/workspace/raw.html")
+	extracted = m.copyReadingFile(ctx, containerID, "/home/agent/workspace/extracted.md")
+	sidecar = m.copyReadingFile(ctx, containerID, "/home/agent/workspace/content.json")
+	return raw, extracted, sidecar, nil
+}
+
+// copyReadingFile pulls a single file out of the container via docker cp.
+// Missing files surface as nil — the docker cp invocation tolerates the
+// absence with `2>/dev/null` and the fallback `cat` of an empty/missing path.
+func (m *Manager) copyReadingFile(ctx context.Context, containerID, srcPath string) []byte {
+	cmd := fmt.Sprintf(
+		"f=$(mktemp) && docker cp %s:%s \"$f\" 2>/dev/null && cat \"$f\" && rm -f \"$f\"",
+		containerID, srcPath,
+	)
+	out, err := m.runCmd(ctx, cmd)
+	if err != nil {
+		return nil
+	}
+	if out == "" {
+		return nil
+	}
+	return []byte(out)
 }
 
 // shellEscape wraps a string in single quotes, escaping any embedded single

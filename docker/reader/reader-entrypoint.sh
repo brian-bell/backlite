@@ -62,6 +62,18 @@ fetch_s3_var() {
 fetch_s3_var "PROMPT_S3_URL" "PROMPT"
 URL="$PROMPT"  # re-alias after potential S3 download
 
+# --- Pre-fetch + extraction (non-fatal) ---
+# Best-effort capture of raw bytes + extracted markdown + sidecar JSON. The
+# orchestrator copies the workspace artifacts out after the container exits
+# and persists them under {BACKFLOW_DATA_DIR}/readings/{id}/. Capture is
+# independent of the agent run — failures here do not block summarization.
+if [ -x "${SCRIPT_DIR}/fetch-and-extract.sh" ]; then
+    echo "==> Pre-fetching and extracting content for ${URL}..."
+    URL="$URL" WORKSPACE="$WORKSPACE" \
+        bash "${SCRIPT_DIR}/fetch-and-extract.sh" || \
+        echo "WARN: fetch-and-extract.sh exited non-zero; continuing without capture" >&2
+fi
+
 if [ "$HARNESS" = "codex" ]; then
     echo "==> Logging in to codex with API key..."
     echo "$OPENAI_API_KEY" | codex login --with-api-key

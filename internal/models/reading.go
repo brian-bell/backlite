@@ -22,6 +22,16 @@ type Reading struct {
 	RawOutput      json.RawMessage `json:"raw_output"`
 	Embedding      []float32       `json:"embedding,omitempty"`
 	CreatedAt      time.Time       `json:"created_at"`
+
+	// Content-capture fields. Empty string ContentStatus means "no capture
+	// attempted" — distinguishes legacy rows (predating the feature) from
+	// rows that ran the pipeline and failed.
+	ContentType    string     `json:"content_type,omitempty"`
+	ContentStatus  string     `json:"content_status"`
+	ContentBytes   int64      `json:"content_bytes,omitempty"`
+	ExtractedBytes int64      `json:"extracted_bytes,omitempty"`
+	ContentSHA256  string     `json:"content_sha256,omitempty"`
+	FetchedAt      *time.Time `json:"fetched_at,omitempty"`
 }
 
 // Connection links a reading to a related reading with a reason.

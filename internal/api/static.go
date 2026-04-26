@@ -32,6 +32,10 @@ func (h webAppHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, filePath)
 		return
 	}
+	if missingWebFile(cleanPath) {
+		http.NotFound(w, r)
+		return
+	}
 
 	indexPath := filepath.Join(h.dir, "index.html")
 	if info, err := os.Stat(indexPath); err != nil || info.IsDir() {
@@ -48,4 +52,8 @@ func reservedWebPath(urlPath string) bool {
 		urlPath == "/debug" ||
 		strings.HasPrefix(urlPath, "/debug/") ||
 		urlPath == "/health"
+}
+
+func missingWebFile(cleanPath string) bool {
+	return strings.HasPrefix(cleanPath, "assets/") || path.Ext(cleanPath) != ""
 }

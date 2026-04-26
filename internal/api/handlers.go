@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -42,10 +43,26 @@ type findSimilarReadingsRequest struct {
 }
 
 type listReadingsResponse struct {
-	Readings []*models.Reading `json:"readings"`
+	Readings []readingResponse `json:"readings"`
 	Limit    int               `json:"limit"`
 	Offset   int               `json:"offset"`
 	HasMore  bool              `json:"has_more"`
+}
+
+type readingResponse struct {
+	ID             string              `json:"id"`
+	TaskID         string              `json:"task_id"`
+	URL            string              `json:"url"`
+	Title          string              `json:"title"`
+	TLDR           string              `json:"tldr"`
+	Tags           []string            `json:"tags"`
+	Keywords       []string            `json:"keywords"`
+	People         []string            `json:"people"`
+	Orgs           []string            `json:"orgs"`
+	NoveltyVerdict string              `json:"novelty_verdict"`
+	Connections    []models.Connection `json:"connections"`
+	Summary        string              `json:"summary"`
+	CreatedAt      time.Time           `json:"created_at"`
 }
 
 func NewHandlers(s store.Store, cfg *config.Config, logs LogFetcher, bus notify.Emitter) *Handlers {
@@ -144,12 +161,8 @@ func (h *Handlers) ListReadings(w http.ResponseWriter, r *http.Request) {
 	if hasMore {
 		readings = readings[:limit]
 	}
-	if readings == nil {
-		readings = []*models.Reading{}
-	}
-
 	writeJSON(w, http.StatusOK, listReadingsResponse{
-		Readings: readings,
+		Readings: readingResponses(readings),
 		Limit:    limit,
 		Offset:   offset,
 		HasMore:  hasMore,
@@ -167,7 +180,59 @@ func (h *Handlers) GetReading(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to get reading")
 		return
 	}
-	writeJSON(w, http.StatusOK, reading)
+	writeJSON(w, http.StatusOK, newReadingResponse(reading))
+}
+
+func readingResponses(readings []*models.Reading) []readingResponse {
+	if readings == nil {
+		return []readingResponse{}
+	}
+	out := make([]readingResponse, 0, len(readings))
+	for _, reading := range readings {
+		out = append(out, newReadingResponse(reading))
+	}
+	return out
+}
+
+func newReadingResponse(reading *models.Reading) readingResponse {
+	if reading == nil {
+		return readingResponse{
+			Tags:        []string{},
+			Keywords:    []string{},
+			People:      []string{},
+			Orgs:        []string{},
+			Connections: []models.Connection{},
+		}
+	}
+	return readingResponse{
+		ID:             reading.ID,
+		TaskID:         reading.TaskID,
+		URL:            reading.URL,
+		Title:          reading.Title,
+		TLDR:           reading.TLDR,
+		Tags:           normalizeStringSlice(reading.Tags),
+		Keywords:       normalizeStringSlice(reading.Keywords),
+		People:         normalizeStringSlice(reading.People),
+		Orgs:           normalizeStringSlice(reading.Orgs),
+		NoveltyVerdict: reading.NoveltyVerdict,
+		Connections:    normalizeConnections(reading.Connections),
+		Summary:        reading.Summary,
+		CreatedAt:      reading.CreatedAt,
+	}
+}
+
+func normalizeStringSlice(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
+}
+
+func normalizeConnections(values []models.Connection) []models.Connection {
+	if values == nil {
+		return []models.Connection{}
+	}
+	return values
 }
 
 func (h *Handlers) DeleteTask(w http.ResponseWriter, r *http.Request) {

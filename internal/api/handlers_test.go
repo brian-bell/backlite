@@ -537,6 +537,7 @@ func TestListReadings_ReturnsNewestFirstPage(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
+	bodyBytes := w.Body.Bytes()
 
 	var resp struct {
 		Data struct {
@@ -546,7 +547,7 @@ func TestListReadings_ReturnsNewestFirstPage(t *testing.T) {
 			HasMore  bool             `json:"has_more"`
 		} `json:"data"`
 	}
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+	if err := json.NewDecoder(bytes.NewReader(bodyBytes)).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	if resp.Data.Limit != 1 || resp.Data.Offset != 1 {
@@ -564,8 +565,11 @@ func TestListReadings_ReturnsNewestFirstPage(t *testing.T) {
 	if resp.Data.Readings[0].Embedding != nil {
 		t.Fatalf("embedding = %v, want nil", resp.Data.Readings[0].Embedding)
 	}
-	if strings.Contains(w.Body.String(), "raw_output") {
-		t.Fatalf("list response exposed raw_output: %s", w.Body.String())
+	if strings.Contains(string(bodyBytes), "raw_output") {
+		t.Fatalf("list response exposed raw_output: %s", string(bodyBytes))
+	}
+	if strings.Contains(string(bodyBytes), "embedding") {
+		t.Fatalf("list response exposed embedding: %s", string(bodyBytes))
 	}
 }
 
@@ -614,11 +618,12 @@ func TestGetReading_ReturnsDetail(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
+	bodyBytes := w.Body.Bytes()
 
 	var resp struct {
 		Data models.Reading `json:"data"`
 	}
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+	if err := json.NewDecoder(bytes.NewReader(bodyBytes)).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	if resp.Data.ID != reading.ID || resp.Data.URL != reading.URL || resp.Data.Summary != reading.Summary {
@@ -633,8 +638,68 @@ func TestGetReading_ReturnsDetail(t *testing.T) {
 	if resp.Data.Embedding != nil {
 		t.Fatalf("embedding = %v, want nil", resp.Data.Embedding)
 	}
-	if strings.Contains(w.Body.String(), "raw_output") {
-		t.Fatalf("detail response exposed raw_output: %s", w.Body.String())
+	if strings.Contains(string(bodyBytes), "raw_output") {
+		t.Fatalf("detail response exposed raw_output: %s", string(bodyBytes))
+	}
+	if strings.Contains(string(bodyBytes), "embedding") {
+		t.Fatalf("detail response exposed embedding: %s", string(bodyBytes))
+	}
+}
+
+func TestGetReading_NormalizesNilCollections(t *testing.T) {
+	srv, s, _ := testServerWithEmitter(t)
+	ctx := context.Background()
+	now := time.Date(2026, 4, 25, 12, 0, 0, 0, time.UTC)
+	task := &models.Task{
+		ID:        "bf_READ_NIL_TASK",
+		Status:    models.TaskStatusCompleted,
+		TaskMode:  models.TaskModeRead,
+		Harness:   models.HarnessClaudeCode,
+		Prompt:    "https://example.com/nil",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := s.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	reading := &models.Reading{
+		ID:             "bf_READ_NIL",
+		TaskID:         task.ID,
+		URL:            "https://example.com/nil",
+		Title:          "Nil Collections",
+		TLDR:           "Short version",
+		NoveltyVerdict: "new",
+		Summary:        "The full summary.",
+		RawOutput:      []byte(`{"internal":true}`),
+		CreatedAt:      now,
+	}
+	if err := s.UpsertReading(ctx, reading); err != nil {
+		t.Fatalf("UpsertReading: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/readings/"+reading.ID, nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	checkResponse(t, req, w)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+	bodyBytes := w.Body.Bytes()
+	var resp struct {
+		Data struct {
+			Tags        []string            `json:"tags"`
+			Keywords    []string            `json:"keywords"`
+			People      []string            `json:"people"`
+			Orgs        []string            `json:"orgs"`
+			Connections []models.Connection `json:"connections"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(bytes.NewReader(bodyBytes)).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Data.Tags == nil || resp.Data.Keywords == nil || resp.Data.People == nil || resp.Data.Orgs == nil || resp.Data.Connections == nil {
+		t.Fatalf("collections should decode as empty arrays, got body: %s", string(bodyBytes))
 	}
 }
 

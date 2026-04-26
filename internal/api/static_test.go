@@ -59,6 +59,16 @@ func TestNewServer_ServesWebAppFallbackWithoutCapturingAPIRoutes(t *testing.T) {
 		t.Fatalf("asset body = %q", w.Body.String())
 	}
 
+	req = httptest.NewRequest(http.MethodGet, "/assets/missing.js", nil)
+	w = httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("GET /assets/missing.js status = %d, want 404", w.Code)
+	}
+	if strings.Contains(w.Body.String(), "Backlite Web") {
+		t.Fatal("/assets/missing.js returned the web app index")
+	}
+
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
 	w = httptest.NewRecorder()
 	srv.ServeHTTP(w, req)

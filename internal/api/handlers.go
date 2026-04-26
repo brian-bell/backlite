@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -39,6 +40,29 @@ type Handlers struct {
 type findSimilarReadingsRequest struct {
 	QueryEmbedding []float32 `json:"query_embedding"`
 	MatchCount     int       `json:"match_count"`
+}
+
+type listReadingsResponse struct {
+	Readings []readingResponse `json:"readings"`
+	Limit    int               `json:"limit"`
+	Offset   int               `json:"offset"`
+	HasMore  bool              `json:"has_more"`
+}
+
+type readingResponse struct {
+	ID             string              `json:"id"`
+	TaskID         string              `json:"task_id"`
+	URL            string              `json:"url"`
+	Title          string              `json:"title"`
+	TLDR           string              `json:"tldr"`
+	Tags           []string            `json:"tags"`
+	Keywords       []string            `json:"keywords"`
+	People         []string            `json:"people"`
+	Orgs           []string            `json:"orgs"`
+	NoveltyVerdict string              `json:"novelty_verdict"`
+	Connections    []models.Connection `json:"connections"`
+	Summary        string              `json:"summary"`
+	CreatedAt      time.Time           `json:"created_at"`
 }
 
 func NewHandlers(s store.Store, cfg *config.Config, logs LogFetcher, bus notify.Emitter) *Handlers {
@@ -106,6 +130,109 @@ func (h *Handlers) ListTasks(w http.ResponseWriter, r *http.Request) {
 		tasks = []*models.Task{}
 	}
 	writeJSON(w, http.StatusOK, tasks)
+}
+
+func (h *Handlers) ListReadings(w http.ResponseWriter, r *http.Request) {
+	limit := 20
+	offset := 0
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if n, err := strconv.Atoi(l); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	if o := r.URL.Query().Get("offset"); o != "" {
+		if n, err := strconv.Atoi(o); err == nil && n >= 0 {
+			offset = n
+		}
+	}
+
+	readings, err := h.store.ListReadings(r.Context(), store.ReadingFilter{
+		Limit:  limit + 1,
+		Offset: offset,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list readings")
+		return
+	}
+	hasMore := len(readings) > limit
+	if hasMore {
+		readings = readings[:limit]
+	}
+	writeJSON(w, http.StatusOK, listReadingsResponse{
+		Readings: readingResponses(readings),
+		Limit:    limit,
+		Offset:   offset,
+		HasMore:  hasMore,
+	})
+}
+
+func (h *Handlers) GetReading(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	reading, err := h.store.GetReading(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "reading not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get reading")
+		return
+	}
+	writeJSON(w, http.StatusOK, newReadingResponse(reading))
+}
+
+func readingResponses(readings []*models.Reading) []readingResponse {
+	if readings == nil {
+		return []readingResponse{}
+	}
+	out := make([]readingResponse, 0, len(readings))
+	for _, reading := range readings {
+		out = append(out, newReadingResponse(reading))
+	}
+	return out
+}
+
+func newReadingResponse(reading *models.Reading) readingResponse {
+	if reading == nil {
+		return readingResponse{
+			Tags:        []string{},
+			Keywords:    []string{},
+			People:      []string{},
+			Orgs:        []string{},
+			Connections: []models.Connection{},
+		}
+	}
+	return readingResponse{
+		ID:             reading.ID,
+		TaskID:         reading.TaskID,
+		URL:            reading.URL,
+		Title:          reading.Title,
+		TLDR:           reading.TLDR,
+		Tags:           normalizeStringSlice(reading.Tags),
+		Keywords:       normalizeStringSlice(reading.Keywords),
+		People:         normalizeStringSlice(reading.People),
+		Orgs:           normalizeStringSlice(reading.Orgs),
+		NoveltyVerdict: reading.NoveltyVerdict,
+		Connections:    normalizeConnections(reading.Connections),
+		Summary:        reading.Summary,
+		CreatedAt:      reading.CreatedAt,
+	}
+}
+
+func normalizeStringSlice(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
+}
+
+func normalizeConnections(values []models.Connection) []models.Connection {
+	if values == nil {
+		return []models.Connection{}
+	}
+	return values
 }
 
 func (h *Handlers) DeleteTask(w http.ResponseWriter, r *http.Request) {

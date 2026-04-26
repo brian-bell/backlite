@@ -414,16 +414,60 @@ func (s *SQLiteStore) UpsertReading(ctx context.Context, r *models.Reading) erro
 	return err
 }
 
+const readingColumns = `id, task_id, url, title, tldr,
+	tags, keywords, people, orgs,
+	novelty_verdict, connections, summary, raw_output,
+	created_at`
+
+func (s *SQLiteStore) ListReadings(ctx context.Context, filter ReadingFilter) ([]*models.Reading, error) {
+	query := "SELECT " + readingColumns + " FROM readings ORDER BY created_at DESC, id ASC"
+	var args []any
+	if filter.Limit > 0 {
+		query += " LIMIT ?"
+		args = append(args, filter.Limit)
+	}
+	if filter.Offset > 0 {
+		query += " OFFSET ?"
+		args = append(args, filter.Offset)
+	}
+
+	rows, err := s.q.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var readings []*models.Reading
+	for rows.Next() {
+		r, err := scanReading(rows)
+		if err != nil {
+			return nil, err
+		}
+		readings = append(readings, r)
+	}
+	return readings, rows.Err()
+}
+
+func (s *SQLiteStore) GetReading(ctx context.Context, id string) (*models.Reading, error) {
+	row := s.q.QueryRowContext(ctx, `
+		SELECT `+readingColumns+`
+		FROM readings
+		WHERE id = ?`, id)
+
+	return scanReading(row)
+}
+
 // GetReadingByURL returns the reading row whose url column matches exactly.
 func (s *SQLiteStore) GetReadingByURL(ctx context.Context, url string) (*models.Reading, error) {
 	row := s.q.QueryRowContext(ctx, `
-		SELECT id, task_id, url, title, tldr,
-		       tags, keywords, people, orgs,
-		       novelty_verdict, connections, summary, raw_output,
-		       created_at
+		SELECT `+readingColumns+`
 		FROM readings
 		WHERE url = ?`, url)
 
+	return scanReading(row)
+}
+
+func scanReading(row sqlScanner) (*models.Reading, error) {
 	var (
 		r               models.Reading
 		tagsJSON        string

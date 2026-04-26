@@ -16,7 +16,6 @@ func NewServer(s store.Store, cfg *config.Config, logs LogFetcher, bus notify.Em
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.SetHeader("Content-Type", "application/json"))
 
 	h := NewHandlers(s, cfg, logs, bus)
 
@@ -29,6 +28,9 @@ func NewServer(s store.Store, cfg *config.Config, logs LogFetcher, bus notify.Em
 
 		r.Get("/health", h.HealthCheck)
 
+		r.Get("/readings", h.ListReadings)
+		r.Get("/readings/{id}", h.GetReading)
+
 		r.Route("/tasks", func(r chi.Router) {
 			r.Post("/", h.CreateTask)
 			r.Get("/", h.ListTasks)
@@ -40,6 +42,10 @@ func NewServer(s store.Store, cfg *config.Config, logs LogFetcher, bus notify.Em
 			r.Get("/{id}/output.json", h.GetTaskOutputJSON)
 		})
 	})
+
+	if cfg != nil && cfg.WebDir != "" {
+		r.Get("/*", webAppHandler{dir: cfg.WebDir}.ServeHTTP)
+	}
 
 	return r
 }

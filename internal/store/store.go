@@ -30,6 +30,12 @@ type TaskFilter struct {
 	Offset int
 }
 
+// ReadingFilter controls reading-library listing behavior.
+type ReadingFilter struct {
+	Limit  int
+	Offset int
+}
+
 // ReadingMatch is a similarity-search result for an existing reading.
 type ReadingMatch struct {
 	ID         string  `json:"id"`
@@ -65,6 +71,8 @@ type Store interface {
 
 	// Readings
 	UpsertReading(ctx context.Context, r *models.Reading) error
+	ListReadings(ctx context.Context, filter ReadingFilter) ([]*models.Reading, error)
+	GetReading(ctx context.Context, id string) (*models.Reading, error)
 	GetReadingByURL(ctx context.Context, url string) (*models.Reading, error)
 	FindSimilarReadings(ctx context.Context, queryEmbedding []float32, limit int) ([]ReadingMatch, error)
 

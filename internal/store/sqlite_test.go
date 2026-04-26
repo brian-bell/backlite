@@ -1011,6 +1011,109 @@ func TestSQLite_GetReadingByURL(t *testing.T) {
 	}
 }
 
+func TestSQLite_ListReadings_NewestFirstWithPagination(t *testing.T) {
+	s := testSQLiteStore(t)
+	ctx := context.Background()
+	task := sqliteTestTask(t, s)
+	base := time.Date(2026, 4, 25, 12, 0, 0, 0, time.UTC)
+
+	for i, seed := range []struct {
+		id        string
+		url       string
+		title     string
+		createdAt time.Time
+	}{
+		{"bf_READ_OLD", "https://example.com/old", "Oldest", base},
+		{"bf_READ_NEW", "https://example.com/new", "Newest", base.Add(2 * time.Hour)},
+		{"bf_READ_MID", "https://example.com/mid", "Middle", base.Add(time.Hour)},
+	} {
+		r := &models.Reading{
+			ID:          seed.id,
+			TaskID:      task.ID,
+			URL:         seed.url,
+			Title:       seed.title,
+			TLDR:        fmt.Sprintf("summary %d", i),
+			Tags:        []string{},
+			Keywords:    []string{},
+			People:      []string{},
+			Orgs:        []string{},
+			Connections: []models.Connection{},
+			RawOutput:   []byte(`{}`),
+			Embedding:   []float32{float32(i + 1)},
+			CreatedAt:   seed.createdAt,
+		}
+		if err := s.UpsertReading(ctx, r); err != nil {
+			t.Fatalf("UpsertReading %s: %v", seed.id, err)
+		}
+	}
+
+	got, err := s.ListReadings(ctx, ReadingFilter{Limit: 2, Offset: 1})
+	if err != nil {
+		t.Fatalf("ListReadings: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d readings, want 2", len(got))
+	}
+	if got[0].ID != "bf_READ_MID" || got[1].ID != "bf_READ_OLD" {
+		t.Fatalf("reading order = [%s %s], want [bf_READ_MID bf_READ_OLD]", got[0].ID, got[1].ID)
+	}
+	if got[0].Embedding != nil {
+		t.Fatalf("list result exposed embedding vector, want nil")
+	}
+}
+
+func TestSQLite_GetReadingByID(t *testing.T) {
+	s := testSQLiteStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	task := sqliteTestTask(t, s)
+
+	seeded := &models.Reading{
+		ID:             "bf_READ_DETAIL",
+		TaskID:         task.ID,
+		URL:            "https://example.com/detail",
+		Title:          "Detail Target",
+		TLDR:           "detail tldr",
+		Tags:           []string{"systems", "ai"},
+		Keywords:       []string{"sqlite"},
+		People:         []string{"Ada"},
+		Orgs:           []string{"Backlite"},
+		NoveltyVerdict: "new",
+		Connections: []models.Connection{
+			{ReadingID: "bf_READ_OTHER", Reason: "same deployment topic"},
+		},
+		Summary:   "Full detail summary.",
+		RawOutput: []byte(`{"debug":true}`),
+		Embedding: []float32{0.2, 0.8},
+		CreatedAt: now,
+	}
+	if err := s.UpsertReading(ctx, seeded); err != nil {
+		t.Fatalf("UpsertReading: %v", err)
+	}
+
+	got, err := s.GetReading(ctx, seeded.ID)
+	if err != nil {
+		t.Fatalf("GetReading: %v", err)
+	}
+	if got.ID != seeded.ID || got.URL != seeded.URL || got.Summary != seeded.Summary {
+		t.Fatalf("GetReading returned %#v, want seeded detail", got)
+	}
+	if len(got.Tags) != 2 || got.Tags[1] != "ai" {
+		t.Fatalf("Tags = %v, want [systems ai]", got.Tags)
+	}
+	if len(got.People) != 1 || got.People[0] != "Ada" {
+		t.Fatalf("People = %v, want [Ada]", got.People)
+	}
+	if got.Embedding != nil {
+		t.Fatalf("detail result exposed embedding vector, want nil")
+	}
+
+	_, err = s.GetReading(ctx, "bf_READ_MISSING")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetReading missing err = %v, want ErrNotFound", err)
+	}
+}
+
 func TestSQLite_MatchReadings_SimilarityOrdering(t *testing.T) {
 	s := testSQLiteStore(t)
 	ctx := context.Background()

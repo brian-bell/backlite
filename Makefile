@@ -1,4 +1,5 @@
 .PHONY: build run test clean lint \
+       web-deps web-generate web-dev web-build web-test \
        docker-agent-build-local \
        docker-reader-build-local \
        docker-skill-agent-build-local \
@@ -17,7 +18,7 @@ DOCKER ?= docker
 # Helper to source .env before a command
 ENV = if [ -f .env ]; then set -a; . ./.env; set +a; fi
 
-build:
+build: web-build
 	go build $(GOFLAGS) -o bin/$(BINARY) ./cmd/backlite
 
 run: build
@@ -27,6 +28,21 @@ run: build
 
 test:
 	go test -tags nocontainers ./... -v -count=1
+
+web-deps:
+	cd web && npm install
+
+web-generate:
+	cd web && npm run generate:api
+
+web-dev:
+	cd web && npm run dev
+
+web-build: web-generate
+	cd web && npm run build
+
+web-test:
+	cd web && npm test
 
 test-fake-agent:
 	$(DOCKER) build -t backlite-fake-agent test/blackbox/fake-agent/

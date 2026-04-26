@@ -64,6 +64,9 @@ type Config struct {
 	// Filesystem data directory (agent output log + task metadata written here)
 	DataDir string
 
+	// Built web app directory served by the HTTP server when present.
+	WebDir string
+
 	// Logging
 	LogFile string
 
@@ -109,6 +112,7 @@ func Load() (*Config, error) {
 		DefaultReadMaxTurns:   envInt("BACKFLOW_DEFAULT_READ_MAX_TURNS", 0),
 		InternalAPIBaseURL:    os.Getenv("BACKFLOW_INTERNAL_API_BASE_URL"),
 		DataDir:               envOr("BACKFLOW_DATA_DIR", "./data"),
+		WebDir:                envOr("BACKFLOW_WEB_DIR", "./web/dist"),
 		GitHubToken:           os.Getenv("GITHUB_TOKEN"),
 		WebhookURL:            os.Getenv("BACKFLOW_WEBHOOK_URL"),
 		LogFile:               os.Getenv("BACKFLOW_LOG_FILE"),

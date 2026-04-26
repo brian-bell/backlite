@@ -246,6 +246,29 @@ func (s *mockStore) GetReadingByURL(_ context.Context, url string) (*models.Read
 	return &cp, nil
 }
 
+func (s *mockStore) ListReadings(_ context.Context, _ store.ReadingFilter) ([]*models.Reading, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	readings := make([]*models.Reading, 0, len(s.readingsByURL))
+	for _, r := range s.readingsByURL {
+		cp := *r
+		readings = append(readings, &cp)
+	}
+	return readings, nil
+}
+
+func (s *mockStore) GetReading(_ context.Context, id string) (*models.Reading, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, r := range s.readingsByURL {
+		if r.ID == id {
+			cp := *r
+			return &cp, nil
+		}
+	}
+	return nil, store.ErrNotFound
+}
+
 func (s *mockStore) FindSimilarReadings(_ context.Context, _ []float32, _ int) ([]store.ReadingMatch, error) {
 	return []store.ReadingMatch{}, nil
 }

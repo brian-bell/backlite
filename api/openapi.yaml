@@ -81,6 +81,101 @@ paths:
       security:
         - BearerAuth: [health:read]
 
+  /api/v1/readings:
+    get:
+      operationId: listReadings
+      summary: List saved readings
+      description: Returns saved reading results newest-first with offset pagination. Requires bearer authentication when API keys are configured.
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of readings to return
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+        - name: offset
+          in: query
+          description: Number of readings to skip for pagination
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        "200":
+          description: Page of saved readings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadingListEnvelope"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: API key lacks required scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+      security:
+        - BearerAuth: [readings:read]
+
+  /api/v1/readings/{id}:
+    get:
+      operationId: getReading
+      summary: Get a saved reading
+      description: Returns one saved reading result by ID. Requires bearer authentication when API keys are configured.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Reading ID
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Reading details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadingEnvelope"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: API key lacks required scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Reading not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+      security:
+        - BearerAuth: [readings:read]
+
   /api/v1/tasks:
     post:
       operationId: createTask
@@ -614,6 +709,41 @@ components:
           items:
             $ref: "#/components/schemas/Task"
 
+    ReadingListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/ReadingPage"
+
+    ReadingEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/Reading"
+
+    ReadingPage:
+      type: object
+      required: [readings, limit, offset, has_more]
+      properties:
+        readings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Reading"
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+          example: 20
+        offset:
+          type: integer
+          minimum: 0
+          example: 0
+        has_more:
+          type: boolean
+          example: false
+
     # -------------------------------------------------------------------------
     # Core types
     # -------------------------------------------------------------------------
@@ -881,3 +1011,82 @@ components:
           description: Additional environment variables to set in the agent container.
           example:
             CUSTOM_SETTING: "value"
+
+    Reading:
+      type: object
+      description: Saved structured result from a completed read task. Embedding vectors are intentionally not exposed.
+      required:
+        - id
+        - task_id
+        - url
+        - title
+        - tldr
+        - tags
+        - keywords
+        - people
+        - orgs
+        - novelty_verdict
+        - connections
+        - summary
+        - created_at
+      properties:
+        id:
+          type: string
+          example: "bf_01ARZ3NDEKTSV4RRFFQ69G5FAV"
+        task_id:
+          type: string
+          example: "bf_01ARZ3NDEKTSV4RRFFQ69G5FAV"
+        url:
+          type: string
+          format: uri
+          example: "https://example.com/article"
+        title:
+          type: string
+          example: "Example Article"
+        tldr:
+          type: string
+          example: "A concise summary of the article."
+        tags:
+          type: array
+          items:
+            type: string
+          example: ["research", "ai"]
+        keywords:
+          type: array
+          items:
+            type: string
+          example: ["sqlite", "agents"]
+        people:
+          type: array
+          items:
+            type: string
+          example: ["Ada Lovelace"]
+        orgs:
+          type: array
+          items:
+            type: string
+          example: ["Backlite"]
+        novelty_verdict:
+          type: string
+          example: "new"
+        connections:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReadingConnection"
+        summary:
+          type: string
+          example: "A longer summary for detail views."
+        created_at:
+          type: string
+          format: date-time
+
+    ReadingConnection:
+      type: object
+      required: [reading_id, reason]
+      properties:
+        reading_id:
+          type: string
+          example: "bf_01ARZ3NDEKTSV4RRFFQ69G5FAV"
+        reason:
+          type: string
+          example: "Covers the same deployment pattern."

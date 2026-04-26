@@ -2,7 +2,9 @@ package backup
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -54,7 +56,7 @@ func TestRunBackup_CreatesVerifiableCompressedArtifactFromLiveDatabase(t *testin
 		t.Fatalf("runBackup() error = %v", err)
 	}
 
-	artifactPath := filepath.Join(backupDir, "backflow-20260425T123456Z.sqlite.gz")
+	artifactPath := filepath.Join(backupDir, "backlite-20260425T123456Z.sqlite.gz")
 	metadataPath := metadataPath(artifactPath)
 
 	if _, err := os.Stat(artifactPath); err != nil {
@@ -79,6 +81,15 @@ func TestRunBackup_CreatesVerifiableCompressedArtifactFromLiveDatabase(t *testin
 	}
 	if meta.SHA256 == "" {
 		t.Fatal("metadata sha256 is empty")
+	}
+	if meta.FinalizedAt.IsZero() {
+		t.Fatal("metadata finalized_at is zero, want non-zero finalization timestamp")
+	}
+	if meta.FinalizedAt.Before(meta.CreatedAt) {
+		t.Fatalf("metadata finalized_at = %v before created_at = %v", meta.FinalizedAt, meta.CreatedAt)
+	}
+	if err := verifyArtifactChecksum(artifactPath, meta.SHA256); err != nil {
+		t.Fatalf("verifyArtifactChecksum() error = %v", err)
 	}
 
 	verifyPath := filepath.Join(root, "verify.sqlite")
@@ -108,17 +119,12 @@ func TestNeedsBackup_IgnoresPartialArtifacts(t *testing.T) {
 	dir := t.TempDir()
 
 	oldTime := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
-	oldArtifact := filepath.Join(dir, "backflow-20260425T100000Z.sqlite.gz")
-	if err := writeTestArtifact(oldArtifact, Metadata{
-		FileName:  filepath.Base(oldArtifact),
-		CreatedAt: oldTime,
-		SHA256:    "abc123",
-		SizeBytes: int64(len("old-backup")),
-	}, []byte("old-backup")); err != nil {
-		t.Fatalf("writeTestArtifact(old) error = %v", err)
+	oldArtifact := filepath.Join(dir, "backlite-20260425T100000Z.sqlite.gz")
+	if err := writeValidTestArtifact(t, oldArtifact, oldTime, []byte("old-backup")); err != nil {
+		t.Fatalf("writeValidTestArtifact(old) error = %v", err)
 	}
 
-	partialArtifact := filepath.Join(dir, "backflow-20260425T115500Z.sqlite.gz")
+	partialArtifact := filepath.Join(dir, "backlite-20260425T115500Z.sqlite.gz")
 	if err := os.WriteFile(partialArtifact, []byte("partial"), 0o600); err != nil {
 		t.Fatalf("WriteFile(partialArtifact) error = %v", err)
 	}
@@ -147,6 +153,147 @@ func TestNeedsBackup_IgnoresPartialArtifacts(t *testing.T) {
 	}
 	if got := filepath.Base(latest.Path); got != filepath.Base(oldArtifact) {
 		t.Fatalf("latest artifact = %q, want %q", got, filepath.Base(oldArtifact))
+	}
+}
+
+func TestNeedsBackup_SkipsArtifactWithMismatchedSHA256(t *testing.T) {
+	dir := t.TempDir()
+
+	artifactPath := filepath.Join(dir, "backlite-20260425T100000Z.sqlite.gz")
+	if err := writeValidTestArtifact(t, artifactPath, time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC), []byte("original-bytes")); err != nil {
+		t.Fatalf("writeValidTestArtifact() error = %v", err)
+	}
+	// Corrupt the artifact in place without updating the sidecar. Same byte
+	// length, different content — exactly the case the structural-only
+	// check would let through.
+	if err := os.WriteFile(artifactPath, []byte("corrupted-byt!"), 0o600); err != nil {
+		t.Fatalf("corrupt WriteFile error = %v", err)
+	}
+
+	m := New(Config{
+		Enabled:   true,
+		Directory: dir,
+		Interval:  time.Hour,
+	})
+	m.now = func() time.Time {
+		return time.Date(2026, 4, 25, 11, 0, 0, 0, time.UTC)
+	}
+
+	due, latest, err := m.needsBackup()
+	if err != nil {
+		t.Fatalf("needsBackup() error = %v", err)
+	}
+	if !due {
+		t.Fatal("needsBackup() = false, want true when the only artifact's checksum does not match")
+	}
+	if latest != nil {
+		t.Fatalf("latest = %+v, want nil because the corrupted artifact must not be trusted", latest)
+	}
+}
+
+func TestNeedsBackup_FallsBackToOlderValidArtifactWhenNewerCorrupted(t *testing.T) {
+	dir := t.TempDir()
+
+	oldTime := time.Date(2026, 4, 25, 8, 0, 0, 0, time.UTC)
+	oldArtifact := filepath.Join(dir, "backlite-20260425T080000Z.sqlite.gz")
+	if err := writeValidTestArtifact(t, oldArtifact, oldTime, []byte("old-good")); err != nil {
+		t.Fatalf("writeValidTestArtifact(old) error = %v", err)
+	}
+
+	newTime := time.Date(2026, 4, 25, 11, 0, 0, 0, time.UTC)
+	newerArtifact := filepath.Join(dir, "backlite-20260425T110000Z.sqlite.gz")
+	if err := writeValidTestArtifact(t, newerArtifact, newTime, []byte("new-good")); err != nil {
+		t.Fatalf("writeValidTestArtifact(new) error = %v", err)
+	}
+	// Corrupt the newer artifact's bytes after writing the sidecar.
+	if err := os.WriteFile(newerArtifact, []byte("new-bad!"), 0o600); err != nil {
+		t.Fatalf("corrupt WriteFile error = %v", err)
+	}
+
+	m := New(Config{
+		Enabled:   true,
+		Directory: dir,
+		Interval:  time.Hour,
+	})
+	m.now = func() time.Time {
+		return time.Date(2026, 4, 25, 12, 0, 0, 0, time.UTC)
+	}
+
+	due, latest, err := m.needsBackup()
+	if err != nil {
+		t.Fatalf("needsBackup() error = %v", err)
+	}
+	if !due {
+		t.Fatal("needsBackup() = false, want true (older valid backup is 4 hours old, interval 1 hour)")
+	}
+	if latest == nil {
+		t.Fatal("latest = nil, want the older valid artifact")
+	}
+	if got := filepath.Base(latest.Path); got != filepath.Base(oldArtifact) {
+		t.Fatalf("latest = %q, want fallback to older valid artifact %q", got, filepath.Base(oldArtifact))
+	}
+}
+
+func TestNeedsBackup_NotDueWhenLatestArtifactIsFresh(t *testing.T) {
+	dir := t.TempDir()
+
+	finalized := time.Date(2026, 4, 25, 11, 30, 0, 0, time.UTC)
+	artifactPath := filepath.Join(dir, "backlite-20260425T112800Z.sqlite.gz")
+	if err := writeValidTestArtifactFinalizedAt(t, artifactPath, finalized.Add(-2*time.Minute), finalized, []byte("fresh-backup")); err != nil {
+		t.Fatalf("writeValidTestArtifactFinalizedAt() error = %v", err)
+	}
+
+	m := New(Config{
+		Enabled:   true,
+		Directory: dir,
+		Interval:  time.Hour,
+	})
+	m.now = func() time.Time {
+		return time.Date(2026, 4, 25, 12, 0, 0, 0, time.UTC)
+	}
+
+	due, latest, err := m.needsBackup()
+	if err != nil {
+		t.Fatalf("needsBackup() error = %v", err)
+	}
+	if due {
+		t.Fatal("needsBackup() = true, want false (latest backup finalized 30 minutes ago, interval 1 hour)")
+	}
+	if latest == nil {
+		t.Fatal("latest = nil, want the fresh artifact")
+	}
+}
+
+func TestNeedsBackup_UsesFinalizedAtForAgeComparison(t *testing.T) {
+	// Locks in the fix for the age-comparison bug: the filename / scheduled
+	// timestamp can be hours older than `now` while the backup is still fresh
+	// because finalization just completed. Without `FinalizedAt`-based aging,
+	// a backup that takes longer than the interval would immediately appear
+	// stale and the scheduler would loop continuously.
+	dir := t.TempDir()
+
+	scheduled := time.Date(2026, 4, 25, 9, 0, 0, 0, time.UTC)
+	finalized := time.Date(2026, 4, 25, 11, 45, 0, 0, time.UTC)
+	artifactPath := filepath.Join(dir, "backlite-20260425T090000Z.sqlite.gz")
+	if err := writeValidTestArtifactFinalizedAt(t, artifactPath, scheduled, finalized, []byte("slow-backup")); err != nil {
+		t.Fatalf("writeValidTestArtifactFinalizedAt() error = %v", err)
+	}
+
+	m := New(Config{
+		Enabled:   true,
+		Directory: dir,
+		Interval:  time.Hour,
+	})
+	m.now = func() time.Time {
+		return time.Date(2026, 4, 25, 12, 0, 0, 0, time.UTC)
+	}
+
+	due, _, err := m.needsBackup()
+	if err != nil {
+		t.Fatalf("needsBackup() error = %v", err)
+	}
+	if due {
+		t.Fatal("needsBackup() = true, want false (finalized 15 minutes ago, even though scheduled 3 hours ago)")
 	}
 }
 
@@ -184,9 +331,23 @@ func TestMaybeSchedule_RunsSingleWorkerAtATime(t *testing.T) {
 	waitFor(t, 2*time.Second, func() bool { return !m.isRunning() })
 }
 
-func writeTestArtifact(path string, meta Metadata, contents []byte) error {
+func writeValidTestArtifact(t *testing.T, path string, createdAt time.Time, contents []byte) error {
+	t.Helper()
+	return writeValidTestArtifactFinalizedAt(t, path, createdAt, createdAt, contents)
+}
+
+func writeValidTestArtifactFinalizedAt(t *testing.T, path string, createdAt time.Time, finalizedAt time.Time, contents []byte) error {
+	t.Helper()
 	if err := os.WriteFile(path, contents, 0o600); err != nil {
 		return err
+	}
+	sum := sha256.Sum256(contents)
+	meta := Metadata{
+		FileName:    filepath.Base(path),
+		CreatedAt:   createdAt,
+		FinalizedAt: finalizedAt,
+		SHA256:      hex.EncodeToString(sum[:]),
+		SizeBytes:   int64(len(contents)),
 	}
 	data, err := json.Marshal(meta)
 	if err != nil {

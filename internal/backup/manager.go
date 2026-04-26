@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -20,7 +21,7 @@ import (
 )
 
 const (
-	artifactPrefix    = "backflow-"
+	artifactPrefix    = "backlite-"
 	artifactExtension = ".sqlite.gz"
 	metadataExtension = ".meta.json"
 	timestampLayout   = "20060102T150405Z"
@@ -35,10 +36,11 @@ type Config struct {
 }
 
 type Metadata struct {
-	FileName  string    `json:"file_name"`
-	CreatedAt time.Time `json:"created_at"`
-	SHA256    string    `json:"sha256"`
-	SizeBytes int64     `json:"size_bytes"`
+	FileName    string    `json:"file_name"`
+	CreatedAt   time.Time `json:"created_at"`
+	FinalizedAt time.Time `json:"finalized_at"`
+	SHA256      string    `json:"sha256"`
+	SizeBytes   int64     `json:"size_bytes"`
 }
 
 type Artifact struct {
@@ -148,7 +150,18 @@ func (m *Manager) needsBackup() (bool, *Artifact, error) {
 	if latest == nil {
 		return true, nil, nil
 	}
-	return m.now().UTC().Sub(latest.Timestamp) >= m.cfg.Interval, latest, nil
+	return m.now().UTC().Sub(latest.ageReference()) >= m.cfg.Interval, latest, nil
+}
+
+// ageReference is the timestamp the scheduler uses to decide whether an
+// artifact is older than the configured interval. Prefer the finalization
+// time so a backup that takes longer than the interval does not immediately
+// look stale on the next tick.
+func (a *Artifact) ageReference() time.Time {
+	if !a.Metadata.FinalizedAt.IsZero() {
+		return a.Metadata.FinalizedAt
+	}
+	return a.Timestamp
 }
 
 func (m *Manager) findLatestValidArtifact() (*Artifact, error) {
@@ -160,39 +173,77 @@ func (m *Manager) findLatestValidArtifact() (*Artifact, error) {
 		return nil, fmt.Errorf("read backup directory: %w", err)
 	}
 
-	var latest *Artifact
+	type candidate struct {
+		path     string
+		metaPath string
+		ts       time.Time
+	}
+	var candidates []candidate
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
-
-		name := entry.Name()
-		ts, ok := parseArtifactTimestamp(name)
+		ts, ok := parseArtifactTimestamp(entry.Name())
 		if !ok {
 			continue
 		}
+		artifactPath := filepath.Join(m.cfg.Directory, entry.Name())
+		candidates = append(candidates, candidate{
+			path:     artifactPath,
+			metaPath: metadataPath(artifactPath),
+			ts:       ts,
+		})
+	}
 
-		artifactPath := filepath.Join(m.cfg.Directory, name)
-		metadataPath := metadataPath(artifactPath)
-		meta, valid, err := readMetadata(artifactPath, metadataPath)
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].ts.After(candidates[j].ts)
+	})
+
+	for _, c := range candidates {
+		meta, valid, err := readMetadata(c.path, c.metaPath)
 		if err != nil {
 			return nil, err
 		}
 		if !valid {
 			continue
 		}
-
-		if latest == nil || ts.After(latest.Timestamp) {
-			latest = &Artifact{
-				Path:         artifactPath,
-				MetadataPath: metadataPath,
-				Timestamp:    ts,
-				Metadata:     meta,
-			}
+		if err := verifyArtifactChecksum(c.path, meta.SHA256); err != nil {
+			log.Warn().
+				Err(err).
+				Str("artifact", c.path).
+				Msg("backup artifact failed checksum verification; skipping")
+			continue
 		}
+		return &Artifact{
+			Path:         c.path,
+			MetadataPath: c.metaPath,
+			Timestamp:    c.ts,
+			Metadata:     meta,
+		}, nil
 	}
 
-	return latest, nil
+	return nil, nil
+}
+
+func verifyArtifactChecksum(path string, expected string) error {
+	if expected == "" {
+		return fmt.Errorf("missing expected sha256")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open artifact for checksum verification: %w", err)
+	}
+	defer file.Close()
+
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return fmt.Errorf("hash artifact for verification: %w", err)
+	}
+	actual := hex.EncodeToString(hash.Sum(nil))
+	if actual != expected {
+		return fmt.Errorf("sha256 mismatch: expected %s, got %s", expected, actual)
+	}
+	return nil
 }
 
 func (m *Manager) runBackup(ctx context.Context, startedAt time.Time) error {
@@ -235,6 +286,7 @@ func (m *Manager) runBackup(ctx context.Context, startedAt time.Time) error {
 	if err := os.Rename(gzipTmpPath, finalPath); err != nil {
 		return fmt.Errorf("finalize backup artifact: %w", err)
 	}
+	meta.FinalizedAt = m.now().UTC().Truncate(time.Second)
 	if err := writeMetadata(metadataTmpPath, metadataPath(finalPath), meta); err != nil {
 		_ = os.Remove(finalPath)
 		return err

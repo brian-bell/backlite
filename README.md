@@ -306,12 +306,15 @@ Optional Resend integration that emails a structured summary of every completed 
 
 ### Local SQLite backups
 
-Enabled by default. The server runs a single background worker from the orchestrator tick that takes a consistent online SQLite snapshot, gzip-compresses and verifies it, and writes it into a configurable directory alongside a `.meta.json` sidecar (`file_name`, `created_at`, `finalized_at`, `sha256`, `size_bytes`). Artifacts are named `backlite-YYYYMMDDTHHMMSSZ.sqlite.gz`. The latest artifact's sha256 is recomputed each tick before it is trusted; corrupted artifacts are skipped and the scheduler falls back to the previous valid one. Backup failures are logged and do not affect health checks or task orchestration.
+Enabled by default. The server runs a single background worker from the orchestrator tick that takes a consistent online SQLite snapshot, gzip-compresses and verifies it, and writes it into a configurable directory alongside a `.meta.json` sidecar (`file_name`, `created_at`, `finalized_at`, `sha256`, `size_bytes`). Artifacts are named `backlite-YYYYMMDDTHHMMSSZ.sqlite.gz`. The latest artifact's sha256 is recomputed each tick before it is trusted; corrupted artifacts are skipped and the scheduler falls back to the previous valid one.
+
+Each tick also prunes finalized artifacts older than `BACKFLOW_LOCAL_BACKUP_RETENTION_SEC` (with their sidecars), stale temp files, and orphan sidecars. The newest valid artifact is always preserved, regardless of age; setting retention to `0` disables pruning. Operator-visible state lives on `/debug/stats` under the `backup` key: latest-artifact metadata, worker state, last success/error timestamps, and a ring of recent backup/prune errors. Backup and retention failures are logged and recorded in that feed but do not affect health checks (`/health`, `/api/v1/health`) or task orchestration.
 
 | Variable | Description |
 |----------|-------------|
 | `BACKFLOW_LOCAL_BACKUP_ENABLED` | Toggle the local backup worker |
 | `BACKFLOW_LOCAL_BACKUP_DIR` | Output directory (supports `~` expansion) |
 | `BACKFLOW_LOCAL_BACKUP_INTERVAL_SEC` | Minimum spacing between successful backups |
+| `BACKFLOW_LOCAL_BACKUP_RETENTION_SEC` | Age past which finalized backups are pruned (`0` disables pruning) |
 
 To restore: stop the server, `gunzip backlite-...sqlite.gz`, optionally `sqlite3 file.sqlite "PRAGMA integrity_check;"`, copy the result over the file at `BACKFLOW_DATABASE_PATH`, and restart.

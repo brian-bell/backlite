@@ -75,9 +75,10 @@ type Config struct {
 	DatabasePath string
 
 	// Local SQLite backups
-	LocalBackupEnabled  bool
-	LocalBackupDir      string
-	LocalBackupInterval time.Duration
+	LocalBackupEnabled   bool
+	LocalBackupDir       string
+	LocalBackupInterval  time.Duration
+	LocalBackupRetention time.Duration
 
 	// Retry
 	MaxUserRetries int
@@ -125,6 +126,7 @@ func Load() (*Config, error) {
 		DatabasePath:          envOr("BACKFLOW_DATABASE_PATH", "./backlite.db"),
 		LocalBackupDir:        envOr("BACKFLOW_LOCAL_BACKUP_DIR", defaultLocalBackupDir()),
 		LocalBackupInterval:   time.Duration(envInt("BACKFLOW_LOCAL_BACKUP_INTERVAL_SEC", 86400)) * time.Second,
+		LocalBackupRetention:  time.Duration(envInt("BACKFLOW_LOCAL_BACKUP_RETENTION_SEC", 604800)) * time.Second,
 		MaxUserRetries:        envInt("BACKFLOW_MAX_USER_RETRIES", 2),
 		PollInterval:          time.Duration(envInt("BACKFLOW_POLL_INTERVAL_SEC", 5)) * time.Second,
 	}
@@ -154,6 +156,9 @@ func Load() (*Config, error) {
 		}
 		if c.LocalBackupInterval <= 0 {
 			return nil, fmt.Errorf("BACKFLOW_LOCAL_BACKUP_INTERVAL_SEC must be > 0 when local backups are enabled")
+		}
+		if c.LocalBackupRetention < 0 {
+			return nil, fmt.Errorf("BACKFLOW_LOCAL_BACKUP_RETENTION_SEC must be >= 0 when local backups are enabled")
 		}
 	}
 

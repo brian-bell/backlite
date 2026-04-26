@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/brian-bell/backlite/internal/backup"
 	"github.com/brian-bell/backlite/internal/config"
 	"github.com/brian-bell/backlite/internal/embeddings"
 	"github.com/brian-bell/backlite/internal/models"
@@ -431,8 +432,9 @@ func (m *mockWriter) SaveReadingContent(_ context.Context, readingID string, raw
 }
 
 type mockBackupScheduler struct {
-	mu    sync.Mutex
-	calls int
+	mu     sync.Mutex
+	calls  int
+	status backup.Status
 }
 
 func (m *mockBackupScheduler) MaybeSchedule(context.Context) {
@@ -445,6 +447,12 @@ func (m *mockBackupScheduler) Calls() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.calls
+}
+
+func (m *mockBackupScheduler) Status() backup.Status {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.status
 }
 
 // newTestBus creates an EventBus with a mockNotifier subscribed.

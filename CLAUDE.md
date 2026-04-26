@@ -30,6 +30,7 @@ make docker-reader-build-local       # Reader image (native arch)
 make docker-skill-agent-build-local  # Skill-agent image (native arch; opt-in via BACKFLOW_SKILL_AGENT_IMAGE)
 make docker-agents-build-local       # Build all three agent images
 make test-skill-agent-entrypoint     # Shell tests for the skill-agent entrypoint
+make test-reader-fetch-extract       # Hermetic shell test for the reader's pre-fetch + extraction pipeline
 goose -dir migrations status # Show pending/applied migrations
 goose -dir migrations up     # Apply the next migration(s)
 goose -dir migrations down   # Roll back the last migration
@@ -247,7 +248,7 @@ Secrets (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GITHUB_TOKEN`) are passed via `
 
 SQLite. Tables: `tasks`, `api_keys`, `readings`. See `docs/schema.md` for the full column-level schema. Migrations are managed by [goose](https://github.com/pressly/goose) and live in `migrations/`. The store implementation is in `internal/store/sqlite.go` using `database/sql`. Set `BACKFLOW_DATABASE_PATH` to the local database path.
 
-The schema was collapsed to a single `001_initial_schema.sql` baseline; `002_parent_task_id.sql` added `tasks.parent_task_id` plus `idx_tasks_parent_task_id`. Any new schema change starts at the next numeric prefix.
+The schema was collapsed to a single `001_initial_schema.sql` baseline; `002_parent_task_id.sql` added `tasks.parent_task_id` plus `idx_tasks_parent_task_id`; `003_reading_content.sql` added the six content-capture columns to `readings` (`content_type`, `content_status`, `content_bytes`, `extracted_bytes`, `content_sha256`, `fetched_at`). Any new schema change starts at the next numeric prefix.
 
 Migration workflow:
 

@@ -73,7 +73,7 @@ export interface paths {
         };
         /**
          * List saved readings
-         * @description Returns saved reading results newest-first with offset pagination. Requires bearer authentication when API keys are configured.
+         * @description Returns saved reading results newest-first with offset pagination. Optionally filtered by a free-text query (`q`) that matches against title, url, tldr, and summary. Requires bearer authentication when API keys are configured.
          */
         get: operations["listReadings"];
         put?: never;
@@ -283,7 +283,7 @@ export interface components {
             data: components["schemas"]["ReadingPage"];
         };
         ReadingEnvelope: {
-            data: components["schemas"]["Reading"];
+            data: components["schemas"]["ReadingDetail"];
         };
         ReadingPage: {
             readings: components["schemas"]["Reading"][];
@@ -581,6 +581,36 @@ export interface components {
             /** @example Covers the same deployment pattern. */
             reason: string;
         };
+        /** @description Reading detail used by the reading-library SPA. Extends Reading with connections resolved against the readings table (related[]) and a snapshot of the task that produced the reading. */
+        ReadingDetail: components["schemas"]["Reading"] & {
+            related: components["schemas"]["RelatedReading"][];
+            originating_task?: components["schemas"]["OriginatingTaskInfo"];
+        };
+        /** @description A connection that has been resolved to the linked reading's display fields. */
+        RelatedReading: {
+            reading_id: string;
+            reason: string;
+            title: string;
+            tldr: string;
+            /** Format: uri */
+            url: string;
+            novelty_verdict: string;
+        };
+        /** @description Snapshot of the task that produced the reading. */
+        OriginatingTaskInfo: {
+            id: string;
+            status: components["schemas"]["TaskStatus"];
+            /** @enum {string} */
+            task_mode: "auto" | "code" | "review" | "read";
+            repo_url: string;
+            pr_url: string;
+            output_url: string;
+            error: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            completed_at?: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -693,6 +723,10 @@ export interface operations {
                 limit?: number;
                 /** @description Number of readings to skip for pagination */
                 offset?: number;
+                /** @description Free-text query matched case-insensitively against title, url, tldr, and summary. */
+                q?: string;
+                /** @description Restrict results to readings whose tags array contains this tag (case-insensitive exact match). */
+                tag?: string;
             };
             header?: never;
             path?: never;

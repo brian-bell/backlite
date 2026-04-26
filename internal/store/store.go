@@ -32,6 +32,12 @@ type TaskFilter struct {
 
 // ReadingFilter controls reading-library listing behavior.
 type ReadingFilter struct {
+	// Search restricts results to readings whose title, url, tldr, or summary
+	// contain the substring (case-insensitive). Empty means no filter.
+	Search string
+	// Tag restricts results to readings whose tags array contains the tag
+	// (case-insensitive). Empty means no filter.
+	Tag    string
 	Limit  int
 	Offset int
 }

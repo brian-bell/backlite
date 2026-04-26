@@ -420,8 +420,30 @@ const readingColumns = `id, task_id, url, title, tldr,
 	created_at`
 
 func (s *SQLiteStore) ListReadings(ctx context.Context, filter ReadingFilter) ([]*models.Reading, error) {
-	query := "SELECT " + readingColumns + " FROM readings ORDER BY created_at DESC, id ASC"
-	var args []any
+	query := "SELECT " + readingColumns + " FROM readings"
+	var (
+		conds []string
+		args  []any
+	)
+	if search := strings.TrimSpace(filter.Search); search != "" {
+		// Wildcard LIKE on the searchable text columns. SQLite's LIKE is
+		// case-insensitive for ASCII by default, which is enough for the
+		// title/url/tldr/summary fields exposed today.
+		conds = append(conds, `(title LIKE ? OR url LIKE ? OR tldr LIKE ? OR summary LIKE ?)`)
+		needle := "%" + search + "%"
+		args = append(args, needle, needle, needle, needle)
+	}
+	if tag := strings.TrimSpace(filter.Tag); tag != "" {
+		// Tags are stored as a JSON text array (e.g. ["go","sqlite"]).
+		// json_each + lower() gives an exact, case-insensitive match without
+		// the false positives a substring LIKE would produce.
+		conds = append(conds, `EXISTS (SELECT 1 FROM json_each(readings.tags) WHERE lower(json_each.value) = lower(?))`)
+		args = append(args, tag)
+	}
+	if len(conds) > 0 {
+		query += " WHERE " + strings.Join(conds, " AND ")
+	}
+	query += " ORDER BY created_at DESC, id ASC"
 	if filter.Limit > 0 {
 		query += " LIMIT ?"
 		args = append(args, filter.Limit)

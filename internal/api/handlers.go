@@ -65,6 +65,36 @@ type readingResponse struct {
 	CreatedAt      time.Time           `json:"created_at"`
 }
 
+// readingDetailResponse extends readingResponse with the discovery surface used
+// by the detail view: connections resolved to their target reading bodies and
+// a snapshot of the task that produced this reading.
+type readingDetailResponse struct {
+	readingResponse
+	Related         []relatedReading     `json:"related"`
+	OriginatingTask *originatingTaskInfo `json:"originating_task"`
+}
+
+type relatedReading struct {
+	ReadingID      string `json:"reading_id"`
+	Reason         string `json:"reason"`
+	Title          string `json:"title"`
+	TLDR           string `json:"tldr"`
+	URL            string `json:"url"`
+	NoveltyVerdict string `json:"novelty_verdict"`
+}
+
+type originatingTaskInfo struct {
+	ID          string     `json:"id"`
+	Status      string     `json:"status"`
+	TaskMode    string     `json:"task_mode"`
+	RepoURL     string     `json:"repo_url"`
+	PRURL       string     `json:"pr_url"`
+	OutputURL   string     `json:"output_url"`
+	Error       string     `json:"error"`
+	CreatedAt   time.Time  `json:"created_at"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
+}
+
 func NewHandlers(s store.Store, cfg *config.Config, logs LogFetcher, bus notify.Emitter) *Handlers {
 	return &Handlers{store: s, config: cfg, logs: logs, bus: bus}
 }
@@ -150,6 +180,8 @@ func (h *Handlers) ListReadings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	readings, err := h.store.ListReadings(r.Context(), store.ReadingFilter{
+		Search: r.URL.Query().Get("q"),
+		Tag:    r.URL.Query().Get("tag"),
 		Limit:  limit + 1,
 		Offset: offset,
 	})
@@ -180,7 +212,60 @@ func (h *Handlers) GetReading(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to get reading")
 		return
 	}
-	writeJSON(w, http.StatusOK, newReadingResponse(reading))
+
+	related := make([]relatedReading, 0, len(reading.Connections))
+	for _, conn := range reading.Connections {
+		if conn.ReadingID == "" {
+			continue
+		}
+		target, err := h.store.GetReading(r.Context(), conn.ReadingID)
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to resolve related reading")
+			return
+		}
+		related = append(related, relatedReading{
+			ReadingID:      target.ID,
+			Reason:         conn.Reason,
+			Title:          target.Title,
+			TLDR:           target.TLDR,
+			URL:            target.URL,
+			NoveltyVerdict: target.NoveltyVerdict,
+		})
+	}
+
+	var originating *originatingTaskInfo
+	if reading.TaskID != "" {
+		task, err := h.store.GetTask(r.Context(), reading.TaskID)
+		switch {
+		case err == nil:
+			originating = &originatingTaskInfo{
+				ID:          task.ID,
+				Status:      string(task.Status),
+				TaskMode:    task.TaskMode,
+				RepoURL:     task.RepoURL,
+				PRURL:       task.PRURL,
+				OutputURL:   task.OutputURL,
+				Error:       task.Error,
+				CreatedAt:   task.CreatedAt,
+				CompletedAt: task.CompletedAt,
+			}
+		case errors.Is(err, store.ErrNotFound):
+			// Reading outlived its parent task — surface as null so the UI
+			// can render an "unavailable" state.
+		default:
+			writeError(w, http.StatusInternalServerError, "failed to resolve originating task")
+			return
+		}
+	}
+
+	writeJSON(w, http.StatusOK, readingDetailResponse{
+		readingResponse: newReadingResponse(reading),
+		Related:         related,
+		OriginatingTask: originating,
+	})
 }
 
 func readingResponses(readings []*models.Reading) []readingResponse {

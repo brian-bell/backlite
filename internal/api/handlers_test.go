@@ -703,6 +703,394 @@ func TestGetReading_NormalizesNilCollections(t *testing.T) {
 	}
 }
 
+func TestListReadings_FiltersByQueryAcrossSearchableFields(t *testing.T) {
+	srv, s, _ := testServerWithEmitter(t)
+	ctx := context.Background()
+	now := time.Date(2026, 4, 25, 12, 0, 0, 0, time.UTC)
+	task := &models.Task{
+		ID:        "bf_READ_Q_TASK",
+		Status:    models.TaskStatusCompleted,
+		TaskMode:  models.TaskModeRead,
+		Harness:   models.HarnessClaudeCode,
+		Prompt:    "https://example.com/q",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := s.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	seeds := []struct {
+		id      string
+		url     string
+		title   string
+		tldr    string
+		summary string
+	}{
+		{"bf_READ_Q_TITLE", "https://example.com/a", "SQLite Internals", "no match here", "different body"},
+		{"bf_READ_Q_URL", "https://example.com/sqlite-tips", "Other", "no match here", "different body"},
+		{"bf_READ_Q_TLDR", "https://example.com/c", "Other", "Mostly about SQLite under the hood", "different body"},
+		{"bf_READ_Q_SUMMARY", "https://example.com/d", "Other", "no match here", "Deep dive into sqlite query planning"},
+		{"bf_READ_Q_NONE", "https://example.com/e", "Postgres", "MVCC overview", "Postgres write-ahead log"},
+	}
+	for i, seed := range seeds {
+		r := &models.Reading{
+			ID:             seed.id,
+			TaskID:         task.ID,
+			URL:            seed.url,
+			Title:          seed.title,
+			TLDR:           seed.tldr,
+			Tags:           []string{},
+			Keywords:       []string{},
+			People:         []string{},
+			Orgs:           []string{},
+			NoveltyVerdict: "new",
+			Connections:    []models.Connection{},
+			Summary:        seed.summary,
+			RawOutput:      []byte(`{}`),
+			CreatedAt:      now.Add(time.Duration(i) * time.Minute),
+		}
+		if err := s.UpsertReading(ctx, r); err != nil {
+			t.Fatalf("UpsertReading %s: %v", seed.id, err)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/readings?q=sqlite", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	checkResponse(t, req, w)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+	var resp struct {
+		Data struct {
+			Readings []models.Reading `json:"readings"`
+			HasMore  bool             `json:"has_more"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	got := make(map[string]bool, len(resp.Data.Readings))
+	for _, r := range resp.Data.Readings {
+		got[r.ID] = true
+	}
+	wantHits := []string{"bf_READ_Q_TITLE", "bf_READ_Q_URL", "bf_READ_Q_TLDR", "bf_READ_Q_SUMMARY"}
+	for _, id := range wantHits {
+		if !got[id] {
+			t.Errorf("missing match for %s; got ids %v", id, keys(got))
+		}
+	}
+	if got["bf_READ_Q_NONE"] {
+		t.Errorf("non-matching reading returned; got ids %v", keys(got))
+	}
+}
+
+func keys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
+func TestListReadings_FiltersByTagAndCombinesWithQuery(t *testing.T) {
+	srv, s, _ := testServerWithEmitter(t)
+	ctx := context.Background()
+	now := time.Date(2026, 4, 25, 12, 0, 0, 0, time.UTC)
+	task := &models.Task{
+		ID:        "bf_READ_TAG_TASK",
+		Status:    models.TaskStatusCompleted,
+		TaskMode:  models.TaskModeRead,
+		Harness:   models.HarnessClaudeCode,
+		Prompt:    "https://example.com/tag",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := s.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	seeds := []struct {
+		id    string
+		title string
+		tags  []string
+	}{
+		{"bf_READ_TAG_GO", "Go SQLite Tips", []string{"go", "sqlite"}},
+		{"bf_READ_TAG_RUST", "Rust SQLite Tips", []string{"rust", "sqlite"}},
+		{"bf_READ_TAG_GO_OTHER", "Go Concurrency", []string{"go", "concurrency"}},
+		{"bf_READ_TAG_PG", "Postgres MVCC", []string{"postgres"}},
+	}
+	for i, seed := range seeds {
+		r := &models.Reading{
+			ID:             seed.id,
+			TaskID:         task.ID,
+			URL:            "https://example.com/" + seed.id,
+			Title:          seed.title,
+			TLDR:           seed.title + " tldr",
+			Tags:           seed.tags,
+			Keywords:       []string{},
+			People:         []string{},
+			Orgs:           []string{},
+			NoveltyVerdict: "new",
+			Connections:    []models.Connection{},
+			Summary:        seed.title + " summary",
+			RawOutput:      []byte(`{}`),
+			CreatedAt:      now.Add(time.Duration(i) * time.Minute),
+		}
+		if err := s.UpsertReading(ctx, r); err != nil {
+			t.Fatalf("UpsertReading %s: %v", seed.id, err)
+		}
+	}
+
+	// tag-only filter returns both go-tagged readings.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/readings?tag=go", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	checkResponse(t, req, w)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+	var resp struct {
+		Data struct {
+			Readings []models.Reading `json:"readings"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	got := make(map[string]bool, len(resp.Data.Readings))
+	for _, r := range resp.Data.Readings {
+		got[r.ID] = true
+	}
+	for _, want := range []string{"bf_READ_TAG_GO", "bf_READ_TAG_GO_OTHER"} {
+		if !got[want] {
+			t.Errorf("missing %s for tag=go; got %v", want, keys(got))
+		}
+	}
+	for _, unwanted := range []string{"bf_READ_TAG_RUST", "bf_READ_TAG_PG"} {
+		if got[unwanted] {
+			t.Errorf("unexpected %s in tag=go results; got %v", unwanted, keys(got))
+		}
+	}
+
+	// q + tag combine: only Go readings whose title mentions sqlite.
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/readings?tag=go&q=sqlite", nil)
+	w2 := httptest.NewRecorder()
+	srv.ServeHTTP(w2, req2)
+	checkResponse(t, req2, w2)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("combined filter status = %d, body: %s", w2.Code, w2.Body.String())
+	}
+	var resp2 struct {
+		Data struct {
+			Readings []models.Reading `json:"readings"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(w2.Body).Decode(&resp2); err != nil {
+		t.Fatalf("decode combined: %v", err)
+	}
+	if len(resp2.Data.Readings) != 1 || resp2.Data.Readings[0].ID != "bf_READ_TAG_GO" {
+		ids := make([]string, 0, len(resp2.Data.Readings))
+		for _, r := range resp2.Data.Readings {
+			ids = append(ids, r.ID)
+		}
+		t.Fatalf("combined filter returned %v, want [bf_READ_TAG_GO]", ids)
+	}
+}
+
+func TestGetReading_IncludesResolvedRelatedAndOriginatingTask(t *testing.T) {
+	srv, s, _ := testServerWithEmitter(t)
+	ctx := context.Background()
+	now := time.Date(2026, 4, 25, 12, 0, 0, 0, time.UTC)
+
+	originatingTask := &models.Task{
+		ID:        "bf_TASK_PARENT",
+		Status:    models.TaskStatusCompleted,
+		TaskMode:  models.TaskModeRead,
+		Harness:   models.HarnessClaudeCode,
+		RepoURL:   "https://example.com/article",
+		Prompt:    "https://example.com/article",
+		OutputURL: "/api/v1/tasks/bf_TASK_PARENT/output",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := s.CreateTask(ctx, originatingTask); err != nil {
+		t.Fatalf("CreateTask parent: %v", err)
+	}
+
+	relatedTask := &models.Task{
+		ID:        "bf_TASK_RELATED",
+		Status:    models.TaskStatusCompleted,
+		TaskMode:  models.TaskModeRead,
+		Harness:   models.HarnessClaudeCode,
+		Prompt:    "https://example.com/related",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := s.CreateTask(ctx, relatedTask); err != nil {
+		t.Fatalf("CreateTask related: %v", err)
+	}
+
+	relatedReading := &models.Reading{
+		ID:             "bf_READ_RELATED",
+		TaskID:         relatedTask.ID,
+		URL:            "https://example.com/related",
+		Title:          "Related Reading Title",
+		TLDR:           "Related TL;DR",
+		Tags:           []string{"backend"},
+		Keywords:       []string{},
+		People:         []string{},
+		Orgs:           []string{},
+		NoveltyVerdict: "new",
+		Connections:    []models.Connection{},
+		Summary:        "Related summary",
+		RawOutput:      []byte(`{}`),
+		CreatedAt:      now,
+	}
+	if err := s.UpsertReading(ctx, relatedReading); err != nil {
+		t.Fatalf("UpsertReading related: %v", err)
+	}
+
+	subjectReading := &models.Reading{
+		ID:             "bf_READ_SUBJECT",
+		TaskID:         originatingTask.ID,
+		URL:            "https://example.com/article",
+		Title:          "Subject",
+		TLDR:           "Subject tldr",
+		Tags:           []string{"backend"},
+		Keywords:       []string{},
+		People:         []string{},
+		Orgs:           []string{},
+		NoveltyVerdict: "new",
+		Connections: []models.Connection{
+			{ReadingID: "bf_READ_RELATED", Reason: "covers same topic"},
+			{ReadingID: "bf_READ_DANGLING", Reason: "no longer exists"},
+		},
+		Summary:   "Subject summary",
+		RawOutput: []byte(`{}`),
+		CreatedAt: now,
+	}
+	if err := s.UpsertReading(ctx, subjectReading); err != nil {
+		t.Fatalf("UpsertReading subject: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/readings/"+subjectReading.ID, nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	checkResponse(t, req, w)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
+	}
+
+	type relatedItem struct {
+		ReadingID      string `json:"reading_id"`
+		Reason         string `json:"reason"`
+		Title          string `json:"title"`
+		TLDR           string `json:"tldr"`
+		URL            string `json:"url"`
+		NoveltyVerdict string `json:"novelty_verdict"`
+	}
+	type originatingTaskInfo struct {
+		ID        string `json:"id"`
+		Status    string `json:"status"`
+		RepoURL   string `json:"repo_url"`
+		PRURL     string `json:"pr_url"`
+		OutputURL string `json:"output_url"`
+		Error     string `json:"error"`
+	}
+	var resp struct {
+		Data struct {
+			ID              string               `json:"id"`
+			Related         []relatedItem        `json:"related"`
+			OriginatingTask *originatingTaskInfo `json:"originating_task"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	if len(resp.Data.Related) != 1 {
+		t.Fatalf("related = %#v, want exactly the resolvable connection", resp.Data.Related)
+	}
+	got := resp.Data.Related[0]
+	if got.ReadingID != "bf_READ_RELATED" || got.Title != "Related Reading Title" ||
+		got.TLDR != "Related TL;DR" || got.URL != "https://example.com/related" ||
+		got.Reason != "covers same topic" {
+		t.Fatalf("related[0] = %#v, want resolved reading data + reason", got)
+	}
+
+	if resp.Data.OriginatingTask == nil {
+		t.Fatalf("originating_task = nil, want resolved task")
+	}
+	if resp.Data.OriginatingTask.ID != originatingTask.ID || resp.Data.OriginatingTask.Status != string(models.TaskStatusCompleted) {
+		t.Fatalf("originating_task = %#v, want id %q status completed", resp.Data.OriginatingTask, originatingTask.ID)
+	}
+	if resp.Data.OriginatingTask.OutputURL != originatingTask.OutputURL {
+		t.Fatalf("originating_task.output_url = %q, want %q", resp.Data.OriginatingTask.OutputURL, originatingTask.OutputURL)
+	}
+}
+
+func TestGetReading_NoConnectionsAndAllDanglingReturnsEmptyRelated(t *testing.T) {
+	srv, s, _ := testServerWithEmitter(t)
+	ctx := context.Background()
+	now := time.Date(2026, 4, 25, 12, 0, 0, 0, time.UTC)
+
+	task := &models.Task{
+		ID:        "bf_TASK_NO_CONN",
+		Status:    models.TaskStatusCompleted,
+		TaskMode:  models.TaskModeRead,
+		Harness:   models.HarnessClaudeCode,
+		Prompt:    "https://example.com/no-conn",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := s.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	reading := &models.Reading{
+		ID:             "bf_READ_NO_CONN",
+		TaskID:         task.ID,
+		URL:            "https://example.com/no-conn",
+		Title:          "No connections",
+		TLDR:           "no related",
+		Tags:           []string{},
+		Keywords:       []string{},
+		People:         []string{},
+		Orgs:           []string{},
+		NoveltyVerdict: "new",
+		// One connection that points at a never-stored reading; should be
+		// dropped from the resolved related[] payload.
+		Connections: []models.Connection{
+			{ReadingID: "bf_READ_DANGLING", Reason: "dropped"},
+		},
+		Summary:   "no connections summary",
+		RawOutput: []byte(`{}`),
+		CreatedAt: now,
+	}
+	if err := s.UpsertReading(ctx, reading); err != nil {
+		t.Fatalf("UpsertReading: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/readings/"+reading.ID, nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	checkResponse(t, req, w)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
+	}
+
+	bodyBytes := w.Body.Bytes()
+	if !bytes.Contains(bodyBytes, []byte(`"related":[]`)) {
+		t.Fatalf("expected related to be an empty array; body: %s", string(bodyBytes))
+	}
+	if !bytes.Contains(bodyBytes, []byte(`"originating_task":`)) {
+		t.Fatalf("expected originating_task key in body: %s", string(bodyBytes))
+	}
+}
+
 // TestFindSimilarReadings_EmptyResultReturnsDataArray mirrors the lookup test
 // for the POST similarity endpoint.
 func TestFindSimilarReadings_EmptyResultReturnsDataArray(t *testing.T) {

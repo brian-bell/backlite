@@ -16,9 +16,10 @@ import (
 	"github.com/brian-bell/backlite/internal/store"
 )
 
-// urlBearingPrompt matches a prompt whose first non-whitespace token is an
-// http(s) URL. Used to reject inline_content paired with a URL-style prompt
-// (the two source paths are exclusive).
+// urlBearingPrompt matches a prompt that contains an http(s) URL anywhere.
+// Used to reject inline_content paired with a URL-bearing prompt — the two
+// source paths are exclusive, and slice 1 takes the conservative stance of
+// flagging any URL occurrence rather than only a leading-token URL.
 var urlBearingPrompt = regexp.MustCompile(`(?i)https?://`)
 
 // ErrStoreFailure is returned when the store fails to persist a task.

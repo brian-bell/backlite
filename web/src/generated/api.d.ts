@@ -434,6 +434,13 @@ export interface components {
             };
             /** @example abc123def456 */
             container_id?: string;
+            /**
+             * @description Set on read-mode tasks whose source is a markdown body persisted to
+             *     disk under <DataDir>/ingest/<sha>.md instead of a URL fetched at run
+             *     time. The task's prompt for such tasks is "markdown://<sha>".
+             * @example 9caaf00e460351844ec0267af19e123c624aad0a34794e205fe3d02053cd5c06
+             */
+            inline_content_sha256?: string;
             /** @example 0 */
             retry_count: number;
             /**
@@ -565,6 +572,16 @@ export interface components {
             env_vars?: {
                 [key: string]: string;
             };
+            /**
+             * @description Optional raw markdown body. When set, task_mode must be "read", the
+             *     prompt must not contain a URL, and the value must be non-empty. The
+             *     server persists the body to a content-addressed file under the data
+             *     directory and rewrites the task's prompt to "markdown://<sha256>".
+             * @example # Project notes
+             *
+             *     body
+             */
+            inline_content?: string | null;
         };
         /** @description Saved structured result from a completed read task. Embedding vectors are intentionally not exposed. */
         Reading: {

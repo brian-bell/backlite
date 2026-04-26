@@ -9,6 +9,7 @@ set -euo pipefail
 #   - refuses an empty file
 #   - on a valid file, POSTs JSON whose inline_content equals the file body
 #     and whose task_mode == "read"
+#   - includes the required non-URL prompt field
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT="$DIR/ingest-markdown.sh"
@@ -130,6 +131,10 @@ fi
 
 if ! jq -e '.task_mode == "read"' "$CAPTURE_PATH" >/dev/null; then
     fail "POST body missing task_mode=read: $(cat "$CAPTURE_PATH")"
+fi
+
+if ! jq -e '.prompt == "ingest local markdown file: note.md"' "$CAPTURE_PATH" >/dev/null; then
+    fail "POST body missing expected prompt: $(cat "$CAPTURE_PATH")"
 fi
 
 # inline_content must equal the file body (jq compares strings exactly).

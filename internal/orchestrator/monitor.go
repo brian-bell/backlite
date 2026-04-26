@@ -311,9 +311,11 @@ func (o *Orchestrator) handleReadingCompletion(ctx context.Context, task *models
 	}
 
 	// Persist captured artifacts to disk after the row commits so a DB
-	// failure can't leave orphan files. Persist failure marks the task
-	// failed (PRD: any error in the reading pipeline fails the task).
-	if rawContent != nil && o.outputs != nil {
+	// failure can't leave orphan files. Gated on ContentStatus="captured"
+	// so disk and row stay in sync — without that, a missing/malformed
+	// sidecar would leave bytes on disk that the API endpoints (which
+	// require ContentStatus="captured") will never serve.
+	if reading.ContentStatus == "captured" && rawContent != nil && o.outputs != nil {
 		if err := o.outputs.SaveReadingContent(ctx, reading.ID, rawContent, extractedContent, sidecarBytes); err != nil {
 			return nil, fmt.Errorf("save reading content: %w", err)
 		}

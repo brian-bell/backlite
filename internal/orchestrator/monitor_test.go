@@ -814,6 +814,58 @@ func TestHandleCompletion_ReadSuccess_NoCaptureLeavesContentStatusEmpty(t *testi
 	}
 }
 
+func TestHandleCompletion_ReadSuccess_NoOrphanFilesWhenSidecarMissing(t *testing.T) {
+	// Capture pipeline produced raw bytes but the sidecar is missing or
+	// malformed. The row's ContentStatus stays "" and the API endpoints
+	// would 404 — so SaveReadingContent must not run, otherwise the bytes
+	// become permanent orphans on disk.
+	s := newMockStore()
+	now := time.Now().UTC()
+	s.CreateTask(context.Background(), &models.Task{
+		ID:          "bf_read_orphan",
+		Status:      models.TaskStatusRunning,
+		TaskMode:    models.TaskModeRead,
+		Prompt:      "https://example.com/orphan",
+		ContainerID: "cont1",
+		StartedAt:   &now,
+	})
+
+	bus, _ := newTestBus()
+	emb := &mockEmbedder{vector: []float32{0.1}}
+	mockOut := &mockWriter{}
+	o := newTestOrchestrator(s, bus,
+		withEmbedder(emb),
+		withDocker(&mockDockerManager{
+			readingRaw:       []byte("<html>hi</html>"),
+			readingExtracted: []byte("# hi"),
+			readingSidecar:   nil, // sidecar absent → ContentStatus stays ""
+		}),
+		withOutputs(mockOut),
+	)
+	o.running = 1
+
+	task, _ := s.GetTask(context.Background(), "bf_read_orphan")
+	o.handleCompletion(context.Background(), task, ContainerStatus{
+		Done:     true,
+		Complete: true,
+		TaskMode: models.TaskModeRead,
+		URL:      "https://example.com/orphan",
+		TLDR:     "x",
+	})
+	bus.Close()
+
+	s.mu.Lock()
+	r := s.upsertedReadings[0]
+	s.mu.Unlock()
+
+	if r.ContentStatus != "" {
+		t.Errorf("reading.ContentStatus = %q, want empty (sidecar missing)", r.ContentStatus)
+	}
+	if len(mockOut.readingSaves) != 0 {
+		t.Errorf("SaveReadingContent must not run when ContentStatus is empty; got %d calls", len(mockOut.readingSaves))
+	}
+}
+
 func TestHandleCompletion_ReadSuccess_AssignsUniqueReadingIDs(t *testing.T) {
 	s := newMockStore()
 	now := time.Now().UTC()

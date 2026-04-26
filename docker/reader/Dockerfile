@@ -18,9 +18,10 @@ USER agent
 WORKDIR /home/agent
 
 # Pre-fetch + extraction deps. Lives in its own dir so the agent's npm state
-# is not mingled with the project root.
-COPY --chown=agent:agent extractor/package.json /home/agent/extractor/
-RUN cd /home/agent/extractor && npm install --no-audit --no-fund --omit=dev
+# is not mingled with the project root. npm ci pins the transitive tree to
+# the committed lockfile so two builds a month apart don't drift.
+COPY --chown=agent:agent extractor/package.json extractor/package-lock.json /home/agent/extractor/
+RUN cd /home/agent/extractor && npm ci --no-audit --no-fund --omit=dev
 COPY --chown=agent:agent extractor/extract.js /home/agent/extractor/
 
 COPY --chown=agent:agent reader-entrypoint.sh status_writer.sh reader_helpers.sh \

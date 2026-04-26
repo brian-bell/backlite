@@ -167,14 +167,48 @@ func TestGetReadingContent_404_WhenReadingMissing(t *testing.T) {
 }
 
 func TestGetReadingContent_400_RejectsMalformedID(t *testing.T) {
+	// Single-segment IDs that reach the handler but fail taskIDPattern
+	// must return exactly 400 — not 404, not 500. A slip to a different
+	// status would mask a regex regression.
 	srv, _, _ := readingContentTestServer(t)
 
-	for _, id := range []string{"..", "bf_..", "bf_short", "../tasks/bf_x"} {
+	cases := []string{
+		"..",                             // dot is outside [0-9A-Z]
+		"bf_..",                          // matches prefix only
+		"bf_short",                       // wrong length + lowercase
+		"bf_lowercase00000000000000",     // 26 chars but lowercase
+		"BF_01HX00000000000000000RDXXX",  // wrong-case prefix
+		"bf_01HX00000000000000000RDX",    // 25 chars
+		"bf_01HX00000000000000000RDXXXX", // 27 chars
+	}
+	for _, id := range cases {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/readings/"+id+"/content", nil)
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, req)
-		if rec.Code != http.StatusBadRequest && rec.Code != http.StatusNotFound {
-			t.Errorf("id %q: status = %d, want 400 or 404", id, rec.Code)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("id %q: status = %d, want 400", id, rec.Code)
+		}
+	}
+}
+
+func TestGetReadingContent_RejectsPathTraversal(t *testing.T) {
+	// Slash-bearing IDs don't match the chi route (the {id} param is a
+	// single path segment), so they should never reach the handler and
+	// never return 200. Catches a future routing or middleware change
+	// that would let traversal payloads slip through.
+	srv, _, _ := readingContentTestServer(t)
+
+	cases := []string{
+		"../tasks/bf_x",
+		"..%2Ftasks%2Fbf_x",
+		"bf_x/../../etc/passwd",
+	}
+	for _, id := range cases {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/readings/"+id+"/content", nil)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code == http.StatusOK {
+			t.Errorf("id %q: status = 200, traversal must be rejected", id)
 		}
 	}
 }

@@ -67,14 +67,41 @@ PAYLOAD=$(jq -n \
     '{from: $from, to: [$to], subject: $subject, text: $text}')
 
 BASE_URL="${RESEND_BASE_URL:-https://api.resend.com}"
+IDEMPOTENCY_KEY="${TASK_ID_VAL}:read.completed"
+BASE_DELAY="${RESEND_RETRY_BASE_DELAY_SEC:-2}"
+MAX_ATTEMPTS=3
 
-if ! curl -fsS \
-    -H "Authorization: Bearer ${RESEND_API_KEY}" \
-    -H "Content-Type: application/json" \
-    -d "$PAYLOAD" \
-    "${BASE_URL}/emails" >/dev/null; then
-    echo "send-email: Resend API request failed; continuing" >&2
-    exit 0
-fi
+attempt=1
+while [ "$attempt" -le "$MAX_ATTEMPTS" ]; do
+    if [ "$attempt" -gt 1 ]; then
+        sleep "$(awk -v a="$attempt" -v d="$BASE_DELAY" 'BEGIN { print (a - 1) * d }')"
+    fi
 
-echo "send-email: sent email summary for task ${TASK_ID_VAL}" >&2
+    http_code=$(curl -sS -o /dev/null -w "%{http_code}" \
+        -H "Authorization: Bearer ${RESEND_API_KEY}" \
+        -H "Content-Type: application/json" \
+        -H "Idempotency-Key: ${IDEMPOTENCY_KEY}" \
+        -d "$PAYLOAD" \
+        "${BASE_URL}/emails" 2>/dev/null || true)
+
+    case "$http_code" in
+        2*)
+            echo "send-email: sent email summary for task ${TASK_ID_VAL} (attempt $attempt)" >&2
+            exit 0
+            ;;
+        409)
+            echo "send-email: Resend API attempt ${attempt} failed (status ${http_code}); retrying" >&2
+            ;;
+        4*)
+            echo "send-email: Resend API returned ${http_code}; not retrying" >&2
+            exit 0
+            ;;
+        *)
+            echo "send-email: Resend API attempt ${attempt} failed (status ${http_code:-network})" >&2
+            ;;
+    esac
+
+    attempt=$((attempt + 1))
+done
+
+echo "send-email: gave up after ${MAX_ATTEMPTS} attempts" >&2

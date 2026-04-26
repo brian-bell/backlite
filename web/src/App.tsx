@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   BrowserRouter,
   Link,
@@ -7,10 +7,19 @@ import {
   Navigate,
   Route,
   Routes,
-  useParams
+  useParams,
+  useSearchParams
 } from "react-router-dom";
 
-import { ApiError, getReading, listReadings, tokenStorageKey, type Reading } from "./api";
+import {
+  ApiError,
+  getReading,
+  listReadings,
+  tokenStorageKey,
+  type OriginatingTask,
+  type Reading,
+  type RelatedReading
+} from "./api";
 import "./styles.css";
 
 type AppProps = {
@@ -125,11 +134,34 @@ function AuthTokenForm({ token, setToken }: { token: string; setToken: (token: s
 }
 
 function ReadingList({ token }: { token: string }) {
-  const [offset, setOffset] = useState(0);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const q = searchParams.get("q") ?? "";
+  const tag = searchParams.get("tag") ?? "";
+  const offset = parseOffset(searchParams.get("offset"));
+  const [draft, setDraft] = useState(q);
+
+  // Keep the input in sync when the URL changes from elsewhere (back/forward,
+  // tag click, manual edit) so the search box reflects the active query.
+  useEffect(() => {
+    setDraft(q);
+  }, [q]);
+
   const query = useQuery({
-    queryKey: ["readings", token, offset],
-    queryFn: () => listReadings(token, pageSize, offset)
+    queryKey: ["readings", token, q, tag, offset],
+    queryFn: () => listReadings(token, { limit: pageSize, offset, q, tag })
   });
+
+  const updateParams = (patch: Record<string, string | undefined>) => {
+    const next = new URLSearchParams(searchParams);
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === undefined || value === "") {
+        next.delete(key);
+      } else {
+        next.set(key, value);
+      }
+    }
+    setSearchParams(next);
+  };
 
   return (
     <section className="page">
@@ -137,24 +169,67 @@ function ReadingList({ token }: { token: string }) {
         <h1>Reading Library</h1>
       </div>
 
+      <form
+        className="search-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          updateParams({ q: draft.trim(), offset: undefined });
+        }}
+      >
+        <label htmlFor="reading-search">Search readings</label>
+        <input
+          id="reading-search"
+          type="search"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          placeholder="title, url, tldr, summary"
+        />
+        <button type="submit">Search</button>
+      </form>
+
+      {tag !== "" ? (
+        <div className="active-filters" aria-label="Active filters">
+          <button
+            type="button"
+            className="active-tag"
+            aria-label={`Clear tag ${tag}`}
+            onClick={() => updateParams({ tag: undefined, offset: undefined })}
+          >
+            Tag: {tag} ×
+          </button>
+        </div>
+      ) : null}
+
       {query.isLoading ? <StatusMessage>Loading readings</StatusMessage> : null}
       {query.isError ? <ErrorState error={query.error} /> : null}
       {query.isSuccess && query.data.readings.length === 0 ? (
-        <StatusMessage>No readings yet</StatusMessage>
+        <StatusMessage>{emptyMessage(q, tag)}</StatusMessage>
       ) : null}
       {query.isSuccess && query.data.readings.length > 0 ? (
         <>
           <div className="reading-list">
             {query.data.readings.map((reading) => (
-              <ReadingListItem key={reading.id} reading={reading} />
+              <ReadingListItem
+                key={reading.id}
+                reading={reading}
+                onSelectTag={(selected) => updateParams({ tag: selected, offset: undefined })}
+              />
             ))}
           </div>
           <div className="pager">
-            <button type="button" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - pageSize))}>
+            <button
+              type="button"
+              disabled={offset === 0}
+              onClick={() => updateParams({ offset: nextOffsetParam(offset - pageSize) })}
+            >
               Previous
             </button>
             <span>Page {Math.floor(offset / pageSize) + 1}</span>
-            <button type="button" disabled={!query.data.has_more} onClick={() => setOffset(offset + pageSize)}>
+            <button
+              type="button"
+              disabled={!query.data.has_more}
+              onClick={() => updateParams({ offset: nextOffsetParam(offset + pageSize) })}
+            >
               Next
             </button>
           </div>
@@ -164,13 +239,36 @@ function ReadingList({ token }: { token: string }) {
   );
 }
 
-function ReadingListItem({ reading }: { reading: Reading }) {
+function parseOffset(raw: string | null): number {
+  if (raw === null) return 0;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function nextOffsetParam(value: number): string | undefined {
+  return value <= 0 ? undefined : String(value);
+}
+
+function emptyMessage(q: string, tag: string): string {
+  if (q !== "" || tag !== "") {
+    return "No readings match your filters";
+  }
+  return "No readings yet";
+}
+
+function ReadingListItem({
+  reading,
+  onSelectTag
+}: {
+  reading: Reading;
+  onSelectTag: (tag: string) => void;
+}) {
   return (
     <article className="reading-row">
       <div className="reading-row-main">
         <Link to={`/readings/${reading.id}`}>{reading.title || reading.url}</Link>
         <p>{reading.tldr}</p>
-        <TagList tags={reading.tags} />
+        <TagList tags={reading.tags} onSelect={onSelectTag} />
       </div>
       <div className="reading-row-meta">
         <span>{reading.novelty_verdict || "unclassified"}</span>
@@ -228,19 +326,88 @@ function ReadingDetail({ token }: { token: string }) {
         <EntityGroup label="People" values={reading.people} />
         <EntityGroup label="Organizations" values={reading.orgs} />
       </section>
-      {reading.connections.length > 0 ? (
-        <section className="detail-section">
-          <h2>Connections</h2>
-          <ul className="connections">
-            {reading.connections.map((connection) => (
-              <li key={`${connection.reading_id}-${connection.reason}`}>
-                <span>{connection.reading_id}</span>
-                <p>{connection.reason}</p>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
+      <RelatedReadingsPanel related={reading.related} />
+      <OriginatingTaskPanel task={reading.originating_task ?? null} />
+    </section>
+  );
+}
+
+function OriginatingTaskPanel({ task }: { task: OriginatingTask | null }) {
+  return (
+    <section className="detail-section originating-task">
+      <h2>Originating Task</h2>
+      {task === null ? (
+        <p className="empty-state">Originating task is unavailable.</p>
+      ) : (
+        <dl className="task-meta">
+          <div>
+            <dt>ID</dt>
+            <dd>{task.id}</dd>
+          </div>
+          <div>
+            <dt>Status</dt>
+            <dd className={`task-status status-${task.status}`}>{task.status}</dd>
+          </div>
+          <div>
+            <dt>Mode</dt>
+            <dd>{task.task_mode}</dd>
+          </div>
+          {task.error !== "" ? (
+            <div>
+              <dt>Error</dt>
+              <dd className="task-error">{task.error}</dd>
+            </div>
+          ) : null}
+          <div>
+            <dt>Links</dt>
+            <dd>
+              <ul className="task-links">
+                {task.output_url !== "" ? (
+                  <li>
+                    <a href={task.output_url} rel="noreferrer" target="_blank">
+                      Agent output
+                    </a>
+                  </li>
+                ) : null}
+                <li>
+                  <a href={`/api/v1/tasks/${task.id}/logs`} rel="noreferrer" target="_blank">
+                    Container logs
+                  </a>
+                </li>
+                {task.pr_url !== "" ? (
+                  <li>
+                    <a href={task.pr_url} rel="noreferrer" target="_blank">
+                      Pull request
+                    </a>
+                  </li>
+                ) : null}
+              </ul>
+            </dd>
+          </div>
+        </dl>
+      )}
+    </section>
+  );
+}
+
+function RelatedReadingsPanel({ related }: { related: RelatedReading[] }) {
+  return (
+    <section className="detail-section related-readings">
+      <h2>Related Readings</h2>
+      {related.length === 0 ? (
+        <p className="empty-state">No related readings yet</p>
+      ) : (
+        <ul className="related-list">
+          {related.map((entry) => (
+            <li key={entry.reading_id} className="related-item">
+              <Link to={`/readings/${entry.reading_id}`}>{entry.title || entry.url}</Link>
+              {entry.tldr ? <p className="related-tldr">{entry.tldr}</p> : null}
+              <p className="related-url">{entry.url}</p>
+              <p className="related-reason">{entry.reason}</p>
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }
@@ -254,15 +421,27 @@ function EntityGroup({ label, values }: { label: string; values: string[] }) {
   );
 }
 
-function TagList({ tags }: { tags: string[] }) {
+function TagList({ tags, onSelect }: { tags: string[]; onSelect?: (tag: string) => void }) {
   if (tags.length === 0) {
     return null;
   }
   return (
     <div className="tags">
-      {tags.map((tag) => (
-        <span key={tag}>{tag}</span>
-      ))}
+      {tags.map((tag) =>
+        onSelect ? (
+          <button
+            key={tag}
+            type="button"
+            className="tag-chip"
+            aria-label={`Filter by tag ${tag}`}
+            onClick={() => onSelect(tag)}
+          >
+            {tag}
+          </button>
+        ) : (
+          <span key={tag}>{tag}</span>
+        )
+      )}
     </div>
   );
 }

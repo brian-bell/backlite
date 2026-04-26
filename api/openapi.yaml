@@ -85,7 +85,11 @@ paths:
     get:
       operationId: listReadings
       summary: List saved readings
-      description: Returns saved reading results newest-first with offset pagination. Requires bearer authentication when API keys are configured.
+      description: >
+        Returns saved reading results newest-first with offset pagination.
+        Optionally filtered by a free-text query (`q`) that matches against
+        title, url, tldr, and summary. Requires bearer authentication when API
+        keys are configured.
       parameters:
         - name: limit
           in: query
@@ -102,6 +106,18 @@ paths:
           schema:
             type: integer
             minimum: 0
+        - name: q
+          in: query
+          description: Free-text query matched case-insensitively against title, url, tldr, and summary.
+          required: false
+          schema:
+            type: string
+        - name: tag
+          in: query
+          description: Restrict results to readings whose tags array contains this tag (case-insensitive exact match).
+          required: false
+          schema:
+            type: string
       responses:
         "200":
           description: Page of saved readings
@@ -721,7 +737,7 @@ components:
       required: [data]
       properties:
         data:
-          $ref: "#/components/schemas/Reading"
+          $ref: "#/components/schemas/ReadingDetail"
 
     ReadingPage:
       type: object
@@ -1090,3 +1106,67 @@ components:
         reason:
           type: string
           example: "Covers the same deployment pattern."
+
+    ReadingDetail:
+      description: >
+        Reading detail used by the reading-library SPA. Extends Reading with
+        connections resolved against the readings table (related[]) and a
+        snapshot of the task that produced the reading.
+      allOf:
+        - $ref: "#/components/schemas/Reading"
+        - type: object
+          required: [related]
+          properties:
+            related:
+              type: array
+              items:
+                $ref: "#/components/schemas/RelatedReading"
+            originating_task:
+              nullable: true
+              $ref: "#/components/schemas/OriginatingTaskInfo"
+
+    RelatedReading:
+      type: object
+      required: [reading_id, reason, title, tldr, url, novelty_verdict]
+      description: A connection that has been resolved to the linked reading's display fields.
+      properties:
+        reading_id:
+          type: string
+        reason:
+          type: string
+        title:
+          type: string
+        tldr:
+          type: string
+        url:
+          type: string
+          format: uri
+        novelty_verdict:
+          type: string
+
+    OriginatingTaskInfo:
+      type: object
+      required: [id, status, task_mode, repo_url, pr_url, output_url, error, created_at]
+      description: Snapshot of the task that produced the reading.
+      properties:
+        id:
+          type: string
+        status:
+          $ref: "#/components/schemas/TaskStatus"
+        task_mode:
+          type: string
+          enum: [auto, code, review, read]
+        repo_url:
+          type: string
+        pr_url:
+          type: string
+        output_url:
+          type: string
+        error:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time

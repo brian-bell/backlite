@@ -233,6 +233,11 @@ func TestCreateTaskRequestValidation(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "reserved env var key INLINE_CONTENT_PATH",
+			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"INLINE_CONTENT_PATH": "/etc/passwd"}},
+			wantErr: true,
+		},
+		{
 			name:    "non-reserved env var key allowed",
 			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"MY_CUSTOM_VAR": "val"}},
 			wantErr: false,

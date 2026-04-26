@@ -169,6 +169,7 @@ var reservedEnvVarKeys = map[string]bool{
 	"RESEND_API_KEY":        true,
 	"NOTIFY_EMAIL_FROM":     true,
 	"NOTIFY_EMAIL_TO":       true,
+	"INLINE_CONTENT_PATH":   true,
 }
 
 // containsNullByte returns true if s contains a null byte, which PostgreSQL

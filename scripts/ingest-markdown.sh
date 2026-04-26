@@ -61,8 +61,9 @@ fi
 
 # Build the JSON body. jq -Rs '.' reads stdin verbatim and produces a JSON
 # string (handles all escaping for us — newlines, quotes, backslashes).
-JSON=$(jq -Rs --arg mode "read" '{
+JSON=$(jq -Rs --arg mode "read" --arg prompt "ingest local markdown file: $(basename "$FILE")" '{
     task_mode: $mode,
+    prompt: $prompt,
     inline_content: .
 }' < "$FILE")
 

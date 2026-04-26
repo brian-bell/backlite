@@ -2,11 +2,12 @@
 
 Agent orchestrator that runs coding agents (Claude Code or Codex) in ephemeral containers. POST a task (repo + prompt), get back a branch with commits and a PR. The current runtime is local Docker plus a local SQLite database.
 
-Also supports a `read` task mode that runs a dedicated reader image against a URL, summarizes it, embeds the TL;DR, and stores the result in a `readings` table for similarity search. See [CLAUDE.md](CLAUDE.md#reading-mode).
+Also supports a `read` task mode that runs a dedicated reader image against a URL, summarizes it, embeds the TL;DR, and stores the result in a `readings` table for similarity search. See [CLAUDE.md](CLAUDE.md#reading-mode). The same Go binary serves a small React reading-library SPA at `/` so saved readings can be browsed in a browser.
 
 ## Prerequisites
 
 - Go 1.25+
+- Node.js 20+ and npm (for the bundled web app — `make build` compiles it into the Go binary)
 - Docker
 - SQLite
 - `jq` (for helper scripts)
@@ -21,9 +22,9 @@ cp .env.example .env
 ```
 
 ```bash
-make build          # Compile to bin/backlite
+make build          # Build web bundle (web/dist) + Go binary at bin/backlite
 make run            # Build + run (auto-sources .env)
-make test           # Run all tests with -tags nocontainers (no cache)
+make test           # Run all Go tests with -tags nocontainers (no cache)
 make lint           # go vet
 make deps           # go mod tidy
 make clean          # Remove bin/
@@ -32,6 +33,18 @@ make clean          # Remove bin/
 Single test: `go test ./internal/store/ -run TestCreateTask -v`
 
 DB-backed tests use temporary SQLite files ending in `-test.db`.
+
+### Web app
+
+```bash
+make web-deps       # npm install
+make web-generate   # Regenerate web/src/generated/api.d.ts from api/openapi.yaml
+make web-dev        # Vite dev server (point it at a running Backlite via the Auth token form)
+make web-build      # tsc + vite build (also runs as part of `make build`)
+make web-test       # Vitest suite
+```
+
+The build output lives in `web/dist/` (gitignored). The Go server statically serves it at `/*`, with SPA fallback to `index.html` for client-side routes; set `BACKFLOW_WEB_DIR` to a different directory if you serve a prebuilt bundle from elsewhere.
 
 ```bash
 make test-blackbox                # End-to-end: builds fake agent, starts server + DB, runs happy-path
@@ -111,7 +124,7 @@ curl -X POST http://localhost:8080/api/v1/tasks \
 
 ## API Reference
 
-The full OpenAPI 3.0 spec lives at [`api/openapi.yaml`](api/openapi.yaml). `make test-schema` runs Schemathesis fuzz tests against it.
+The full OpenAPI 3.0 spec lives at [`api/openapi.yaml`](api/openapi.yaml). `make test-schema` runs Schemathesis fuzz tests against it. JSON responses are wrapped in a `{"data": …}` envelope (errors use `{"error": "…"}`).
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -123,10 +136,13 @@ The full OpenAPI 3.0 spec lives at [`api/openapi.yaml`](api/openapi.yaml). `make
 | `GET` | `/api/v1/tasks/{id}/logs` | Container logs (`?tail=100`) |
 | `GET` | `/api/v1/tasks/{id}/output` | Persisted agent stdout log |
 | `GET` | `/api/v1/tasks/{id}/output.json` | Persisted task metadata snapshot |
-| `GET` | `/api/v1/readings/lookup` | Exact-URL duplicate check (used by reader containers) |
-| `POST` | `/api/v1/readings/similar` | Semantic similarity search over stored readings |
+| `GET` | `/api/v1/readings` | List stored readings (`?limit=`, `?offset=`); requires `readings:read` scope |
+| `GET` | `/api/v1/readings/{id}` | Reading detail (TL;DR, summary, tags, connections); requires `readings:read` scope |
+| `GET` | `/api/v1/readings/lookup` | Exact-URL duplicate check (public — used by reader containers) |
+| `POST` | `/api/v1/readings/similar` | Semantic similarity search over stored readings (public) |
 | `GET` | `/api/v1/health` | Health check |
 | `GET` | `/debug/stats` | Operational stats (PID, uptime, running tasks, pool metrics) |
+| `GET` | `/*` | Reading-library SPA from `BACKFLOW_WEB_DIR` (defaults to `./web/dist`) |
 
 ### Task Request Fields
 
@@ -268,3 +284,19 @@ Defaults are set in `internal/config/config.go` and can be overridden via env va
 | `BACKFLOW_WEBHOOK_EVENTS` | all | Comma-separated event filter |
 
 Events: `task.created`, `task.running`, `task.completed`, `task.failed`, `task.needs_input`, `task.interrupted`, `task.recovering`, `task.cancelled`, `task.retry`
+
+### Email summary delivery (read mode)
+
+Optional Resend integration that emails a structured summary of every completed `task_mode=read` task. Read mode + `claude_code` harness + skill-agent image only — codex read tasks and non-read modes do not send email. All three vars must be set together; partial config blocks startup. See [docs/resend-setup.md](docs/resend-setup.md) for sender-domain DNS setup.
+
+| Variable | Description |
+|----------|-------------|
+| `BACKFLOW_RESEND_API_KEY` | Resend API key (`re_…`) |
+| `BACKFLOW_NOTIFY_EMAIL_FROM` | Verified sender address — must use a Resend-verified domain |
+| `BACKFLOW_NOTIFY_EMAIL_TO` | Recipient inbox |
+
+### Web app
+
+| Variable | Description |
+|----------|-------------|
+| `BACKFLOW_WEB_DIR` | Directory of the prebuilt web bundle served at `/*` (defaults to `./web/dist`). Leave the directory empty to disable the SPA route. |

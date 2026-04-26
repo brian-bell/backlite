@@ -7,6 +7,7 @@ Backlite keeps the upstream `BACKFLOW_*` env var prefix for compatibility, even 
 ## Prerequisites
 
 - Go 1.25+
+- Node.js 20+ and npm (the bundled reading-library web app is built into the Go binary by `make build`; if you don't want the SPA, point `BACKFLOW_WEB_DIR` at an empty directory)
 - Docker with a running daemon
 - SQLite
 - `jq`
@@ -14,6 +15,8 @@ Backlite keeps the upstream `BACKFLOW_*` env var prefix for compatibility, even 
 - An Anthropic API key for `claude_code`, or an OpenAI API key for `codex`
 
 If you want `task_mode=read`, set `OPENAI_API_KEY` as well. Reader containers call Backlite's own API for duplicate and similarity lookups.
+
+If you want emailed summaries of completed read tasks (skill-agent image + `claude_code` only), see [docs/resend-setup.md](./resend-setup.md) for the Resend API key and sender-domain DNS setup. The three env vars (`BACKFLOW_RESEND_API_KEY`, `BACKFLOW_NOTIFY_EMAIL_FROM`, `BACKFLOW_NOTIFY_EMAIL_TO`) must be set together or all unset — partial config blocks startup.
 
 ## 1. Build the Images
 
@@ -114,9 +117,10 @@ ls "$BACKFLOW_DATA_DIR/tasks/<task-id>/"
 ## 5. Operational Notes
 
 - Backlite is local-Docker-only. There is no alternate cloud runtime path.
-- The notifier is webhook-only.
+- Webhooks are the primary task-event notifier; the optional Resend integration only emails read-mode summaries.
 - Concurrency capacity is capped by `BACKFLOW_MAX_CONTAINERS`; the orchestrator counts tasks in `provisioning`/`running` against it.
 - `save_agent_output=false` disables the filesystem artifact write for a task.
+- The reading-library SPA is served at `/`. Visit `http://<host>:8080/` after `make build && make run` to browse stored readings; paste a bearer token into the topbar form when API keys are configured.
 
 ## Related Docs
 

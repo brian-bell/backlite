@@ -89,6 +89,9 @@ while [ "$attempt" -le "$MAX_ATTEMPTS" ]; do
             echo "send-email: sent email summary for task ${TASK_ID_VAL} (attempt $attempt)" >&2
             exit 0
             ;;
+        409)
+            echo "send-email: Resend API attempt ${attempt} failed (status ${http_code}); retrying" >&2
+            ;;
         4*)
             echo "send-email: Resend API returned ${http_code}; not retrying" >&2
             exit 0

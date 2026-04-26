@@ -87,6 +87,7 @@ func TestBuildHTTPHandler_NoWebhookRoutes(t *testing.T) {
 		noopLogFetcher{},
 		noopEmitter{},
 		func() int { return 0 },
+		nil,
 		time.Unix(0, 0),
 	)
 

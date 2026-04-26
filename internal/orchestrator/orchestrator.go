@@ -62,6 +62,7 @@ type Orchestrator struct {
 
 type backupScheduler interface {
 	MaybeSchedule(context.Context)
+	Status() backup.Status
 }
 
 func New(s store.Store, cfg *config.Config, bus *notify.EventBus, runner Runner, outputs Writer, embedder embeddings.Embedder) *Orchestrator {
@@ -110,6 +111,15 @@ func (o *Orchestrator) Running() int {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	return o.running
+}
+
+// BackupStatus returns the local-backup worker's operator-visible state.
+// Safe to call when backups are not configured — returns the zero Status.
+func (o *Orchestrator) BackupStatus() backup.Status {
+	if o.backups == nil {
+		return backup.Status{}
+	}
+	return o.backups.Status()
 }
 
 // Docker returns the Runner for use by the API logs endpoint.

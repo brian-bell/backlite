@@ -178,7 +178,7 @@ The `tasks` table carries a `force` boolean column. REST callers can set `force`
 
 ## Local SQLite backups
 
-Enabled by default. Each orchestrator tick calls `backup.Manager.MaybeSchedule(ctx)`; the manager exits early if disabled, already running, or the latest valid backup is younger than `BACKFLOW_LOCAL_BACKUP_INTERVAL_SEC`. Otherwise it launches a single background goroutine that:
+Enabled by default. Each orchestrator tick calls `backup.Manager.MaybeSchedule(ctx)`; the manager first prunes aged artifacts and stale temp files (see below), then exits early if disabled, already running, or the latest valid backup is younger than `BACKFLOW_LOCAL_BACKUP_INTERVAL_SEC`. Otherwise it launches a single background goroutine that:
 
 1. Opens the configured database read-side and runs the SQLite online backup API (`*sqlite.Backup` from `modernc.org/sqlite`) into a temp file.
 2. Gzip-compresses the temp file to a `.sqlite.gz.tmp` sibling.
@@ -187,13 +187,24 @@ Enabled by default. Each orchestrator tick calls `backup.Manager.MaybeSchedule(c
 
 Artifact filenames are `backlite-YYYYMMDDTHHMMSSZ.sqlite.gz` (UTC). Age comparisons use `finalized_at` so a backup that takes longer than the interval does not immediately appear stale and trigger a continuous loop. Validity requires a structurally-correct sidecar **and** a recomputed sha256 that matches; corrupted artifacts are skipped and the scheduler falls back to the next-older valid one.
 
-Failures (e.g. integrity check fails, disk full, source DB locked beyond `busy_timeout`) are logged and do not affect health checks or task orchestration. Backup work runs concurrently with task orchestration but `MaybeSchedule` enforces single-flight via a mutex.
+Retention pruning runs synchronously at the top of each `MaybeSchedule` tick and deletes:
+
+- Finalized artifacts older than `BACKFLOW_LOCAL_BACKUP_RETENTION_SEC`, paired with their `.meta.json` sidecars. The newest valid artifact is always preserved regardless of age. Setting retention to `0` disables pruning.
+- Stale temp files (`.sqlite.tmp`, `.sqlite.gz.tmp`, `.sqlite.gz.tmp.verify`, `.meta.json.tmp`) whose mtime is older than a 1-hour grace.
+- Orphan `.meta.json` sidecars whose `.sqlite.gz` artifact has already been removed.
+
+Each delete logs `pruned local sqlite backup …` at `Info` with `file_name`, `age_seconds`, and a `reason` of `age`, `stale_temp`, or `orphan_metadata`. Per-file delete failures log `Error` and the loop continues.
+
+Operator visibility lives on `/debug/stats` under the `backup` key: `enabled`, `directory`, `interval_seconds`, `retention_seconds`, `worker_state` (`idle`/`running`), `latest_artifact` (the sidecar metadata), `last_success_at`, `last_error_at`, `last_error_message`, and a `recent_errors` ring of the last 5 entries (each tagged with `phase: "backup"` or `"prune"`). Skipped ticks log at `Debug` with `reason=disabled|already_running|not_due` so they don't spam logs at default levels.
+
+Failures (e.g. integrity check fails, disk full, source DB locked beyond `busy_timeout`, retention prune errors) are logged and recorded in `recent_errors`, but do not affect health checks (`/health`, `/api/v1/health`) or task orchestration. Backup work runs concurrently with task orchestration but `MaybeSchedule` enforces single-flight via a mutex.
 
 Env vars (see `internal/config/config.go` for current defaults):
 
 - `BACKFLOW_LOCAL_BACKUP_ENABLED` — toggle the worker (default on)
 - `BACKFLOW_LOCAL_BACKUP_DIR` — output directory; supports `~` expansion
 - `BACKFLOW_LOCAL_BACKUP_INTERVAL_SEC` — minimum spacing between successful backups
+- `BACKFLOW_LOCAL_BACKUP_RETENTION_SEC` — age (seconds) past which finalized backups are pruned; `0` disables pruning
 
 Restore is manual: stop the server, copy the chosen `.sqlite.gz` aside, `gunzip` it, optionally re-run `PRAGMA integrity_check`, replace the file at `BACKFLOW_DATABASE_PATH`, and restart.
 

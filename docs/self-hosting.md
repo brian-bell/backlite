@@ -121,6 +121,7 @@ ls "$BACKFLOW_DATA_DIR/tasks/<task-id>/"
 - Concurrency capacity is capped by `BACKFLOW_MAX_CONTAINERS`; the orchestrator counts tasks in `provisioning`/`running` against it.
 - `save_agent_output=false` disables the filesystem artifact write for a task.
 - The reading-library SPA is served at `/`. Visit `http://<host>:8080/` after `make build && make run` to browse stored readings; paste a bearer token into the topbar form when API keys are configured.
+- Local SQLite backups are on by default and write `backlite-YYYYMMDDTHHMMSSZ.sqlite.gz` artifacts plus `.meta.json` sidecars under `BACKFLOW_LOCAL_BACKUP_DIR`. Mount that directory on persistent storage (and consider snapshotting/replicating it off-host). Disable with `BACKFLOW_LOCAL_BACKUP_ENABLED=false` if you back the database up some other way. Restore is documented in the README.
 
 ## Related Docs
 

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -101,6 +102,75 @@ func TestLoad_LogFile_Set(t *testing.T) {
 	}
 	if cfg.LogFile != "/tmp/backlite.log" {
 		t.Errorf("LogFile = %q, want %q", cfg.LogFile, "/tmp/backlite.log")
+	}
+}
+
+func TestLoad_LocalBackupDefaults(t *testing.T) {
+	setBaseEnv(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+
+	if !cfg.LocalBackupEnabled {
+		t.Fatal("LocalBackupEnabled = false, want true by default")
+	}
+	if cfg.LocalBackupDir != filepath.Join(home, "backlite-backups") {
+		t.Fatalf("LocalBackupDir = %q, want %q", cfg.LocalBackupDir, filepath.Join(home, "backlite-backups"))
+	}
+	if cfg.LocalBackupInterval != 24*time.Hour {
+		t.Fatalf("LocalBackupInterval = %v, want %v", cfg.LocalBackupInterval, 24*time.Hour)
+	}
+}
+
+func TestLoad_LocalBackupOverrides(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("BACKFLOW_LOCAL_BACKUP_DIR", "~/custom-backups")
+	t.Setenv("BACKFLOW_LOCAL_BACKUP_INTERVAL_SEC", "7200")
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+
+	if cfg.LocalBackupDir != filepath.Join(home, "custom-backups") {
+		t.Fatalf("LocalBackupDir = %q, want %q", cfg.LocalBackupDir, filepath.Join(home, "custom-backups"))
+	}
+	if cfg.LocalBackupInterval != 2*time.Hour {
+		t.Fatalf("LocalBackupInterval = %v, want %v", cfg.LocalBackupInterval, 2*time.Hour)
+	}
+}
+
+func TestLoad_LocalBackupCanBeDisabled(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("BACKFLOW_LOCAL_BACKUP_ENABLED", "false")
+	t.Setenv("BACKFLOW_LOCAL_BACKUP_INTERVAL_SEC", "0")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+	if cfg.LocalBackupEnabled {
+		t.Fatal("LocalBackupEnabled = true, want false")
+	}
+}
+
+func TestLoad_LocalBackupRequiresPositiveIntervalWhenEnabled(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("BACKFLOW_LOCAL_BACKUP_INTERVAL_SEC", "0")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for zero local backup interval")
+	}
+	if !strings.Contains(err.Error(), "BACKFLOW_LOCAL_BACKUP_INTERVAL_SEC") {
+		t.Fatalf("error = %v, want interval env name", err)
 	}
 }
 

@@ -391,6 +391,23 @@ func (m *mockWriter) SaveMetadata(_ context.Context, taskID string, metadata any
 	return nil
 }
 
+type mockBackupScheduler struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (m *mockBackupScheduler) MaybeSchedule(context.Context) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.calls++
+}
+
+func (m *mockBackupScheduler) Calls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.calls
+}
+
 // newTestBus creates an EventBus with a mockNotifier subscribed.
 // Call bus.Close() before reading events from the notifier.
 func newTestBus() (*notify.EventBus, *mockNotifier) {
@@ -413,6 +430,7 @@ func newTestOrchestrator(s store.Store, bus *notify.EventBus, opts ...func(*Orch
 		config:          cfg,
 		bus:             bus,
 		docker:          &mockDockerManager{},
+		backups:         nil,
 		stopCh:          make(chan struct{}),
 		inspectFailures: make(map[string]int),
 	}
@@ -436,6 +454,10 @@ func withOutputs(w Writer) func(*Orchestrator) {
 
 func withEmbedder(e embeddings.Embedder) func(*Orchestrator) {
 	return func(o *Orchestrator) { o.embedder = e }
+}
+
+func withBackups(b backupScheduler) func(*Orchestrator) {
+	return func(o *Orchestrator) { o.backups = b }
 }
 
 // mockEmbedder records Embed calls and returns a fixed vector or injected error.

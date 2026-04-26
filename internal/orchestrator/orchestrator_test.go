@@ -25,3 +25,18 @@ func TestRunning_ReflectsIncrementAndDecrement(t *testing.T) {
 		t.Fatalf("Running() = %d, want 1", got)
 	}
 }
+
+func TestTick_SchedulesLocalBackups(t *testing.T) {
+	ms := newMockStore()
+	bus, _ := newTestBus()
+	defer bus.Close()
+
+	scheduler := &mockBackupScheduler{}
+	o := newTestOrchestrator(ms, bus, withBackups(scheduler))
+
+	o.tick(t.Context())
+
+	if got := scheduler.Calls(); got != 1 {
+		t.Fatalf("MaybeSchedule() calls = %d, want 1", got)
+	}
+}

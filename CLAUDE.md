@@ -74,6 +74,7 @@ All JSON responses are wrapped in a `{"data": …}` envelope; errors use `{"erro
 - **config/** — Env-var config (`BACKFLOW_*` prefix). `BACKFLOW_API_KEY` enables single-token API auth; otherwise `api_keys` in SQLite can back authenticated API/debug requests. `TaskDefaults(taskMode)` returns resolved defaults — for `read` mode it swaps in `ReaderImage` plus the `BACKFLOW_DEFAULT_READ_MAX_*` caps. `Apply(task, overrides)` fills zero-value fields using `*bool` overrides (nil = use default, non-nil = use pointed value). `Load()` enforces an all-or-nothing gate on the email-notification trio (`BACKFLOW_RESEND_API_KEY`, `BACKFLOW_NOTIFY_EMAIL_FROM`, `BACKFLOW_NOTIFY_EMAIL_TO`): setting any one of them without the other two fails startup.
 - **notify/** — `Notifier` interface, `WebhookNotifier` (HTTP POST, 3 retries, event filtering), `NoopNotifier`, `EventBus` (async fan-out delivery via buffered channel), `NewEvent` constructor with `EventOption` functional options (including `WithReading` for read-mode completion events). `Event` carries `TaskMode`, `ParentTaskID` (when set), plus optional reading fields (`TLDR`, `NoveltyVerdict`, `Tags`, `Connections`) populated only for read-task completion events.
 - **debug/** — `/debug/stats` handler: PID, uptime, running task count, database handle metrics
+- **backup/** — Local SQLite backup manager. `Manager.MaybeSchedule(ctx)` is invoked from each orchestrator tick; when enabled and the latest valid artifact is older than the configured interval, it spawns a single background goroutine that uses the SQLite online-backup API, gzip-compresses the snapshot, decompresses + `PRAGMA integrity_check`s it, then atomically renames into place and writes a sidecar with size, sha256, and finalization time. Subsequent ticks recompute the sha256 of the latest candidate before trusting it; mismatches fall back to the next-older valid artifact.
 - **skillcontract/** — Embedded JSON Schema validator (`schema.json`) for skill-agent `status.json` payloads. Tests walk every `docker/skill-agent/skills/*/examples/status.json` fixture and assert the deliberately broken negative fixture fails. Used by the skill-agent build to keep skill bundles' contract test fixtures honest.
 
 ### Web app (`web/`)
@@ -164,6 +165,27 @@ Reading-mode env vars:
 `BACKFLOW_SKILL_AGENT_IMAGE` opts a deployment into the `docker/skill-agent/` image (claude_code-only). See **Agent containers — three coexisting images** above for the routing rule and the absent-from-this-image components (`status_writer.sh`, `reader_helpers.sh`, prep stage, in-container retry loop). Skill bundles live in the source tree at `docker/skill-agent/skills/{auto,code,review,read}/`; the entrypoint copies the requested bundle into `~/.claude/skills/<mode>/` at start so Claude Code's native skill loader picks it up. The `auto` bundle dispatches at runtime to `code` or `review`, so the entrypoint installs both sub-bundles alongside it. The `status.json` contract is enforced by the Go validator in `internal/skillcontract`, which embeds `schema.json` and walks every `docker/skill-agent/skills/*/examples/status.json` fixture in tests. Skills are not a user-facing extension point — operators do not supply or override skill content per task.
 
 The `tasks` table carries a `force` boolean column. REST callers can set `force` on `POST /api/v1/tasks`; `Force=true` bypasses the dispatch-time duplicate check and allows an existing reading row to be overwritten on completion.
+
+## Local SQLite backups
+
+Enabled by default. Each orchestrator tick calls `backup.Manager.MaybeSchedule(ctx)`; the manager exits early if disabled, already running, or the latest valid backup is younger than `BACKFLOW_LOCAL_BACKUP_INTERVAL_SEC`. Otherwise it launches a single background goroutine that:
+
+1. Opens the configured database read-side and runs the SQLite online backup API (`*sqlite.Backup` from `modernc.org/sqlite`) into a temp file.
+2. Gzip-compresses the temp file to a `.sqlite.gz.tmp` sibling.
+3. Decompresses to a verification temp file and runs `PRAGMA integrity_check`.
+4. Hashes the compressed bytes, `os.Rename`s the gzip into place, then atomically writes a `.meta.json` sidecar containing `file_name`, `created_at` (scheduled), `finalized_at` (post-rename), `sha256`, and `size_bytes`.
+
+Artifact filenames are `backlite-YYYYMMDDTHHMMSSZ.sqlite.gz` (UTC). Age comparisons use `finalized_at` so a backup that takes longer than the interval does not immediately appear stale and trigger a continuous loop. Validity requires a structurally-correct sidecar **and** a recomputed sha256 that matches; corrupted artifacts are skipped and the scheduler falls back to the next-older valid one.
+
+Failures (e.g. integrity check fails, disk full, source DB locked beyond `busy_timeout`) are logged and do not affect health checks or task orchestration. Backup work runs concurrently with task orchestration but `MaybeSchedule` enforces single-flight via a mutex.
+
+Env vars (see `internal/config/config.go` for current defaults):
+
+- `BACKFLOW_LOCAL_BACKUP_ENABLED` — toggle the worker (default on)
+- `BACKFLOW_LOCAL_BACKUP_DIR` — output directory; supports `~` expansion
+- `BACKFLOW_LOCAL_BACKUP_INTERVAL_SEC` — minimum spacing between successful backups
+
+Restore is manual: stop the server, copy the chosen `.sqlite.gz` aside, `gunzip` it, optionally re-run `PRAGMA integrity_check`, replace the file at `BACKFLOW_DATABASE_PATH`, and restart.
 
 ## Email summary delivery (read mode, opt-in)
 

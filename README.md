@@ -300,3 +300,15 @@ Optional Resend integration that emails a structured summary of every completed 
 | Variable | Description |
 |----------|-------------|
 | `BACKFLOW_WEB_DIR` | Directory of the prebuilt web bundle served at `/*` (defaults to `./web/dist`). Leave the directory empty to disable the SPA route. |
+
+### Local SQLite backups
+
+Enabled by default. The server runs a single background worker from the orchestrator tick that takes a consistent online SQLite snapshot, gzip-compresses and verifies it, and writes it into a configurable directory alongside a `.meta.json` sidecar (`file_name`, `created_at`, `finalized_at`, `sha256`, `size_bytes`). Artifacts are named `backlite-YYYYMMDDTHHMMSSZ.sqlite.gz`. The latest artifact's sha256 is recomputed each tick before it is trusted; corrupted artifacts are skipped and the scheduler falls back to the previous valid one. Backup failures are logged and do not affect health checks or task orchestration.
+
+| Variable | Description |
+|----------|-------------|
+| `BACKFLOW_LOCAL_BACKUP_ENABLED` | Toggle the local backup worker |
+| `BACKFLOW_LOCAL_BACKUP_DIR` | Output directory (supports `~` expansion) |
+| `BACKFLOW_LOCAL_BACKUP_INTERVAL_SEC` | Minimum spacing between successful backups |
+
+To restore: stop the server, `gunzip backlite-...sqlite.gz`, optionally `sqlite3 file.sqlite "PRAGMA integrity_check;"`, copy the result over the file at `BACKFLOW_DATABASE_PATH`, and restart.

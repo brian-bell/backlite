@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -863,6 +864,85 @@ func TestHandleCompletion_ReadSuccess_NoOrphanFilesWhenSidecarMissing(t *testing
 	}
 	if len(mockOut.readingSaves) != 0 {
 		t.Errorf("SaveReadingContent must not run when ContentStatus is empty; got %d calls", len(mockOut.readingSaves))
+	}
+}
+
+func TestHandleCompletion_ReadSuccess_PersistFailureDoesNotFailTask(t *testing.T) {
+	// On-disk persist is best-effort: the row is already committed, and
+	// failing the task here would block retries on the duplicate guard.
+	// Verify the task still completes and the reading row is upserted.
+	s := newMockStore()
+	now := time.Now().UTC()
+	s.CreateTask(context.Background(), &models.Task{
+		ID:          "bf_read_persist_fail",
+		Status:      models.TaskStatusRunning,
+		TaskMode:    models.TaskModeRead,
+		Prompt:      "https://example.com/persist-fail",
+		ContainerID: "cont1",
+		StartedAt:   &now,
+	})
+
+	bus, n := newTestBus()
+	emb := &mockEmbedder{vector: []float32{0.1}}
+	mockOut := &mockWriter{
+		readingSaveErr: errors.New("disk full"),
+	}
+	o := newTestOrchestrator(s, bus,
+		withEmbedder(emb),
+		withDocker(&mockDockerManager{
+			readingRaw:       []byte("<html>x</html>"),
+			readingExtracted: []byte("# x"),
+			readingSidecar: []byte(`{
+				"url":"https://example.com/persist-fail",
+				"content_type":"text/html",
+				"content_status":"captured",
+				"content_bytes":15,
+				"extracted_bytes":3,
+				"content_sha256":"abc",
+				"fetched_at":"2026-04-25T12:00:00Z"
+			}`),
+		}),
+		withOutputs(mockOut),
+	)
+	o.running = 1
+
+	task, _ := s.GetTask(context.Background(), "bf_read_persist_fail")
+	o.handleCompletion(context.Background(), task, ContainerStatus{
+		Done:           true,
+		Complete:       true,
+		TaskMode:       models.TaskModeRead,
+		URL:            "https://example.com/persist-fail",
+		TLDR:           "x",
+		NoveltyVerdict: "new",
+	})
+	bus.Close()
+
+	// Reading row was upserted despite the disk failure.
+	s.mu.Lock()
+	if len(s.upsertedReadings) != 1 {
+		s.mu.Unlock()
+		t.Fatalf("upsertedReadings = %d, want 1", len(s.upsertedReadings))
+	}
+	r := s.upsertedReadings[0]
+	s.mu.Unlock()
+
+	finalTask, _ := s.GetTask(context.Background(), "bf_read_persist_fail")
+
+	if r.ContentStatus != "captured" {
+		t.Errorf("reading.ContentStatus = %q, want captured", r.ContentStatus)
+	}
+	// Task must complete, not fail.
+	if finalTask.Status != models.TaskStatusCompleted {
+		t.Errorf("task.Status = %q, want completed", finalTask.Status)
+	}
+	// task.completed should still be emitted.
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if len(n.events) != 1 {
+		t.Fatalf("events = %d, want 1", len(n.events))
+	}
+	if n.events[0].Type != notify.EventTaskCompleted {
+		t.Errorf("event = %q, want task.completed", n.events[0].Type)
 	}
 }
 

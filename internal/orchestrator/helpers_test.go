@@ -374,10 +374,11 @@ func (m *mockDockerManager) GetReadingContent(ctx context.Context, containerID s
 // --- Mock filesystem writer ---
 
 type mockWriter struct {
-	logSaves      []mockWriterLogSave
-	metadataSaves []mockWriterMetadataSave
-	readingSaves  []mockWriterReadingSave
-	err           error
+	logSaves       []mockWriterLogSave
+	metadataSaves  []mockWriterMetadataSave
+	readingSaves   []mockWriterReadingSave
+	err            error
+	readingSaveErr error
 }
 
 type mockWriterLogSave struct {
@@ -414,6 +415,9 @@ func (m *mockWriter) SaveMetadata(_ context.Context, taskID string, metadata any
 }
 
 func (m *mockWriter) SaveReadingContent(_ context.Context, readingID string, raw, extracted, sidecar []byte) error {
+	if m.readingSaveErr != nil {
+		return m.readingSaveErr
+	}
 	if m.err != nil {
 		return m.err
 	}

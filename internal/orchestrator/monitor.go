@@ -315,9 +315,17 @@ func (o *Orchestrator) handleReadingCompletion(ctx context.Context, task *models
 	// so disk and row stay in sync — without that, a missing/malformed
 	// sidecar would leave bytes on disk that the API endpoints (which
 	// require ContentStatus="captured") will never serve.
+	//
+	// Best-effort: a failure here is logged but does not fail the task.
+	// The row is already committed, and failing here would leave the user
+	// stuck — the duplicate guard at dispatch time would block any retry
+	// without force=true. The API gracefully 404s when the file is absent.
 	if reading.ContentStatus == "captured" && rawContent != nil && o.outputs != nil {
 		if err := o.outputs.SaveReadingContent(ctx, reading.ID, rawContent, extractedContent, sidecarBytes); err != nil {
-			return nil, fmt.Errorf("save reading content: %w", err)
+			log.Warn().Err(err).
+				Str("task_id", task.ID).
+				Str("reading_id", reading.ID).
+				Msg("save reading content failed; row committed without on-disk artifacts")
 		}
 	}
 

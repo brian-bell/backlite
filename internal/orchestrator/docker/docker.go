@@ -370,10 +370,50 @@ func (m *Manager) GetAgentOutput(ctx context.Context, containerID string) (strin
 // reader container's pre-fetch + extraction step. Missing files yield nil byte
 // slices (no error) so callers can record content_status accordingly.
 func (m *Manager) GetReadingContent(ctx context.Context, containerID string) (raw, extracted, sidecar []byte, err error) {
-	raw = m.copyReadingFile(ctx, containerID, "/home/agent/workspace/raw.html")
-	extracted = m.copyReadingFile(ctx, containerID, "/home/agent/workspace/extracted.md")
 	sidecar = m.copyReadingFile(ctx, containerID, "/home/agent/workspace/content.json")
+	if rawName := rawFilenameFromSidecar(sidecar); rawName != "" {
+		raw = m.copyReadingFile(ctx, containerID, "/home/agent/workspace/"+rawName)
+	}
+	extracted = m.copyReadingFile(ctx, containerID, "/home/agent/workspace/extracted.md")
 	return raw, extracted, sidecar, nil
+}
+
+type readingContentSidecar struct {
+	ContentType   string `json:"content_type"`
+	ContentStatus string `json:"content_status"`
+}
+
+func rawFilenameFromSidecar(sidecar []byte) string {
+	if len(sidecar) == 0 {
+		return "raw.html"
+	}
+	var c readingContentSidecar
+	if err := json.Unmarshal(sidecar, &c); err != nil {
+		return "raw.html"
+	}
+	if c.ContentStatus != "" && c.ContentStatus != "captured" {
+		return ""
+	}
+	if c.ContentType == "" {
+		return "raw.html"
+	}
+	return "raw." + extensionForContentType(c.ContentType)
+}
+
+func extensionForContentType(contentType string) string {
+	ct := strings.ToLower(strings.TrimSpace(contentType))
+	switch {
+	case strings.Contains(ct, "text/html"):
+		return "html"
+	case strings.Contains(ct, "application/pdf"):
+		return "pdf"
+	case strings.Contains(ct, "application/json"):
+		return "json"
+	case strings.Contains(ct, "text/plain"):
+		return "txt"
+	default:
+		return "bin"
+	}
 }
 
 // copyReadingFile pulls a single file out of the container via docker cp.

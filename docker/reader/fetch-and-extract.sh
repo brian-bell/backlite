@@ -3,7 +3,7 @@ set -euo pipefail
 
 # fetch-and-extract.sh — pre-fetches the URL and (for HTML) writes a
 # Readability-derived markdown extraction. Outputs in $WORKSPACE:
-#   raw.html       Raw bytes from the URL.
+#   raw.<ext>      Raw bytes from the URL, extension derived from Content-Type.
 #   extracted.md   Markdown extraction (HTML only).
 #   content.json   Sidecar metadata (mirrored to the readings DB row).
 #

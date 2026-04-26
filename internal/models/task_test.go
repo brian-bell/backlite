@@ -218,6 +218,11 @@ func TestCreateTaskRequestValidation(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "reserved env var key MAX_CONTENT_BYTES",
+			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"MAX_CONTENT_BYTES": "0"}},
+			wantErr: true,
+		},
+		{
 			name:    "reserved env var key RESEND_API_KEY",
 			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"RESEND_API_KEY": "re_attacker"}},
 			wantErr: true,

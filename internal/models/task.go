@@ -154,6 +154,7 @@ var reservedEnvVarKeys = map[string]bool{
 	"EFFORT":                true,
 	"MAX_BUDGET_USD":        true,
 	"MAX_TURNS":             true,
+	"MAX_CONTENT_BYTES":     true,
 	"CREATE_PR":             true,
 	"SELF_REVIEW":           true,
 	"FORCE":                 true,

@@ -237,7 +237,7 @@ func TestFSWriter_SaveReadingContent_SkipsNilExtracted(t *testing.T) {
 	w := New(root)
 
 	if err := w.SaveReadingContent(context.Background(), "bf_no_md",
-		[]byte("raw bytes"), nil, []byte(`{"content_type":"application/pdf"}`)); err != nil {
+		[]byte("raw bytes"), nil, []byte(`{"content_type":"application/pdf","content_status":"captured"}`)); err != nil {
 		t.Fatalf("SaveReadingContent: %v", err)
 	}
 
@@ -245,7 +245,38 @@ func TestFSWriter_SaveReadingContent_SkipsNilExtracted(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "extracted.md")); !os.IsNotExist(err) {
 		t.Errorf("extracted.md should not exist, stat err = %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "raw.html")); err != nil {
-		t.Errorf("raw.html should exist: %v", err)
+	if _, err := os.Stat(filepath.Join(dir, "raw.pdf")); err != nil {
+		t.Errorf("raw.pdf should exist: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "raw.html")); !os.IsNotExist(err) {
+		t.Errorf("raw.html should not exist for PDF capture, stat err = %v", err)
+	}
+}
+
+func TestFSWriter_SaveReadingContent_RemovesStaleArtifactsOnTypeChange(t *testing.T) {
+	root := t.TempDir()
+	w := New(root)
+
+	if err := w.SaveReadingContent(context.Background(), "bf_refresh",
+		[]byte("<html>old</html>"),
+		[]byte("# old"),
+		[]byte(`{"content_type":"text/html","content_status":"captured"}`)); err != nil {
+		t.Fatalf("first SaveReadingContent: %v", err)
+	}
+	if err := w.SaveReadingContent(context.Background(), "bf_refresh",
+		[]byte("%PDF-1.4\nnew"),
+		nil,
+		[]byte(`{"content_type":"application/pdf","content_status":"captured"}`)); err != nil {
+		t.Fatalf("second SaveReadingContent: %v", err)
+	}
+
+	dir := filepath.Join(root, "readings", "bf_refresh")
+	if _, err := os.Stat(filepath.Join(dir, "raw.pdf")); err != nil {
+		t.Errorf("raw.pdf should exist after PDF refresh: %v", err)
+	}
+	for _, stale := range []string{"raw.html", "extracted.md"} {
+		if _, err := os.Stat(filepath.Join(dir, stale)); !os.IsNotExist(err) {
+			t.Errorf("%s should have been removed on PDF refresh, stat err = %v", stale, err)
+		}
 	}
 }

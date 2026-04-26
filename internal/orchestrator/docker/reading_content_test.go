@@ -82,9 +82,9 @@ func TestGetReadingContent_MissingExtractedTolerated(t *testing.T) {
 			out string
 			err error
 		}{
-			"raw.html":     {out: "raw"},
+			"raw.pdf":      {out: "%PDF-1.4\nminimal"},
 			"extracted.md": {err: errors.New("no such file")},
-			"content.json": {out: `{"url":"https://x"}`},
+			"content.json": {out: `{"url":"https://x","content_type":"application/pdf","content_status":"captured"}`},
 		},
 	}
 	m := newManagerWithRunner(fake.run)
@@ -93,14 +93,19 @@ func TestGetReadingContent_MissingExtractedTolerated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetReadingContent: %v", err)
 	}
-	if string(raw) != "raw" {
+	if string(raw) != "%PDF-1.4\nminimal" {
 		t.Errorf("raw = %q", raw)
 	}
 	if extracted != nil {
 		t.Errorf("extracted should be nil, got %q", extracted)
 	}
-	if string(sidecar) != `{"url":"https://x"}` {
+	if string(sidecar) != `{"url":"https://x","content_type":"application/pdf","content_status":"captured"}` {
 		t.Errorf("sidecar = %q", sidecar)
+	}
+	for _, c := range fake.calls {
+		if strings.Contains(c, "/home/agent/workspace/raw.html") {
+			t.Errorf("non-HTML capture should not copy raw.html, got call: %s", c)
+		}
 	}
 }
 

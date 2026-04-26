@@ -768,6 +768,80 @@ func TestHandleCompletion_ReadSuccess_PersistsCapturedContent(t *testing.T) {
 	}
 }
 
+func TestHandleCompletion_ReadSuccess_PersistsNonHTMLRawByContentType(t *testing.T) {
+	s := newMockStore()
+	now := time.Now().UTC()
+	s.CreateTask(context.Background(), &models.Task{
+		ID:          "bf_read_pdf",
+		Status:      models.TaskStatusRunning,
+		TaskMode:    models.TaskModeRead,
+		Prompt:      "https://example.com/doc.pdf",
+		ContainerID: "cont1",
+		StartedAt:   &now,
+	})
+
+	bus, _ := newTestBus()
+	emb := &mockEmbedder{vector: []float32{0.1}}
+	raw := []byte("%PDF-1.4\nminimal pdf body\n")
+	sidecar := []byte(`{
+  "url":"https://example.com/doc.pdf",
+  "content_type":"application/pdf",
+  "content_status":"captured",
+  "content_bytes":26,
+  "extracted_bytes":0,
+  "content_sha256":"pdf-sha",
+  "fetched_at":"2026-04-25T12:00:00Z"
+}`)
+	root := t.TempDir()
+	o := newTestOrchestrator(s, bus,
+		withEmbedder(emb),
+		withDocker(&mockDockerManager{
+			readingRaw:       raw,
+			readingExtracted: nil,
+			readingSidecar:   sidecar,
+		}),
+		withOutputs(outputs.New(root)),
+	)
+	o.running = 1
+
+	task, _ := s.GetTask(context.Background(), "bf_read_pdf")
+	o.handleCompletion(context.Background(), task, ContainerStatus{
+		Done:           true,
+		Complete:       true,
+		TaskMode:       models.TaskModeRead,
+		URL:            "https://example.com/doc.pdf",
+		TLDR:           "pdf summary",
+		NoveltyVerdict: "new",
+	})
+	bus.Close()
+
+	s.mu.Lock()
+	if len(s.upsertedReadings) != 1 {
+		s.mu.Unlock()
+		t.Fatalf("upsertedReadings = %d, want 1", len(s.upsertedReadings))
+	}
+	r := s.upsertedReadings[0]
+	s.mu.Unlock()
+
+	dir := filepath.Join(root, "readings", r.ID)
+	gotRaw, err := os.ReadFile(filepath.Join(dir, "raw.pdf"))
+	if err != nil {
+		t.Fatalf("read raw.pdf: %v", err)
+	}
+	if string(gotRaw) != string(raw) {
+		t.Errorf("raw.pdf = %q, want %q", gotRaw, raw)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "raw.html")); !os.IsNotExist(err) {
+		t.Errorf("raw.html should not exist for PDF capture, stat err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "extracted.md")); !os.IsNotExist(err) {
+		t.Errorf("extracted.md should not exist for PDF capture, stat err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "content.json")); err != nil {
+		t.Errorf("content.json should exist: %v", err)
+	}
+}
+
 func TestHandleCompletion_ReadSuccess_RecordsFetchFailedWithoutPersisting(t *testing.T) {
 	// When the in-container fetcher records fetch_failed (e.g. HTTP 4xx, TLS
 	// error), no raw bytes accompany the sidecar. The reading row should

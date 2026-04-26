@@ -82,6 +82,21 @@ mkdir -p "$WORKSPACE"
 STATUS_FILE="${WORKSPACE}/status.json"
 START_TIME=$(date +%s)
 
+# --- Read-mode content capture (non-fatal) ---
+# Mirrors docker/reader's pre-fetch pipeline so the orchestrator can copy the
+# same raw/extracted/sidecar artifacts from skill-agent read containers.
+if [ "$TASK_MODE" = "read" ]; then
+    READ_SKILL_DIR="${HOME}/.claude/skills/read"
+    CAPTURE_SCRIPT="${READ_SKILL_DIR}/fetch-and-extract.sh"
+    if [ -x "$CAPTURE_SCRIPT" ]; then
+        echo "==> Pre-fetching and extracting content for ${PROMPT}..."
+        CAPTURE_EXTRACT_CMD="${EXTRACT_CMD:-node ${READ_SKILL_DIR}/extractor/extract.js}"
+        URL="$PROMPT" WORKSPACE="$WORKSPACE" EXTRACT_CMD="$CAPTURE_EXTRACT_CMD" \
+            bash "$CAPTURE_SCRIPT" || \
+            echo "WARN: fetch-and-extract.sh exited non-zero; continuing without capture" >&2
+    fi
+fi
+
 # Starter prompt: brief enough to leave room for the skill to drive the run.
 STARTER_PROMPT="Use the '${TASK_MODE}' skill from ~/.claude/skills/${TASK_MODE}/SKILL.md to handle the following task.
 

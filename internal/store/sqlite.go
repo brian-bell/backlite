@@ -89,7 +89,7 @@ const taskColumns = `id, status, task_mode, harness, repo_url, branch, target_br
 	create_pr, self_review, save_agent_output, pr_title, pr_body, pr_url, output_url,
 	allowed_tools, claude_md, env_vars,
 	container_id, retry_count, user_retry_count, cost_usd, elapsed_time_sec, error,
-	ready_for_retry, agent_image, force, parent_task_id,
+	ready_for_retry, agent_image, force, parent_task_id, inline_content_sha256,
 	created_at, updated_at, started_at, completed_at`
 
 func (s *SQLiteStore) CreateTask(ctx context.Context, task *models.Task) error {
@@ -110,7 +110,7 @@ func (s *SQLiteStore) CreateTask(ctx context.Context, task *models.Task) error {
 			create_pr, self_review, save_agent_output, pr_title, pr_body, pr_url, output_url,
 			allowed_tools, claude_md, env_vars,
 			container_id, retry_count, user_retry_count, cost_usd, elapsed_time_sec, error,
-			ready_for_retry, agent_image, force, parent_task_id,
+			ready_for_retry, agent_image, force, parent_task_id, inline_content_sha256,
 			created_at, updated_at, started_at, completed_at
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?,
@@ -119,7 +119,7 @@ func (s *SQLiteStore) CreateTask(ctx context.Context, task *models.Task) error {
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?,
 			?, ?, ?, ?, ?, ?,
-			?, ?, ?, ?,
+			?, ?, ?, ?, ?,
 			?, ?, ?, ?
 		)`,
 		task.ID, task.Status, task.TaskMode, task.Harness, task.RepoURL, task.Branch, task.TargetBranch,
@@ -129,7 +129,7 @@ func (s *SQLiteStore) CreateTask(ctx context.Context, task *models.Task) error {
 		task.PRTitle, task.PRBody, task.PRURL, task.OutputURL,
 		allowedTools, task.ClaudeMD, envVars,
 		task.ContainerID, task.RetryCount, task.UserRetryCount, task.CostUSD, task.ElapsedTimeSec, task.Error,
-		task.ReadyForRetry, task.AgentImage, task.Force, nullableString(task.ParentTaskID),
+		task.ReadyForRetry, task.AgentImage, task.Force, nullableString(task.ParentTaskID), nullableStringValue(task.InlineContentSHA256),
 		timeString(task.CreatedAt), timeString(task.UpdatedAt), nullableTimeString(task.StartedAt), nullableTimeString(task.CompletedAt),
 	)
 	return err
@@ -613,14 +613,15 @@ type sqlScanner interface {
 
 func scanTask(row sqlScanner) (*models.Task, error) {
 	var (
-		t                models.Task
-		allowedToolsJSON string
-		envVarsJSON      string
-		parentTaskID     sql.NullString
-		createdAt        string
-		updatedAt        string
-		startedAt        sql.NullString
-		completedAt      sql.NullString
+		t                   models.Task
+		allowedToolsJSON    string
+		envVarsJSON         string
+		parentTaskID        sql.NullString
+		inlineContentSHA256 sql.NullString
+		createdAt           string
+		updatedAt           string
+		startedAt           sql.NullString
+		completedAt         sql.NullString
 	)
 
 	err := row.Scan(
@@ -631,7 +632,7 @@ func scanTask(row sqlScanner) (*models.Task, error) {
 		&t.PRTitle, &t.PRBody, &t.PRURL, &t.OutputURL,
 		&allowedToolsJSON, &t.ClaudeMD, &envVarsJSON,
 		&t.ContainerID, &t.RetryCount, &t.UserRetryCount, &t.CostUSD, &t.ElapsedTimeSec, &t.Error,
-		&t.ReadyForRetry, &t.AgentImage, &t.Force, &parentTaskID,
+		&t.ReadyForRetry, &t.AgentImage, &t.Force, &parentTaskID, &inlineContentSHA256,
 		&createdAt, &updatedAt, &startedAt, &completedAt,
 	)
 	if err != nil {
@@ -643,6 +644,9 @@ func scanTask(row sqlScanner) (*models.Task, error) {
 	if parentTaskID.Valid {
 		v := parentTaskID.String
 		t.ParentTaskID = &v
+	}
+	if inlineContentSHA256.Valid {
+		t.InlineContentSHA256 = inlineContentSHA256.String
 	}
 
 	if err := unmarshalJSONString(allowedToolsJSON, &t.AllowedTools); err != nil {
@@ -731,6 +735,16 @@ func nullableString(s *string) any {
 		return nil
 	}
 	return *s
+}
+
+// nullableStringValue returns nil for empty strings so that NULL is stored
+// rather than the empty string. Used for nullable TEXT columns whose
+// in-memory representation is a plain string (not *string).
+func nullableStringValue(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 func parseTime(raw string) (time.Time, error) {

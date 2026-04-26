@@ -70,16 +70,21 @@ type Task struct {
 	ClaudeMD        string            `json:"claude_md,omitempty"`
 	EnvVars         map[string]string `json:"env_vars,omitempty"`
 	ContainerID     string            `json:"container_id,omitempty"`
-	RetryCount      int               `json:"retry_count"`
-	UserRetryCount  int               `json:"user_retry_count"`
-	ReadyForRetry   bool              `json:"ready_for_retry"`
-	CostUSD         float64           `json:"cost_usd,omitempty"`
-	ElapsedTimeSec  int               `json:"elapsed_time_sec,omitempty"`
-	Error           string            `json:"error,omitempty"`
-	CreatedAt       time.Time         `json:"created_at"`
-	UpdatedAt       time.Time         `json:"updated_at"`
-	StartedAt       *time.Time        `json:"started_at,omitempty"`
-	CompletedAt     *time.Time        `json:"completed_at,omitempty"`
+	// InlineContentSHA256, when non-empty, marks a read-mode task whose
+	// source is a markdown body persisted under
+	// {DataDir}/ingest/<sha>.md instead of a URL fetched at run time.
+	// Prompt for such tasks is rewritten to "markdown://<sha>".
+	InlineContentSHA256 string     `json:"inline_content_sha256,omitempty"`
+	RetryCount          int        `json:"retry_count"`
+	UserRetryCount      int        `json:"user_retry_count"`
+	ReadyForRetry       bool       `json:"ready_for_retry"`
+	CostUSD             float64    `json:"cost_usd,omitempty"`
+	ElapsedTimeSec      int        `json:"elapsed_time_sec,omitempty"`
+	Error               string     `json:"error,omitempty"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
+	StartedAt           *time.Time `json:"started_at,omitempty"`
+	CompletedAt         *time.Time `json:"completed_at,omitempty"`
 }
 
 // AllowedToolsJSON returns the JSON representation for DB storage.
@@ -122,6 +127,13 @@ type CreateTaskRequest struct {
 	AllowedTools    []string          `json:"allowed_tools,omitempty"`
 	ClaudeMD        string            `json:"claude_md,omitempty"`
 	EnvVars         map[string]string `json:"env_vars,omitempty"`
+	// InlineContent is an optional raw markdown body. When set on a
+	// read-mode task it is persisted to disk under a content-addressed
+	// path; the orchestrator bind-mounts that file into the reader
+	// container instead of fetching a URL. Pointer-typed so the API
+	// can distinguish "absent" from an explicitly-empty client
+	// payload (which is a validation error).
+	InlineContent *string `json:"inline_content,omitempty"`
 }
 
 // validEnvVarKey matches POSIX environment variable names: must start with a
@@ -157,6 +169,7 @@ var reservedEnvVarKeys = map[string]bool{
 	"RESEND_API_KEY":        true,
 	"NOTIFY_EMAIL_FROM":     true,
 	"NOTIFY_EMAIL_TO":       true,
+	"INLINE_CONTENT_PATH":   true,
 }
 
 // containsNullByte returns true if s contains a null byte, which PostgreSQL
@@ -225,6 +238,12 @@ func (r *CreateTaskRequest) Validate() error {
 		default:
 			return fmt.Errorf("task_mode must be auto or read (code and review are inferred from the prompt)")
 		}
+	}
+	if r.InlineContent != nil && *r.InlineContent == "" {
+		return fmt.Errorf("inline_content must be non-empty when set")
+	}
+	if r.InlineContent != nil && containsNullByte(*r.InlineContent) {
+		return fmt.Errorf("request contains invalid null bytes")
 	}
 	return nil
 }

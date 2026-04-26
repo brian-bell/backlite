@@ -158,6 +158,7 @@ paths:
           description: Reading ID
           schema:
             type: string
+            pattern: "^bf_[0-9A-Z]{26}$"
       responses:
         "200":
           description: Reading details
@@ -179,6 +180,123 @@ paths:
                 $ref: "#/components/schemas/ErrorEnvelope"
         "404":
           description: Reading not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+      security:
+        - BearerAuth: [readings:read]
+
+  /api/v1/readings/{id}/content:
+    get:
+      operationId: getReadingContent
+      summary: Get the extracted markdown for a reading
+      description: >
+        Streams the markdown extraction (Mozilla Readability + turndown) of a
+        captured reading. Returns 404 when the reading was not captured
+        (`content_status != "captured"`) or no extraction is available
+        (non-HTML payloads).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Reading ID
+          schema:
+            type: string
+            pattern: "^bf_[0-9A-Z]{26}$"
+      responses:
+        "200":
+          description: Extracted markdown
+          content:
+            text/markdown:
+              schema:
+                type: string
+        "400":
+          description: Malformed reading ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: API key lacks required scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Reading content not available
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+      security:
+        - BearerAuth: [readings:read]
+
+  /api/v1/readings/{id}/content/raw:
+    get:
+      operationId: getReadingContentRaw
+      summary: Get the raw captured bytes for a reading
+      description: >
+        Streams the raw bytes captured for a reading with the original
+        Content-Type as recorded on the reading row. Returns 404 when the
+        reading was not captured (`content_status != "captured"`).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Reading ID
+          schema:
+            type: string
+            pattern: "^bf_[0-9A-Z]{26}$"
+      responses:
+        "200":
+          description: Raw captured content
+          content:
+            text/html:
+              schema:
+                type: string
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: Malformed reading ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: API key lacks required scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Reading content not available
           content:
             application/json:
               schema:
@@ -1095,6 +1213,32 @@ components:
         created_at:
           type: string
           format: date-time
+        content_type:
+          type: string
+          description: MIME type of the captured raw bytes. Empty when no capture ran.
+          example: "text/html; charset=utf-8"
+        content_status:
+          type: string
+          description: >
+            Capture state: `captured` (raw bytes saved; if HTML, extracted markdown also saved),
+            `fetch_failed`, `over_size_cap`, `unsupported_type`, or empty (legacy / no capture).
+          example: "captured"
+        content_bytes:
+          type: integer
+          format: int64
+          description: Size in bytes of the raw captured payload.
+        extracted_bytes:
+          type: integer
+          format: int64
+          description: Size in bytes of the extracted markdown (HTML only).
+        content_sha256:
+          type: string
+          description: Hex SHA-256 of the raw captured bytes.
+        fetched_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the reader container fetched the URL.
 
     ReadingConnection:
       type: object

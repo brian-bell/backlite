@@ -44,6 +44,8 @@ type Event struct {
 	NoveltyVerdict string              `json:"novelty_verdict,omitempty"`
 	Tags           []string            `json:"tags,omitempty"`
 	Connections    []models.Connection `json:"connections,omitempty"`
+	ContentStatus  string              `json:"content_status,omitempty"`
+	ContentType    string              `json:"content_type,omitempty"`
 }
 
 // Emitter emits task lifecycle events.

@@ -146,3 +146,106 @@ func TestFSWriter_SaveLog_ReturnsURL(t *testing.T) {
 		t.Errorf("SaveLog url = %q, want %q", url, want)
 	}
 }
+
+func TestFSWriter_SaveReadingContent_WritesAllThreeFiles(t *testing.T) {
+	root := t.TempDir()
+	w := New(root)
+
+	raw := []byte("<html><body>hello</body></html>")
+	extracted := []byte("# hello\n")
+	sidecar := []byte(`{"url":"https://example.com","content_status":"captured"}`)
+
+	if err := w.SaveReadingContent(context.Background(), "bf_read1", raw, extracted, sidecar); err != nil {
+		t.Fatalf("SaveReadingContent: %v", err)
+	}
+
+	dir := filepath.Join(root, "readings", "bf_read1")
+	for name, want := range map[string][]byte{
+		"raw.html":     raw,
+		"extracted.md": extracted,
+		"content.json": sidecar,
+	} {
+		got, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if string(got) != string(want) {
+			t.Errorf("%s content = %q, want %q", name, got, want)
+		}
+	}
+}
+
+func TestFSWriter_SaveReadingContent_Atomic(t *testing.T) {
+	root := t.TempDir()
+	w := New(root)
+
+	if err := w.SaveReadingContent(context.Background(), "bf_atomic_r",
+		[]byte("raw"), []byte("md"), []byte(`{}`)); err != nil {
+		t.Fatalf("SaveReadingContent: %v", err)
+	}
+
+	entries, err := os.ReadDir(filepath.Join(root, "readings", "bf_atomic_r"))
+	if err != nil {
+		t.Fatalf("read reading dir: %v", err)
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".tmp") {
+			t.Errorf("reading dir contains leftover tmp file: %s", e.Name())
+		}
+	}
+	if len(entries) != 3 {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("reading dir contains %d entries %v, want 3", len(entries), names)
+	}
+}
+
+func TestFSWriter_SaveReadingContent_Overwrites(t *testing.T) {
+	root := t.TempDir()
+	w := New(root)
+
+	if err := w.SaveReadingContent(context.Background(), "bf_over_r",
+		[]byte("first-raw"), []byte("first-md"), []byte(`{"v":1}`)); err != nil {
+		t.Fatalf("first SaveReadingContent: %v", err)
+	}
+	if err := w.SaveReadingContent(context.Background(), "bf_over_r",
+		[]byte("second-raw"), []byte("second-md"), []byte(`{"v":2}`)); err != nil {
+		t.Fatalf("second SaveReadingContent: %v", err)
+	}
+
+	dir := filepath.Join(root, "readings", "bf_over_r")
+	gotRaw, _ := os.ReadFile(filepath.Join(dir, "raw.html"))
+	if string(gotRaw) != "second-raw" {
+		t.Errorf("raw.html = %q, want %q", gotRaw, "second-raw")
+	}
+	gotMD, _ := os.ReadFile(filepath.Join(dir, "extracted.md"))
+	if string(gotMD) != "second-md" {
+		t.Errorf("extracted.md = %q, want %q", gotMD, "second-md")
+	}
+	gotSidecar, _ := os.ReadFile(filepath.Join(dir, "content.json"))
+	if string(gotSidecar) != `{"v":2}` {
+		t.Errorf("content.json = %q, want %q", gotSidecar, `{"v":2}`)
+	}
+}
+
+func TestFSWriter_SaveReadingContent_SkipsNilExtracted(t *testing.T) {
+	// extracted.md is HTML-only — non-HTML payloads pass nil and the file
+	// must not appear on disk.
+	root := t.TempDir()
+	w := New(root)
+
+	if err := w.SaveReadingContent(context.Background(), "bf_no_md",
+		[]byte("raw bytes"), nil, []byte(`{"content_type":"application/pdf"}`)); err != nil {
+		t.Fatalf("SaveReadingContent: %v", err)
+	}
+
+	dir := filepath.Join(root, "readings", "bf_no_md")
+	if _, err := os.Stat(filepath.Join(dir, "extracted.md")); !os.IsNotExist(err) {
+		t.Errorf("extracted.md should not exist, stat err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "raw.html")); err != nil {
+		t.Errorf("raw.html should exist: %v", err)
+	}
+}

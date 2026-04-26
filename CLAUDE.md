@@ -30,6 +30,7 @@ make docker-reader-build-local       # Reader image (native arch)
 make docker-skill-agent-build-local  # Skill-agent image (native arch; opt-in via BACKFLOW_SKILL_AGENT_IMAGE)
 make docker-agents-build-local       # Build all three agent images
 make test-skill-agent-entrypoint     # Shell tests for the skill-agent entrypoint
+make test-reader-fetch-extract       # Hermetic shell test for the reader's pre-fetch + extraction pipeline
 goose -dir migrations status # Show pending/applied migrations
 goose -dir migrations up     # Apply the next migration(s)
 goose -dir migrations down   # Roll back the last migration
@@ -60,6 +61,8 @@ All JSON responses are wrapped in a `{"data": …}` envelope; errors use `{"erro
 - `GET /api/v1/tasks/{id}/output.json` — Return the JSON task metadata snapshot (`task.json`) persisted alongside the output log
 - `GET /api/v1/readings` — Paginated newest-first list of stored readings (query params: `limit`, `offset`); requires `readings:read` scope when API keys are configured
 - `GET /api/v1/readings/{id}` — Single reading detail (full TL;DR, summary, tags, connections); requires `readings:read` scope
+- `GET /api/v1/readings/{id}/content` — Streams the extracted markdown for a reading (HTML-derived). 404 when `content_status != "captured"`. Requires `readings:read` scope.
+- `GET /api/v1/readings/{id}/content/raw` — Streams the raw captured bytes for a reading with the recorded `Content-Type`. 404 when `content_status != "captured"`. Requires `readings:read` scope.
 - `GET /api/v1/readings/lookup` — Exact-URL duplicate check (public route — no auth — used by reader containers and the orchestrator's dispatch-time guard)
 - `POST /api/v1/readings/similar` — Semantic similarity search over stored `readings` (public route, cosine similarity in Go over JSON-encoded embeddings)
 - `GET /*` — Static SPA bundle from `BACKFLOW_WEB_DIR` (defaults to `./web/dist`). Falls back to `index.html` for client-side routes; `/api/*`, `/debug/*`, and `/health` are reserved and never served by the SPA handler. Disabled when the directory is empty.
@@ -139,14 +142,21 @@ On completion, the orchestrator's `handleReadingCompletion` helper (in `internal
 1. Parses the reading-specific fields off `ContainerStatus`.
 2. If the agent's `novelty_verdict` is `"duplicate"` and `!task.Force`, short-circuits with no write (agent noticed a dup mid-run; preserve the existing row).
 3. Calls `embeddings.Embedder.Embed(ctx, tldr)` to embed the final TL;DR (re-embedded by the orchestrator, not reused from the agent — the agent's draft TL;DR can be refined after similarity lookup).
-4. Writes the row via `store.UpsertReading`.
-5. Emits `task.completed` with `WithReading(tldr, verdict, tags, connections)`.
+4. Pulls the captured-content artifacts (`raw.html`, `extracted.md`, `content.json`) out of the container via `Runner.GetReadingContent`. Missing files are tolerated — the reader's pre-fetch step is non-fatal.
+5. Parses the `content.json` sidecar and copies its metadata fields (`content_type`, `content_status`, `content_bytes`, `extracted_bytes`, `content_sha256`, `fetched_at`) onto the reading row.
+6. Writes the row via `store.UpsertReading`.
+7. Persists the captured artifacts to disk under `{BACKFLOW_DATA_DIR}/readings/{id}/` via `outputs.SaveReadingContent` (atomic `*.tmp` + rename, mirroring `tasks/{id}/`). On-disk persist is best-effort — failure is logged but does not fail the task, since the row is already committed and failing here would block retries on the duplicate guard. The API gracefully 404s when a file is absent.
+8. Emits `task.completed` with `WithReading(tldr, verdict, tags, connections)` plus, when capture ran, `WithReadingContent(content_status, content_type)`.
 
 If the embedding API call or the DB write fails, the task is marked `failed` rather than silently `completed`, and `task.failed` is emitted. If `embedder` is nil (no `OPENAI_API_KEY` configured), reading tasks fail at completion.
 
+The reader container's pre-fetch + extraction step (`fetch-and-extract.sh` + `extract.js`, both in `docker/reader/`) runs before the harness. It downloads the URL with `curl`, computes a SHA-256, and — for HTML payloads — runs the in-container Node pipeline (`@mozilla/readability` + `jsdom` + `turndown`) to produce `extracted.md`. Capture is independent of summarization: the agent's prompt is unchanged, and the agent continues to use `WebFetch` (claude_code) or `curl` (codex) as the primary read path. Capture failures log a warning and the agent runs anyway. Slice 1 ships only the HTML happy path on `docker/reader/`; richer failure-mode statuses (`fetch_failed`, `over_size_cap`, `unsupported_type`), non-HTML payload coverage, size caps, force/duplicate semantics for content overwrite, and the `docker/skill-agent/` image are deferred to follow-up slices.
+
 The reading agent image and reader-side shell scripts live in `docker/reader/`:
 
-- `reader-entrypoint.sh` — Image entrypoint: runs the harness, extracts JSON via `reader_helpers.sh`, writes `status.json` via `status_writer.sh`.
+- `reader-entrypoint.sh` — Image entrypoint: runs the pre-fetch step (best-effort), then the harness, extracts JSON via `reader_helpers.sh`, writes `status.json` via `status_writer.sh`.
+- `fetch-and-extract.sh` — Pre-fetch + extraction. Writes `raw.html`, `extracted.md`, and a `content.json` sidecar to the workspace.
+- `extractor/extract.js` — Node script that turns HTML into markdown using `@mozilla/readability` + `jsdom` + `turndown`.
 - `read-embed.sh` — Embeds text via OpenAI `text-embedding-3-small`. Used by the agent to embed a draft TL;DR for similarity search.
 - `read-similar.sh` — Semantic similarity search: embeds input text, calls Backlite's `/api/v1/readings/similar` endpoint.
 - `read-lookup.sh` — Exact-URL duplicate check via Backlite's `/api/v1/readings/lookup` endpoint.
@@ -238,7 +248,7 @@ Secrets (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GITHUB_TOKEN`) are passed via `
 
 SQLite. Tables: `tasks`, `api_keys`, `readings`. See `docs/schema.md` for the full column-level schema. Migrations are managed by [goose](https://github.com/pressly/goose) and live in `migrations/`. The store implementation is in `internal/store/sqlite.go` using `database/sql`. Set `BACKFLOW_DATABASE_PATH` to the local database path.
 
-The schema was collapsed to a single `001_initial_schema.sql` baseline; `002_parent_task_id.sql` added `tasks.parent_task_id` plus `idx_tasks_parent_task_id`. Any new schema change starts at the next numeric prefix.
+The schema was collapsed to a single `001_initial_schema.sql` baseline; `002_parent_task_id.sql` added `tasks.parent_task_id` plus `idx_tasks_parent_task_id`; `003_reading_content.sql` added the six content-capture columns to `readings` (`content_type`, `content_status`, `content_bytes`, `extracted_bytes`, `content_sha256`, `fetched_at`). Any new schema change starts at the next numeric prefix.
 
 Migration workflow:
 

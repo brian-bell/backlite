@@ -30,6 +30,8 @@ func NewServer(s store.Store, cfg *config.Config, logs LogFetcher, bus notify.Em
 
 		r.Get("/readings", h.ListReadings)
 		r.Get("/readings/{id}", h.GetReading)
+		r.Get("/readings/{id}/content", h.GetReadingContent)
+		r.Get("/readings/{id}/content/raw", h.GetReadingContentRaw)
 
 		r.Route("/tasks", func(r chi.Router) {
 			r.Post("/", h.CreateTask)

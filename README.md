@@ -52,6 +52,7 @@ make test-soak                    # Resource leak detector (10 min; starts dedic
 make test-fake-agent              # Unit tests for the fake agent image
 make test-schema                  # Schemathesis fuzz tests against OpenAPI spec
 make test-skill-agent-entrypoint  # Shell-level e2e tests for the skill-agent container entrypoint
+make test-reader-fetch-extract    # Hermetic shell test for the reader's pre-fetch + extraction pipeline
 ```
 
 ## Submitting Tasks
@@ -90,7 +91,7 @@ make test-skill-agent-entrypoint  # Shell-level e2e tests for the skill-agent co
 
 ### Reading Mode
 
-Submits a URL to a dedicated reader image, which fetches the page, drafts a TL;DR, and persists a row in the `readings` table (with an embedding for similarity search). Requires `BACKFLOW_READER_IMAGE` and `OPENAI_API_KEY`.
+Submits a URL to a dedicated reader image, which fetches the page, drafts a TL;DR, and persists a row in the `readings` table (with an embedding for similarity search). HTML pages also have their raw bytes and a Readability-derived markdown rendering captured under `BACKFLOW_DATA_DIR/readings/<id>/` and exposed via `GET /api/v1/readings/{id}/content` and `/content/raw`. Requires `BACKFLOW_READER_IMAGE` and `OPENAI_API_KEY`.
 
 ```bash
 ./scripts/read-url.sh https://example.com/article
@@ -138,6 +139,8 @@ The full OpenAPI 3.0 spec lives at [`api/openapi.yaml`](api/openapi.yaml). `make
 | `GET` | `/api/v1/tasks/{id}/output.json` | Persisted task metadata snapshot |
 | `GET` | `/api/v1/readings` | List stored readings (`?limit=`, `?offset=`); requires `readings:read` scope |
 | `GET` | `/api/v1/readings/{id}` | Reading detail (TL;DR, summary, tags, connections); requires `readings:read` scope |
+| `GET` | `/api/v1/readings/{id}/content` | Extracted markdown for the reading (HTML-derived); 404 when content was not captured; requires `readings:read` scope |
+| `GET` | `/api/v1/readings/{id}/content/raw` | Raw captured bytes with the recorded `Content-Type`; 404 when content was not captured; requires `readings:read` scope |
 | `GET` | `/api/v1/readings/lookup` | Exact-URL duplicate check (public — used by reader containers) |
 | `POST` | `/api/v1/readings/similar` | Semantic similarity search over stored readings (public) |
 | `GET` | `/api/v1/health` | Health check |

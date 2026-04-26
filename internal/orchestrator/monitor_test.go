@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -655,6 +656,306 @@ func TestHandleCompletion_ReadSuccess_EmbedsAndCreatesReading(t *testing.T) {
 	}
 	if len(e.Connections) != 1 {
 		t.Errorf("event.Connections = %+v", e.Connections)
+	}
+}
+
+func TestHandleCompletion_ReadSuccess_PersistsCapturedContent(t *testing.T) {
+	s := newMockStore()
+	now := time.Now().UTC()
+	s.CreateTask(context.Background(), &models.Task{
+		ID:          "bf_read_capture",
+		Status:      models.TaskStatusRunning,
+		TaskMode:    models.TaskModeRead,
+		Prompt:      "https://example.com/cap",
+		ContainerID: "cont1",
+		StartedAt:   &now,
+	})
+
+	bus, n := newTestBus()
+	emb := &mockEmbedder{vector: []float32{0.1}}
+
+	raw := []byte("<html><title>cap</title></html>")
+	extracted := []byte("# cap\n\nbody")
+	sidecar := []byte(`{
+  "url":"https://example.com/cap",
+  "content_type":"text/html; charset=utf-8",
+  "content_status":"captured",
+  "content_bytes":31,
+  "extracted_bytes":11,
+  "content_sha256":"abc123",
+  "fetched_at":"2026-04-25T12:00:00Z"
+}`)
+
+	mockDocker := &mockDockerManager{
+		readingRaw:       raw,
+		readingExtracted: extracted,
+		readingSidecar:   sidecar,
+	}
+	mockOut := &mockWriter{}
+	o := newTestOrchestrator(s, bus,
+		withEmbedder(emb),
+		withDocker(mockDocker),
+		withOutputs(mockOut),
+	)
+	o.running = 1
+
+	task, _ := s.GetTask(context.Background(), "bf_read_capture")
+	o.handleCompletion(context.Background(), task, ContainerStatus{
+		Done:           true,
+		Complete:       true,
+		TaskMode:       models.TaskModeRead,
+		URL:            "https://example.com/cap",
+		TLDR:           "cap summary",
+		NoveltyVerdict: "new",
+	})
+	bus.Close()
+
+	// Reading row should carry the parsed sidecar fields.
+	s.mu.Lock()
+	if len(s.upsertedReadings) != 1 {
+		t.Fatalf("upsertedReadings = %d, want 1", len(s.upsertedReadings))
+	}
+	r := s.upsertedReadings[0]
+	s.mu.Unlock()
+
+	if r.ContentType != "text/html; charset=utf-8" {
+		t.Errorf("reading.ContentType = %q", r.ContentType)
+	}
+	if r.ContentStatus != "captured" {
+		t.Errorf("reading.ContentStatus = %q, want captured", r.ContentStatus)
+	}
+	if r.ContentBytes != 31 {
+		t.Errorf("reading.ContentBytes = %d, want 31", r.ContentBytes)
+	}
+	if r.ExtractedBytes != 11 {
+		t.Errorf("reading.ExtractedBytes = %d, want 11", r.ExtractedBytes)
+	}
+	if r.ContentSHA256 != "abc123" {
+		t.Errorf("reading.ContentSHA256 = %q", r.ContentSHA256)
+	}
+	if r.FetchedAt == nil {
+		t.Error("reading.FetchedAt = nil, want non-nil")
+	}
+
+	// Outputs writer should have been called with the captured bytes, keyed
+	// by the new reading's ID.
+	if len(mockOut.readingSaves) != 1 {
+		t.Fatalf("SaveReadingContent calls = %d, want 1", len(mockOut.readingSaves))
+	}
+	got := mockOut.readingSaves[0]
+	if got.readingID != r.ID {
+		t.Errorf("SaveReadingContent readingID = %q, want %q", got.readingID, r.ID)
+	}
+	if string(got.raw) != string(raw) {
+		t.Errorf("SaveReadingContent raw mismatch")
+	}
+	if string(got.extracted) != string(extracted) {
+		t.Errorf("SaveReadingContent extracted mismatch")
+	}
+
+	// Webhook event should carry content_status.
+	n.mu.Lock()
+	if len(n.events) != 1 {
+		t.Fatalf("events = %d, want 1", len(n.events))
+	}
+	e := n.events[0]
+	n.mu.Unlock()
+	if e.ContentStatus != "captured" {
+		t.Errorf("event.ContentStatus = %q, want captured", e.ContentStatus)
+	}
+	if e.ContentType != "text/html; charset=utf-8" {
+		t.Errorf("event.ContentType = %q", e.ContentType)
+	}
+}
+
+func TestHandleCompletion_ReadSuccess_NoCaptureLeavesContentStatusEmpty(t *testing.T) {
+	// Legacy / pre-capture container: GetReadingContent returns all-nil.
+	// The reading row gets ContentStatus="" and SaveReadingContent is not
+	// invoked.
+	s := newMockStore()
+	now := time.Now().UTC()
+	s.CreateTask(context.Background(), &models.Task{
+		ID:          "bf_read_legacy",
+		Status:      models.TaskStatusRunning,
+		TaskMode:    models.TaskModeRead,
+		Prompt:      "https://example.com/legacy",
+		ContainerID: "cont1",
+		StartedAt:   &now,
+	})
+
+	bus, _ := newTestBus()
+	emb := &mockEmbedder{vector: []float32{0.1}}
+	mockOut := &mockWriter{}
+	o := newTestOrchestrator(s, bus,
+		withEmbedder(emb),
+		withDocker(&mockDockerManager{}), // returns all-nil bytes
+		withOutputs(mockOut),
+	)
+	o.running = 1
+
+	task, _ := s.GetTask(context.Background(), "bf_read_legacy")
+	o.handleCompletion(context.Background(), task, ContainerStatus{
+		Done:     true,
+		Complete: true,
+		TaskMode: models.TaskModeRead,
+		URL:      "https://example.com/legacy",
+		TLDR:     "x",
+	})
+	bus.Close()
+
+	s.mu.Lock()
+	r := s.upsertedReadings[0]
+	s.mu.Unlock()
+
+	if r.ContentStatus != "" {
+		t.Errorf("reading.ContentStatus = %q, want empty", r.ContentStatus)
+	}
+	if len(mockOut.readingSaves) != 0 {
+		t.Errorf("SaveReadingContent should not be called, got %d", len(mockOut.readingSaves))
+	}
+}
+
+func TestHandleCompletion_ReadSuccess_NoOrphanFilesWhenSidecarParsesNil(t *testing.T) {
+	// When parseCapturedSidecar returns nil but raw bytes are present, the
+	// row's ContentStatus stays "" and the API endpoints would 404 — so
+	// SaveReadingContent must not run. Otherwise the bytes become permanent
+	// orphans on disk. Cover every path that produces a nil parse.
+	cases := []struct {
+		name    string
+		sidecar []byte
+	}{
+		{name: "sidecar nil", sidecar: nil},
+		{name: "sidecar malformed JSON", sidecar: []byte(`{not json`)},
+		{name: "sidecar missing content_status", sidecar: []byte(`{"url":"https://example.com/orphan","content_type":"text/html"}`)},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newMockStore()
+			now := time.Now().UTC()
+			s.CreateTask(context.Background(), &models.Task{
+				ID:          "bf_read_orphan",
+				Status:      models.TaskStatusRunning,
+				TaskMode:    models.TaskModeRead,
+				Prompt:      "https://example.com/orphan",
+				ContainerID: "cont1",
+				StartedAt:   &now,
+			})
+
+			bus, _ := newTestBus()
+			emb := &mockEmbedder{vector: []float32{0.1}}
+			mockOut := &mockWriter{}
+			o := newTestOrchestrator(s, bus,
+				withEmbedder(emb),
+				withDocker(&mockDockerManager{
+					readingRaw:       []byte("<html>hi</html>"),
+					readingExtracted: []byte("# hi"),
+					readingSidecar:   tc.sidecar,
+				}),
+				withOutputs(mockOut),
+			)
+			o.running = 1
+
+			task, _ := s.GetTask(context.Background(), "bf_read_orphan")
+			o.handleCompletion(context.Background(), task, ContainerStatus{
+				Done:     true,
+				Complete: true,
+				TaskMode: models.TaskModeRead,
+				URL:      "https://example.com/orphan",
+				TLDR:     "x",
+			})
+			bus.Close()
+
+			s.mu.Lock()
+			r := s.upsertedReadings[0]
+			s.mu.Unlock()
+
+			if r.ContentStatus != "" {
+				t.Errorf("reading.ContentStatus = %q, want empty", r.ContentStatus)
+			}
+			if len(mockOut.readingSaves) != 0 {
+				t.Errorf("SaveReadingContent must not run; got %d calls", len(mockOut.readingSaves))
+			}
+		})
+	}
+}
+
+func TestHandleCompletion_ReadSuccess_PersistFailureDoesNotFailTask(t *testing.T) {
+	// On-disk persist is best-effort: the row is already committed, and
+	// failing the task here would block retries on the duplicate guard.
+	// Verify the task still completes and the reading row is upserted.
+	s := newMockStore()
+	now := time.Now().UTC()
+	s.CreateTask(context.Background(), &models.Task{
+		ID:          "bf_read_persist_fail",
+		Status:      models.TaskStatusRunning,
+		TaskMode:    models.TaskModeRead,
+		Prompt:      "https://example.com/persist-fail",
+		ContainerID: "cont1",
+		StartedAt:   &now,
+	})
+
+	bus, n := newTestBus()
+	emb := &mockEmbedder{vector: []float32{0.1}}
+	mockOut := &mockWriter{
+		readingSaveErr: errors.New("disk full"),
+	}
+	o := newTestOrchestrator(s, bus,
+		withEmbedder(emb),
+		withDocker(&mockDockerManager{
+			readingRaw:       []byte("<html>x</html>"),
+			readingExtracted: []byte("# x"),
+			readingSidecar: []byte(`{
+				"url":"https://example.com/persist-fail",
+				"content_type":"text/html",
+				"content_status":"captured",
+				"content_bytes":15,
+				"extracted_bytes":3,
+				"content_sha256":"abc",
+				"fetched_at":"2026-04-25T12:00:00Z"
+			}`),
+		}),
+		withOutputs(mockOut),
+	)
+	o.running = 1
+
+	task, _ := s.GetTask(context.Background(), "bf_read_persist_fail")
+	o.handleCompletion(context.Background(), task, ContainerStatus{
+		Done:           true,
+		Complete:       true,
+		TaskMode:       models.TaskModeRead,
+		URL:            "https://example.com/persist-fail",
+		TLDR:           "x",
+		NoveltyVerdict: "new",
+	})
+	bus.Close()
+
+	// Reading row was upserted despite the disk failure.
+	s.mu.Lock()
+	if len(s.upsertedReadings) != 1 {
+		s.mu.Unlock()
+		t.Fatalf("upsertedReadings = %d, want 1", len(s.upsertedReadings))
+	}
+	r := s.upsertedReadings[0]
+	s.mu.Unlock()
+
+	finalTask, _ := s.GetTask(context.Background(), "bf_read_persist_fail")
+
+	if r.ContentStatus != "captured" {
+		t.Errorf("reading.ContentStatus = %q, want captured", r.ContentStatus)
+	}
+	// Task must complete, not fail.
+	if finalTask.Status != models.TaskStatusCompleted {
+		t.Errorf("task.Status = %q, want completed", finalTask.Status)
+	}
+	// task.completed should still be emitted.
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if len(n.events) != 1 {
+		t.Fatalf("events = %d, want 1", len(n.events))
+	}
+	if n.events[0].Type != notify.EventTaskCompleted {
+		t.Errorf("event = %q, want task.completed", n.events[0].Type)
 	}
 }
 
@@ -1838,5 +2139,109 @@ func TestSaveAgentOutput_GateOffWhenSaveDisabled(t *testing.T) {
 	}
 	if task.OutputURL != "" {
 		t.Errorf("task.OutputURL = %q, want empty when save gated off", task.OutputURL)
+	}
+}
+
+func TestParseCapturedSidecar(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   []byte
+		wantNil bool
+		check   func(t *testing.T, c *capturedContent)
+	}{
+		{
+			name:    "nil bytes",
+			input:   nil,
+			wantNil: true,
+		},
+		{
+			name:    "empty bytes",
+			input:   []byte{},
+			wantNil: true,
+		},
+		{
+			name:    "malformed JSON",
+			input:   []byte(`{not json`),
+			wantNil: true,
+		},
+		{
+			name:    "wrong type for content_bytes",
+			input:   []byte(`{"content_status":"captured","content_bytes":"not-a-number"}`),
+			wantNil: true,
+		},
+		{
+			name:    "missing content_status",
+			input:   []byte(`{"url":"https://example.com","content_type":"text/html"}`),
+			wantNil: true,
+		},
+		{
+			name:    "empty content_status",
+			input:   []byte(`{"url":"https://example.com","content_status":""}`),
+			wantNil: true,
+		},
+		{
+			name: "captured happy path",
+			input: []byte(`{
+				"url":"https://example.com",
+				"content_type":"text/html; charset=utf-8",
+				"content_status":"captured",
+				"content_bytes":1024,
+				"extracted_bytes":256,
+				"content_sha256":"deadbeef",
+				"fetched_at":"2026-04-25T12:00:00Z"
+			}`),
+			check: func(t *testing.T, c *capturedContent) {
+				if c.URL != "https://example.com" {
+					t.Errorf("URL = %q", c.URL)
+				}
+				if c.ContentType != "text/html; charset=utf-8" {
+					t.Errorf("ContentType = %q", c.ContentType)
+				}
+				if c.ContentStatus != "captured" {
+					t.Errorf("ContentStatus = %q", c.ContentStatus)
+				}
+				if c.ContentBytes != 1024 {
+					t.Errorf("ContentBytes = %d", c.ContentBytes)
+				}
+				if c.ExtractedBytes != 256 {
+					t.Errorf("ExtractedBytes = %d", c.ExtractedBytes)
+				}
+				if c.ContentSHA256 != "deadbeef" {
+					t.Errorf("ContentSHA256 = %q", c.ContentSHA256)
+				}
+				if c.FetchedAt != "2026-04-25T12:00:00Z" {
+					t.Errorf("FetchedAt = %q", c.FetchedAt)
+				}
+			},
+		},
+		{
+			name:  "non-captured status (e.g. fetch_failed) returned as-is",
+			input: []byte(`{"content_status":"fetch_failed","content_type":""}`),
+			check: func(t *testing.T, c *capturedContent) {
+				// Forward-compat: future failure-mode statuses must round-trip
+				// through the parser so the row reflects what the agent wrote.
+				if c.ContentStatus != "fetch_failed" {
+					t.Errorf("ContentStatus = %q, want fetch_failed", c.ContentStatus)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseCapturedSidecar(tt.input)
+			if tt.wantNil {
+				if got != nil {
+					t.Errorf("got %+v, want nil", got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatalf("got nil, want non-nil capturedContent")
+			}
+			if tt.check != nil {
+				tt.check(t, got)
+			}
+		})
 	}
 }

@@ -114,6 +114,8 @@ curl -s http://localhost:8080/api/v1/tasks/<task-id>/output.json
 ls "$BACKFLOW_DATA_DIR/tasks/<task-id>/"
 ```
 
+For a successful HTML read task, the reader's pre-fetch + extraction step also persists captured artifacts under `BACKFLOW_DATA_DIR/readings/<reading-id>/` (`raw.html`, `extracted.md`, `content.json`) and exposes them via `GET /api/v1/readings/{id}/content` and `/content/raw`.
+
 ## 5. Operational Notes
 
 - Backlite is local-Docker-only. There is no alternate cloud runtime path.

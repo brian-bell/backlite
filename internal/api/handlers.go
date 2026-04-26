@@ -467,6 +467,64 @@ func (h *Handlers) FindSimilarReadings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, matches)
 }
 
+// GetReadingContent streams the extracted markdown for a reading.
+// Returns 404 when the reading is missing, when content was not captured
+// (content_status != "captured"), or when the file is missing.
+func (h *Handlers) GetReadingContent(w http.ResponseWriter, r *http.Request) {
+	h.serveReadingContent(w, r, "extracted.md", "text/markdown; charset=utf-8")
+}
+
+// GetReadingContentRaw streams the captured raw bytes for a reading,
+// reporting the original Content-Type recorded on the row.
+func (h *Handlers) GetReadingContentRaw(w http.ResponseWriter, r *http.Request) {
+	h.serveReadingContent(w, r, "raw.html", "")
+}
+
+// serveReadingContent streams a single file from {DataDir}/readings/{id}/{name}.
+// Returns 400 when the reading ID is malformed and 404 when the reading does
+// not exist, content_status != "captured", or the file is missing. When
+// contentType is empty, falls back to the reading row's recorded content_type.
+func (h *Handlers) serveReadingContent(w http.ResponseWriter, r *http.Request, name, contentType string) {
+	id := chi.URLParam(r, "id")
+	if !taskIDPattern.MatchString(id) {
+		writeError(w, http.StatusBadRequest, "invalid reading id")
+		return
+	}
+
+	reading, err := h.store.GetReading(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "reading content not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load reading")
+		return
+	}
+	if reading.ContentStatus != "captured" {
+		writeError(w, http.StatusNotFound, "reading content not found")
+		return
+	}
+
+	path := filepath.Join(h.config.DataDir, "readings", id, name)
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			writeError(w, http.StatusNotFound, "reading content not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to access reading content")
+		return
+	}
+
+	if contentType == "" {
+		contentType = reading.ContentType
+	}
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", contentType)
+	http.ServeFile(w, r, path)
+}
+
 // serveOutputFile streams a single file from {DataDir}/tasks/{id}/{name}.
 // Returns 400 when the task ID is malformed and 404 when the task does not
 // exist, the current attempt is not terminal yet, or the file is missing.

@@ -1283,3 +1283,45 @@ func TestSQLite_MatchReadings_SimilarityOrdering(t *testing.T) {
 		}
 	}
 }
+
+func TestSQLite_PersistsInlineContentSHA256(t *testing.T) {
+	s := testSQLiteStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	task := &models.Task{
+		ID:                  "bf_INLINE001",
+		Status:              models.TaskStatusPending,
+		TaskMode:            models.TaskModeRead,
+		Harness:             models.HarnessClaudeCode,
+		Prompt:              "markdown://abc123",
+		InlineContentSHA256: "abc123def456",
+		CreatedAt:           now,
+		UpdatedAt:           now,
+	}
+	if err := s.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	got, err := s.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.InlineContentSHA256 != "abc123def456" {
+		t.Errorf("InlineContentSHA256 = %q, want %q", got.InlineContentSHA256, "abc123def456")
+	}
+}
+
+func TestSQLite_DefaultEmptyInlineContentSHA(t *testing.T) {
+	s := testSQLiteStore(t)
+	ctx := context.Background()
+	task := sqliteTestTask(t, s)
+
+	got, err := s.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.InlineContentSHA256 != "" {
+		t.Errorf("InlineContentSHA256 = %q, want empty", got.InlineContentSHA256)
+	}
+}

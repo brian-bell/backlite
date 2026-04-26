@@ -233,6 +233,11 @@ func TestCreateTaskRequestValidation(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "reserved env var key INLINE_CONTENT_PATH",
+			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"INLINE_CONTENT_PATH": "/etc/passwd"}},
+			wantErr: true,
+		},
+		{
 			name:    "non-reserved env var key allowed",
 			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"MY_CUSTOM_VAR": "val"}},
 			wantErr: false,
@@ -316,5 +321,88 @@ func TestTaskStatusIsTerminal(t *testing.T) {
 		if s.IsTerminal() {
 			t.Errorf("%q should not be terminal", s)
 		}
+	}
+}
+
+func TestCreateTaskRequest_InlineContentRoundTrip(t *testing.T) {
+	body := "# Title\n\nSome markdown body.\n"
+	in := CreateTaskRequest{
+		Prompt:        "ignored",
+		InlineContent: &body,
+	}
+
+	data, err := json.Marshal(in)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if !strings.Contains(string(data), `"inline_content":"# Title`) {
+		t.Errorf("missing inline_content in marshaled request: %s", data)
+	}
+
+	var got CreateTaskRequest
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got.InlineContent == nil {
+		t.Fatalf("InlineContent nil after round-trip")
+	}
+	if *got.InlineContent != body {
+		t.Errorf("InlineContent = %q, want %q", *got.InlineContent, body)
+	}
+}
+
+func TestTask_InlineContentSHA256RoundTrip(t *testing.T) {
+	task := Task{ID: "bf_test", InlineContentSHA256: "deadbeef"}
+	data, err := json.Marshal(task)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if !strings.Contains(string(data), `"inline_content_sha256":"deadbeef"`) {
+		t.Errorf("missing inline_content_sha256 in marshaled task: %s", data)
+	}
+
+	var got Task
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got.InlineContentSHA256 != "deadbeef" {
+		t.Errorf("InlineContentSHA256 = %q, want %q", got.InlineContentSHA256, "deadbeef")
+	}
+}
+
+func TestCreateTaskRequest_Validate_RejectsEmptyInlineContent(t *testing.T) {
+	empty := ""
+	mode := TaskModeRead
+	req := CreateTaskRequest{
+		Prompt:        "anything",
+		TaskMode:      &mode,
+		InlineContent: &empty,
+	}
+	err := req.Validate()
+	if err == nil {
+		t.Fatal("Validate accepted empty inline_content; want error")
+	}
+	if !strings.Contains(err.Error(), "inline_content") {
+		t.Errorf("error %q does not mention inline_content", err)
+	}
+}
+
+func TestCreateTaskRequest_Validate_AllowsAbsentInlineContent(t *testing.T) {
+	req := CreateTaskRequest{Prompt: "anything"}
+	if err := req.Validate(); err != nil {
+		t.Errorf("Validate rejected request without inline_content: %v", err)
+	}
+}
+
+func TestCreateTaskRequest_Validate_AllowsNonEmptyInlineContent(t *testing.T) {
+	body := "# title\nbody\n"
+	mode := TaskModeRead
+	req := CreateTaskRequest{
+		Prompt:        "anything",
+		TaskMode:      &mode,
+		InlineContent: &body,
+	}
+	if err := req.Validate(); err != nil {
+		t.Errorf("Validate rejected non-empty inline_content: %v", err)
 	}
 }

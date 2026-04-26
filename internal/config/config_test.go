@@ -174,6 +174,34 @@ func TestLoad_LocalBackupRequiresPositiveIntervalWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestLoad_LocalBackupRetentionDefaults(t *testing.T) {
+	setBaseEnv(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+
+	if cfg.LocalBackupRetention != 7*24*time.Hour {
+		t.Fatalf("LocalBackupRetention = %v, want %v", cfg.LocalBackupRetention, 7*24*time.Hour)
+	}
+}
+
+func TestLoad_LocalBackupRetentionRejectsNegative(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("BACKFLOW_LOCAL_BACKUP_RETENTION_SEC", "-1")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for negative local backup retention")
+	}
+	if !strings.Contains(err.Error(), "BACKFLOW_LOCAL_BACKUP_RETENTION_SEC") {
+		t.Fatalf("error = %v, want retention env name", err)
+	}
+}
+
 func TestLoad_ReaderConfig(t *testing.T) {
 	setBaseEnv(t)
 	t.Setenv("BACKFLOW_READER_IMAGE", "backlite-reader:v1")

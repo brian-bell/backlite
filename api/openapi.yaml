@@ -818,6 +818,73 @@ components:
         pid:
           type: integer
           example: 12345
+        backup:
+          $ref: "#/components/schemas/BackupStats"
+
+    BackupStats:
+      type: object
+      description: Operator-visible state of the local SQLite backup worker. Present when local backups are configured.
+      required: [enabled, directory, interval_seconds, retention_seconds, worker_state, recent_errors]
+      properties:
+        enabled:
+          type: boolean
+        directory:
+          type: string
+          example: "/var/backups/backlite"
+        interval_seconds:
+          type: number
+          minimum: 0
+          example: 86400
+        retention_seconds:
+          type: number
+          minimum: 0
+          example: 604800
+        worker_state:
+          type: string
+          enum: [idle, running]
+        latest_artifact:
+          type: object
+          nullable: true
+          required: [file_name, created_at, finalized_at, sha256, size_bytes]
+          properties:
+            file_name:
+              type: string
+              example: "backlite-20260425T120000Z.sqlite.gz"
+            created_at:
+              type: string
+              format: date-time
+            finalized_at:
+              type: string
+              format: date-time
+            sha256:
+              type: string
+            size_bytes:
+              type: integer
+              minimum: 0
+        last_success_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_error_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_error_message:
+          type: string
+        recent_errors:
+          type: array
+          items:
+            type: object
+            required: [at, phase, message]
+            properties:
+              at:
+                type: string
+                format: date-time
+              phase:
+                type: string
+                enum: [backup, prune]
+              message:
+                type: string
 
     ErrorEnvelope:
       type: object
@@ -1012,6 +1079,13 @@ components:
         container_id:
           type: string
           example: "abc123def456"
+        inline_content_sha256:
+          type: string
+          description: |
+            Set on read-mode tasks whose source is a markdown body persisted to
+            disk under <DataDir>/ingest/<sha>.md instead of a URL fetched at run
+            time. The task's prompt for such tasks is "markdown://<sha>".
+          example: "9caaf00e460351844ec0267af19e123c624aad0a34794e205fe3d02053cd5c06"
         retry_count:
           type: integer
           minimum: 0
@@ -1145,6 +1219,15 @@ components:
           description: Additional environment variables to set in the agent container.
           example:
             CUSTOM_SETTING: "value"
+        inline_content:
+          type: string
+          nullable: true
+          description: |
+            Optional raw markdown body. When set, task_mode must be "read", the
+            prompt must not contain a URL, and the value must be non-empty. The
+            server persists the body to a content-addressed file under the data
+            directory and rewrites the task's prompt to "markdown://<sha256>".
+          example: "# Project notes\n\nbody"
 
     Reading:
       type: object

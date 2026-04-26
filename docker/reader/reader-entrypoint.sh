@@ -91,9 +91,19 @@ fi
 # READING PROMPT
 # =============================================================================
 
-READING_PROMPT="You are a reading agent. Your job is to read the URL below, summarize it, and produce a single JSON object describing the reading.
+if [ -n "${INLINE_CONTENT_PATH:-}" ]; then
+    SOURCE_DESCRIPTION="Source: ${URL}
 
-URL: ${URL}
+The source is a local markdown ingest. The markdown content has already been copied to ${WORKSPACE}/extracted.md. Read that file directly; do not use WebFetch or curl for this source. Use ${URL} as the JSON url field."
+    FETCH_STEP="2. Otherwise, read ${WORKSPACE}/extracted.md directly. With claude_code, use the Read tool. With codex, use cat or sed. Do not use WebFetch or curl for this source."
+else
+    SOURCE_DESCRIPTION="URL: ${URL}"
+    FETCH_STEP="2. Otherwise, fetch the URL's content. With claude_code, use the WebFetch tool. With codex, use curl."
+fi
+
+READING_PROMPT="You are a reading agent. Your job is to read the source below, summarize it, and produce a single JSON object describing the reading.
+
+${SOURCE_DESCRIPTION}
 
 Helper scripts available on PATH (in ${SCRIPT_DIR}):
 - ${SCRIPT_DIR}/read-lookup.sh <url>       → exact duplicate check (returns JSON array; empty = no match)
@@ -102,10 +112,10 @@ Helper scripts available on PATH (in ${SCRIPT_DIR}):
 
 Required steps:
 
-1. Run ${SCRIPT_DIR}/read-lookup.sh \"${URL}\". If the output is a non-empty array, the URL is a duplicate.
+1. Run ${SCRIPT_DIR}/read-lookup.sh \"${URL}\". If the output is a non-empty array, the source is a duplicate.
    Use the existing reading's id, title, and tldr and set novelty_verdict to \"duplicate\". Skip fetching the page.
 
-2. Otherwise, fetch the URL's content. With claude_code, use the WebFetch tool. With codex, use curl.
+${FETCH_STEP}
 
 3. Draft: title, tldr (<= 280 chars), tags (lowercase slugs), keywords, people, orgs, summary_markdown.
 
@@ -119,7 +129,7 @@ Required steps:
 
 \`\`\`json
 {
-  \"url\": \"...\",
+  \"url\": \"${URL}\",
   \"title\": \"...\",
   \"tldr\": \"...\",
   \"tags\": [],

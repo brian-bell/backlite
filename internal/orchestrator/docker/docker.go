@@ -113,7 +113,7 @@ func (m *Manager) GetLogs(ctx context.Context, containerID string, tail int) (st
 // envFilePath, if non-empty, adds an --env-file flag for secret env vars.
 func (m *Manager) buildRunCommand(task *models.Task, envFilePath string) string {
 	envFlags := m.buildEnvFlags(task)
-	volumeFlags := m.buildVolumeFlags()
+	volumeFlags := m.buildVolumeFlags(task)
 	networkFlags := m.buildNetworkFlags(task)
 	envFileFlag := ""
 	if envFilePath != "" {
@@ -173,6 +173,9 @@ func (m *Manager) buildEnvFlags(task *models.Task) []string {
 	if task.TaskMode == models.TaskModeRead {
 		flags = append(flags, envFlag("BACKFLOW_API_BASE_URL", shellEscape(m.internalAPIBaseURL())))
 		flags = append(flags, fmt.Sprintf("-e MAX_CONTENT_BYTES=%d", m.config.DefaultReadMaxContentBytes))
+		if task.InlineContentSHA256 != "" {
+			flags = append(flags, "-e INLINE_CONTENT_PATH=/workspace/inline.md")
+		}
 	}
 
 	for k, v := range task.EnvVars {
@@ -235,8 +238,14 @@ func writeEnvFile(pairs []string) (string, error) {
 }
 
 // buildVolumeFlags returns volume flags for the docker run command.
-// Currently returns empty; reserved for future use.
-func (m *Manager) buildVolumeFlags() string {
+// For read-mode tasks with inline-content sourcing, mounts the persisted
+// markdown file read-only at /workspace/inline.md so the reader container's
+// fetch step can short-circuit on the local file.
+func (m *Manager) buildVolumeFlags(task *models.Task) string {
+	if task.TaskMode == models.TaskModeRead && task.InlineContentSHA256 != "" {
+		host := fmt.Sprintf("%s/ingest/%s.md", m.config.DataDir, task.InlineContentSHA256)
+		return fmt.Sprintf("-v %s:/workspace/inline.md:ro", host)
+	}
 	return ""
 }
 

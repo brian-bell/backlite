@@ -830,5 +830,560 @@ JSON
 )
 pass "send-email.sh renders only populated sections in a mixed payload"
 
+# --- send-email.sh: Idempotency-Key header is set on the POST ---
+(
+    tmp=$(mktemp -d)
+    capture_dir="$tmp/captures"
+    mkdir -p "$capture_dir"
+    pid_file="$tmp/server.pid"
+    port_file="$tmp/port"
+    responses_file="$tmp/responses.txt"
+    printf '200\n' >"$responses_file"
+    trap '[ -f "$pid_file" ] && kill "$(cat "$pid_file")" 2>/dev/null || true; rm -rf "$tmp"' EXIT
+
+    python3 - "$capture_dir" "$port_file" "$pid_file" "$responses_file" >/dev/null 2>&1 <<'PYEOF' &
+import json, sys, os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+capture_dir = sys.argv[1]
+port_file = sys.argv[2]
+pid_file = sys.argv[3]
+responses_file = sys.argv[4]
+
+with open(responses_file) as f:
+    responses = [int(line.strip()) for line in f if line.strip()]
+
+state = {"count": 0}
+
+class H(BaseHTTPRequestHandler):
+    def do_POST(self):
+        i = state["count"]
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length).decode("utf-8")
+        with open(os.path.join(capture_dir, f"request-{i}.json"), "w") as f:
+            json.dump({
+                "method": self.command,
+                "path": self.path,
+                "headers": dict(self.headers),
+                "body": body,
+            }, f)
+        code = responses[i] if i < len(responses) else responses[-1]
+        state["count"] += 1
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(b'{}')
+    def log_message(self, *a, **kw):
+        pass
+
+srv = HTTPServer(("127.0.0.1", 0), H)
+with open(port_file, "w") as f:
+    f.write(str(srv.server_address[1]))
+with open(pid_file, "w") as f:
+    f.write(str(os.getpid()))
+srv.serve_forever()
+PYEOF
+
+    for _ in $(seq 1 30); do
+        if [ -s "$port_file" ]; then break; fi
+        sleep 0.1
+    done
+    if [ ! -s "$port_file" ]; then
+        fail "send-email idempotency-key: fake Resend server did not start"
+    fi
+    PORT=$(cat "$port_file")
+
+    cat >"$tmp/status.json" <<'JSON'
+{"url":"https://example.com/post","title":"Example","tldr":"summary"}
+JSON
+
+    export RESEND_API_KEY="re_test"
+    export NOTIFY_EMAIL_FROM="from@example.com"
+    export NOTIFY_EMAIL_TO="to@example.com"
+    export RESEND_BASE_URL="http://127.0.0.1:$PORT"
+    export TASK_ID="bf_idemkey"
+    export RESEND_RETRY_BASE_DELAY_SEC=0
+
+    SCRIPT="$DIR/skills/read/send-email.sh"
+    if ! "$SCRIPT" "$tmp/status.json" >/dev/null 2>&1; then
+        fail "send-email idempotency-key: script exited non-zero"
+    fi
+
+    if [ ! -s "$capture_dir/request-0.json" ]; then
+        fail "send-email idempotency-key: no request captured"
+    fi
+    idem=$(jq -r '.headers["Idempotency-Key"]' "$capture_dir/request-0.json")
+    if [ "$idem" != "bf_idemkey:read.completed" ]; then
+        fail "send-email idempotency-key: expected 'bf_idemkey:read.completed', got '$idem'"
+    fi
+)
+pass "send-email.sh sends Idempotency-Key: <task_id>:read.completed header"
+
+# --- send-email.sh: retries on 5xx, succeeds on attempt 2 ---
+(
+    tmp=$(mktemp -d)
+    capture_dir="$tmp/captures"
+    mkdir -p "$capture_dir"
+    pid_file="$tmp/server.pid"
+    port_file="$tmp/port"
+    responses_file="$tmp/responses.txt"
+    printf '500\n200\n' >"$responses_file"
+    trap '[ -f "$pid_file" ] && kill "$(cat "$pid_file")" 2>/dev/null || true; rm -rf "$tmp"' EXIT
+
+    python3 - "$capture_dir" "$port_file" "$pid_file" "$responses_file" >/dev/null 2>&1 <<'PYEOF' &
+import json, sys, os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+capture_dir = sys.argv[1]
+port_file = sys.argv[2]
+pid_file = sys.argv[3]
+responses_file = sys.argv[4]
+
+with open(responses_file) as f:
+    responses = [int(line.strip()) for line in f if line.strip()]
+
+state = {"count": 0}
+
+class H(BaseHTTPRequestHandler):
+    def do_POST(self):
+        i = state["count"]
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length).decode("utf-8")
+        with open(os.path.join(capture_dir, f"request-{i}.json"), "w") as f:
+            json.dump({
+                "method": self.command,
+                "path": self.path,
+                "headers": dict(self.headers),
+                "body": body,
+            }, f)
+        code = responses[i] if i < len(responses) else responses[-1]
+        state["count"] += 1
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(b'{}')
+    def log_message(self, *a, **kw):
+        pass
+
+srv = HTTPServer(("127.0.0.1", 0), H)
+with open(port_file, "w") as f:
+    f.write(str(srv.server_address[1]))
+with open(pid_file, "w") as f:
+    f.write(str(os.getpid()))
+srv.serve_forever()
+PYEOF
+
+    for _ in $(seq 1 30); do
+        if [ -s "$port_file" ]; then break; fi
+        sleep 0.1
+    done
+    if [ ! -s "$port_file" ]; then
+        fail "send-email retry-5xx: fake Resend server did not start"
+    fi
+    PORT=$(cat "$port_file")
+
+    cat >"$tmp/status.json" <<'JSON'
+{"url":"https://example.com/post","title":"Example","tldr":"summary"}
+JSON
+
+    export RESEND_API_KEY="re_test"
+    export NOTIFY_EMAIL_FROM="from@example.com"
+    export NOTIFY_EMAIL_TO="to@example.com"
+    export RESEND_BASE_URL="http://127.0.0.1:$PORT"
+    export TASK_ID="bf_retry5xx"
+    export RESEND_RETRY_BASE_DELAY_SEC=0
+
+    SCRIPT="$DIR/skills/read/send-email.sh"
+    if ! "$SCRIPT" "$tmp/status.json" >/dev/null 2>&1; then
+        fail "send-email retry-5xx: script exited non-zero"
+    fi
+
+    if [ ! -s "$capture_dir/request-0.json" ]; then
+        fail "send-email retry-5xx: first request not captured"
+    fi
+    if [ ! -s "$capture_dir/request-1.json" ]; then
+        fail "send-email retry-5xx: second request not captured (no retry attempted?)"
+    fi
+    if [ -s "$capture_dir/request-2.json" ]; then
+        fail "send-email retry-5xx: should have stopped at 2 requests, third was made"
+    fi
+    idem0=$(jq -r '.headers["Idempotency-Key"]' "$capture_dir/request-0.json")
+    idem1=$(jq -r '.headers["Idempotency-Key"]' "$capture_dir/request-1.json")
+    if [ "$idem0" != "$idem1" ]; then
+        fail "send-email retry-5xx: idempotency keys differ across attempts ('$idem0' vs '$idem1')"
+    fi
+    if [ "$idem0" != "bf_retry5xx:read.completed" ]; then
+        fail "send-email retry-5xx: unexpected idempotency key '$idem0'"
+    fi
+)
+pass "send-email.sh retries on 5xx and succeeds on attempt 2 with the same Idempotency-Key"
+
+# --- send-email.sh: retries on 409, succeeds on attempt 2 ---
+(
+    tmp=$(mktemp -d)
+    capture_dir="$tmp/captures"
+    mkdir -p "$capture_dir"
+    pid_file="$tmp/server.pid"
+    port_file="$tmp/port"
+    responses_file="$tmp/responses.txt"
+    printf '409\n200\n' >"$responses_file"
+    trap '[ -f "$pid_file" ] && kill "$(cat "$pid_file")" 2>/dev/null || true; rm -rf "$tmp"' EXIT
+
+    python3 - "$capture_dir" "$port_file" "$pid_file" "$responses_file" >/dev/null 2>&1 <<'PYEOF' &
+import json, sys, os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+capture_dir = sys.argv[1]
+port_file = sys.argv[2]
+pid_file = sys.argv[3]
+responses_file = sys.argv[4]
+
+with open(responses_file) as f:
+    responses = [int(line.strip()) for line in f if line.strip()]
+
+state = {"count": 0}
+
+class H(BaseHTTPRequestHandler):
+    def do_POST(self):
+        i = state["count"]
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length).decode("utf-8")
+        with open(os.path.join(capture_dir, f"request-{i}.json"), "w") as f:
+            json.dump({
+                "method": self.command,
+                "path": self.path,
+                "headers": dict(self.headers),
+                "body": body,
+            }, f)
+        code = responses[i] if i < len(responses) else responses[-1]
+        state["count"] += 1
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(b'{}')
+    def log_message(self, *a, **kw):
+        pass
+
+srv = HTTPServer(("127.0.0.1", 0), H)
+with open(port_file, "w") as f:
+    f.write(str(srv.server_address[1]))
+with open(pid_file, "w") as f:
+    f.write(str(os.getpid()))
+srv.serve_forever()
+PYEOF
+
+    for _ in $(seq 1 30); do
+        if [ -s "$port_file" ]; then break; fi
+        sleep 0.1
+    done
+    if [ ! -s "$port_file" ]; then
+        fail "send-email retry-409: fake Resend server did not start"
+    fi
+    PORT=$(cat "$port_file")
+
+    cat >"$tmp/status.json" <<'JSON'
+{"url":"https://example.com/post","title":"Example","tldr":"summary"}
+JSON
+
+    export RESEND_API_KEY="re_test"
+    export NOTIFY_EMAIL_FROM="from@example.com"
+    export NOTIFY_EMAIL_TO="to@example.com"
+    export RESEND_BASE_URL="http://127.0.0.1:$PORT"
+    export TASK_ID="bf_retry409"
+    export RESEND_RETRY_BASE_DELAY_SEC=0
+
+    SCRIPT="$DIR/skills/read/send-email.sh"
+    if ! "$SCRIPT" "$tmp/status.json" >/dev/null 2>&1; then
+        fail "send-email retry-409: script exited non-zero"
+    fi
+
+    if [ ! -s "$capture_dir/request-0.json" ]; then
+        fail "send-email retry-409: first request not captured"
+    fi
+    if [ ! -s "$capture_dir/request-1.json" ]; then
+        fail "send-email retry-409: second request not captured (no retry attempted?)"
+    fi
+    if [ -s "$capture_dir/request-2.json" ]; then
+        fail "send-email retry-409: should have stopped at 2 requests, third was made"
+    fi
+    idem0=$(jq -r '.headers["Idempotency-Key"]' "$capture_dir/request-0.json")
+    idem1=$(jq -r '.headers["Idempotency-Key"]' "$capture_dir/request-1.json")
+    if [ "$idem0" != "$idem1" ]; then
+        fail "send-email retry-409: idempotency keys differ across attempts ('$idem0' vs '$idem1')"
+    fi
+    if [ "$idem0" != "bf_retry409:read.completed" ]; then
+        fail "send-email retry-409: unexpected idempotency key '$idem0'"
+    fi
+)
+pass "send-email.sh retries on 409 and succeeds on attempt 2 with the same Idempotency-Key"
+
+# --- send-email.sh: gives up after 3 attempts of 5xx, exits 0 ---
+(
+    tmp=$(mktemp -d)
+    capture_dir="$tmp/captures"
+    mkdir -p "$capture_dir"
+    pid_file="$tmp/server.pid"
+    port_file="$tmp/port"
+    responses_file="$tmp/responses.txt"
+    printf '500\n500\n500\n' >"$responses_file"
+    trap '[ -f "$pid_file" ] && kill "$(cat "$pid_file")" 2>/dev/null || true; rm -rf "$tmp"' EXIT
+
+    python3 - "$capture_dir" "$port_file" "$pid_file" "$responses_file" >/dev/null 2>&1 <<'PYEOF' &
+import json, sys, os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+capture_dir = sys.argv[1]
+port_file = sys.argv[2]
+pid_file = sys.argv[3]
+responses_file = sys.argv[4]
+
+with open(responses_file) as f:
+    responses = [int(line.strip()) for line in f if line.strip()]
+
+state = {"count": 0}
+
+class H(BaseHTTPRequestHandler):
+    def do_POST(self):
+        i = state["count"]
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length).decode("utf-8")
+        with open(os.path.join(capture_dir, f"request-{i}.json"), "w") as f:
+            json.dump({
+                "method": self.command,
+                "path": self.path,
+                "headers": dict(self.headers),
+                "body": body,
+            }, f)
+        code = responses[i] if i < len(responses) else responses[-1]
+        state["count"] += 1
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(b'{}')
+    def log_message(self, *a, **kw):
+        pass
+
+srv = HTTPServer(("127.0.0.1", 0), H)
+with open(port_file, "w") as f:
+    f.write(str(srv.server_address[1]))
+with open(pid_file, "w") as f:
+    f.write(str(os.getpid()))
+srv.serve_forever()
+PYEOF
+
+    for _ in $(seq 1 30); do
+        if [ -s "$port_file" ]; then break; fi
+        sleep 0.1
+    done
+    if [ ! -s "$port_file" ]; then
+        fail "send-email give-up: fake Resend server did not start"
+    fi
+    PORT=$(cat "$port_file")
+
+    cat >"$tmp/status.json" <<'JSON'
+{"url":"https://example.com/post","title":"Example","tldr":"summary"}
+JSON
+
+    export RESEND_API_KEY="re_test"
+    export NOTIFY_EMAIL_FROM="from@example.com"
+    export NOTIFY_EMAIL_TO="to@example.com"
+    export RESEND_BASE_URL="http://127.0.0.1:$PORT"
+    export TASK_ID="bf_giveup"
+    export RESEND_RETRY_BASE_DELAY_SEC=0
+
+    SCRIPT="$DIR/skills/read/send-email.sh"
+    if ! "$SCRIPT" "$tmp/status.json" >/dev/null 2>&1; then
+        fail "send-email give-up: script must exit 0 even after exhausting retries"
+    fi
+
+    for i in 0 1 2; do
+        if [ ! -s "$capture_dir/request-${i}.json" ]; then
+            fail "send-email give-up: expected 3 captured requests, missing request-${i}.json"
+        fi
+    done
+    if [ -s "$capture_dir/request-3.json" ]; then
+        fail "send-email give-up: a 4th request was made (should stop at 3)"
+    fi
+)
+pass "send-email.sh gives up after 3 attempts of 5xx and exits 0"
+
+# --- send-email.sh: 4xx response — no retry, exits 0 ---
+(
+    tmp=$(mktemp -d)
+    capture_dir="$tmp/captures"
+    mkdir -p "$capture_dir"
+    pid_file="$tmp/server.pid"
+    port_file="$tmp/port"
+    responses_file="$tmp/responses.txt"
+    printf '400\n200\n200\n' >"$responses_file"
+    trap '[ -f "$pid_file" ] && kill "$(cat "$pid_file")" 2>/dev/null || true; rm -rf "$tmp"' EXIT
+
+    python3 - "$capture_dir" "$port_file" "$pid_file" "$responses_file" >/dev/null 2>&1 <<'PYEOF' &
+import json, sys, os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+capture_dir = sys.argv[1]
+port_file = sys.argv[2]
+pid_file = sys.argv[3]
+responses_file = sys.argv[4]
+
+with open(responses_file) as f:
+    responses = [int(line.strip()) for line in f if line.strip()]
+
+state = {"count": 0}
+
+class H(BaseHTTPRequestHandler):
+    def do_POST(self):
+        i = state["count"]
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length).decode("utf-8")
+        with open(os.path.join(capture_dir, f"request-{i}.json"), "w") as f:
+            json.dump({
+                "method": self.command,
+                "path": self.path,
+                "headers": dict(self.headers),
+                "body": body,
+            }, f)
+        code = responses[i] if i < len(responses) else responses[-1]
+        state["count"] += 1
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(b'{}')
+    def log_message(self, *a, **kw):
+        pass
+
+srv = HTTPServer(("127.0.0.1", 0), H)
+with open(port_file, "w") as f:
+    f.write(str(srv.server_address[1]))
+with open(pid_file, "w") as f:
+    f.write(str(os.getpid()))
+srv.serve_forever()
+PYEOF
+
+    for _ in $(seq 1 30); do
+        if [ -s "$port_file" ]; then break; fi
+        sleep 0.1
+    done
+    if [ ! -s "$port_file" ]; then
+        fail "send-email no-retry-4xx: fake Resend server did not start"
+    fi
+    PORT=$(cat "$port_file")
+
+    cat >"$tmp/status.json" <<'JSON'
+{"url":"https://example.com/post","title":"Example","tldr":"summary"}
+JSON
+
+    export RESEND_API_KEY="re_test"
+    export NOTIFY_EMAIL_FROM="from@example.com"
+    export NOTIFY_EMAIL_TO="to@example.com"
+    export RESEND_BASE_URL="http://127.0.0.1:$PORT"
+    export TASK_ID="bf_no4xxretry"
+    export RESEND_RETRY_BASE_DELAY_SEC=0
+
+    SCRIPT="$DIR/skills/read/send-email.sh"
+    if ! "$SCRIPT" "$tmp/status.json" >/dev/null 2>&1; then
+        fail "send-email no-retry-4xx: script must exit 0 on 4xx"
+    fi
+
+    if [ ! -s "$capture_dir/request-0.json" ]; then
+        fail "send-email no-retry-4xx: first request not captured"
+    fi
+    if [ -s "$capture_dir/request-1.json" ]; then
+        fail "send-email no-retry-4xx: a second request was made (4xx should not retry)"
+    fi
+)
+pass "send-email.sh does not retry on 4xx and exits 0"
+
+# --- send-email.sh: Idempotency-Key is identical across all 3 retry attempts ---
+(
+    tmp=$(mktemp -d)
+    capture_dir="$tmp/captures"
+    mkdir -p "$capture_dir"
+    pid_file="$tmp/server.pid"
+    port_file="$tmp/port"
+    responses_file="$tmp/responses.txt"
+    printf '500\n500\n500\n' >"$responses_file"
+    trap '[ -f "$pid_file" ] && kill "$(cat "$pid_file")" 2>/dev/null || true; rm -rf "$tmp"' EXIT
+
+    python3 - "$capture_dir" "$port_file" "$pid_file" "$responses_file" >/dev/null 2>&1 <<'PYEOF' &
+import json, sys, os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+capture_dir = sys.argv[1]
+port_file = sys.argv[2]
+pid_file = sys.argv[3]
+responses_file = sys.argv[4]
+
+with open(responses_file) as f:
+    responses = [int(line.strip()) for line in f if line.strip()]
+
+state = {"count": 0}
+
+class H(BaseHTTPRequestHandler):
+    def do_POST(self):
+        i = state["count"]
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length).decode("utf-8")
+        with open(os.path.join(capture_dir, f"request-{i}.json"), "w") as f:
+            json.dump({
+                "method": self.command,
+                "path": self.path,
+                "headers": dict(self.headers),
+                "body": body,
+            }, f)
+        code = responses[i] if i < len(responses) else responses[-1]
+        state["count"] += 1
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(b'{}')
+    def log_message(self, *a, **kw):
+        pass
+
+srv = HTTPServer(("127.0.0.1", 0), H)
+with open(port_file, "w") as f:
+    f.write(str(srv.server_address[1]))
+with open(pid_file, "w") as f:
+    f.write(str(os.getpid()))
+srv.serve_forever()
+PYEOF
+
+    for _ in $(seq 1 30); do
+        if [ -s "$port_file" ]; then break; fi
+        sleep 0.1
+    done
+    if [ ! -s "$port_file" ]; then
+        fail "send-email key-stability: fake Resend server did not start"
+    fi
+    PORT=$(cat "$port_file")
+
+    cat >"$tmp/status.json" <<'JSON'
+{"url":"https://example.com/post","title":"Example","tldr":"summary"}
+JSON
+
+    export RESEND_API_KEY="re_test"
+    export NOTIFY_EMAIL_FROM="from@example.com"
+    export NOTIFY_EMAIL_TO="to@example.com"
+    export RESEND_BASE_URL="http://127.0.0.1:$PORT"
+    export TASK_ID="bf_keystable"
+    export RESEND_RETRY_BASE_DELAY_SEC=0
+
+    SCRIPT="$DIR/skills/read/send-email.sh"
+    "$SCRIPT" "$tmp/status.json" >/dev/null 2>&1 || true
+
+    expected="bf_keystable:read.completed"
+    for i in 0 1 2; do
+        if [ ! -s "$capture_dir/request-${i}.json" ]; then
+            fail "send-email key-stability: missing request-${i}.json"
+        fi
+        idem=$(jq -r '.headers["Idempotency-Key"]' "$capture_dir/request-${i}.json")
+        if [ "$idem" != "$expected" ]; then
+            fail "send-email key-stability: attempt ${i} carried '$idem', expected '$expected'"
+        fi
+    done
+)
+pass "send-email.sh sends a stable Idempotency-Key across all retry attempts"
+
 echo
 echo "All skill-agent entrypoint tests passed."

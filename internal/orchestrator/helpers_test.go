@@ -364,7 +364,7 @@ func (m *mockDockerManager) GetAgentOutput(_ context.Context, _ string) (string,
 	return m.agentOutput, nil
 }
 
-func (m *mockDockerManager) GetReadingContent(ctx context.Context, containerID string) (raw []byte, extracted []byte, sidecar []byte, err error) {
+func (m *mockDockerManager) GetReadingContent(ctx context.Context, containerID string) (raw, extracted, sidecar []byte, err error) {
 	if m.readingContentFn != nil {
 		return m.readingContentFn(ctx, containerID)
 	}

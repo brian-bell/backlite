@@ -63,7 +63,7 @@ func (w *FSWriter) SaveMetadata(_ context.Context, taskID string, metadata any) 
 // slices (raw HTML, extracted markdown, sidecar JSON). For non-HTML payloads
 // extracted may be nil, in which case extracted.md is skipped — raw.html and
 // content.json are still required.
-func (w *FSWriter) SaveReadingContent(_ context.Context, readingID string, raw []byte, extracted []byte, sidecar []byte) error {
+func (w *FSWriter) SaveReadingContent(_ context.Context, readingID string, raw, extracted, sidecar []byte) error {
 	dir := filepath.Join(w.Root, "readings", readingID)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("outputs: mkdir reading dir: %w", err)

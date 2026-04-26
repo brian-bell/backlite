@@ -359,7 +359,7 @@ func (m *Manager) GetAgentOutput(ctx context.Context, containerID string) (strin
 // GetReadingContent extracts the captured reading artifacts written by the
 // reader container's pre-fetch + extraction step. Missing files yield nil byte
 // slices (no error) so callers can record content_status accordingly.
-func (m *Manager) GetReadingContent(ctx context.Context, containerID string) (raw []byte, extracted []byte, sidecar []byte, err error) {
+func (m *Manager) GetReadingContent(ctx context.Context, containerID string) (raw, extracted, sidecar []byte, err error) {
 	raw = m.copyReadingFile(ctx, containerID, "/home/agent/workspace/raw.html")
 	extracted = m.copyReadingFile(ctx, containerID, "/home/agent/workspace/extracted.md")
 	sidecar = m.copyReadingFile(ctx, containerID, "/home/agent/workspace/content.json")

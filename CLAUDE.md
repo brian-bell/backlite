@@ -9,7 +9,7 @@ Three task modes: `code` (default: clone → code → commit → PR), `review` (
 ## Commands
 
 ```bash
-make build              # Build to bin/backlite
+make build              # Build web bundle + Go binary to bin/backlite
 make run                # Build + run (sources .env if present)
 make test               # Unit/integration tests with -tags nocontainers (excludes blackbox; see make test-blackbox)
 make lint               # go vet ./...
@@ -20,6 +20,11 @@ make test-fake-agent    # Unit tests for the fake agent Docker image
 make deps               # go mod tidy
 make clean              # Remove bin/ directory
 make db-running         # Show running tasks (also: db-pending, db-completed, db-failed)
+make web-deps           # Install web/ npm dependencies
+make web-generate       # Regenerate web/src/generated/api.d.ts from api/openapi.yaml
+make web-dev            # Run the Vite dev server against a local Backlite instance
+make web-build          # Generate API types + tsc + vite build (also runs as part of make build)
+make web-test           # Vitest suite for the web app
 make docker-agent-build-local        # Agent image (native arch)
 make docker-reader-build-local       # Reader image (native arch)
 make docker-skill-agent-build-local  # Skill-agent image (native arch; opt-in via BACKFLOW_SKILL_AGENT_IMAGE)
@@ -40,6 +45,8 @@ Two goroutines: chi REST API on `:8080` + polling orchestrator (5s default). The
 
 ### API endpoints
 
+All JSON responses are wrapped in a `{"data": …}` envelope; errors use `{"error": "…"}`. The web app and any first-party clients consume the wrapped shape.
+
 - `GET /health` — Health check (root-level, always accessible)
 - `GET /debug/stats` — Operational stats: PID, uptime, running tasks, pool metrics (outside `/api/v1/`, bearer-auth protected when API keys are configured)
 - `GET /api/v1/health` — Health check (under API prefix; bearer-auth protected when API keys are configured)
@@ -51,20 +58,27 @@ Two goroutines: chi REST API on `:8080` + polling orchestrator (5s default). The
 - `GET /api/v1/tasks/{id}/logs` — Stream container logs
 - `GET /api/v1/tasks/{id}/output` — Return the agent's stdout log (`container_output.log`) persisted to `BACKFLOW_DATA_DIR` after the container exits
 - `GET /api/v1/tasks/{id}/output.json` — Return the JSON task metadata snapshot (`task.json`) persisted alongside the output log
-- `GET /api/v1/readings/lookup` — Exact-URL duplicate check (used by reader containers and the orchestrator's dispatch-time guard)
-- `POST /api/v1/readings/similar` — Semantic similarity search over stored `readings` (cosine similarity in Go over JSON-encoded embeddings)
+- `GET /api/v1/readings` — Paginated newest-first list of stored readings (query params: `limit`, `offset`); requires `readings:read` scope when API keys are configured
+- `GET /api/v1/readings/{id}` — Single reading detail (full TL;DR, summary, tags, connections); requires `readings:read` scope
+- `GET /api/v1/readings/lookup` — Exact-URL duplicate check (public route — no auth — used by reader containers and the orchestrator's dispatch-time guard)
+- `POST /api/v1/readings/similar` — Semantic similarity search over stored `readings` (public route, cosine similarity in Go over JSON-encoded embeddings)
+- `GET /*` — Static SPA bundle from `BACKFLOW_WEB_DIR` (defaults to `./web/dist`). Falls back to `index.html` for client-side routes; `/api/*`, `/debug/*`, and `/health` are reserved and never served by the SPA handler. Disabled when the directory is empty.
 
 ### Key modules (`internal/`)
 
-- **api/** — chi router, handlers, JSON responses, `LogFetcher` interface, `NewTask` shared task-creation helper, `CancelTask` and `RetryTask` shared action helpers
+- **api/** — chi router, handlers, JSON responses (envelope helpers in `responses.go`), bearer-token auth middleware (`auth.go`: `BACKFLOW_API_KEY` short-circuit + DB-backed scoped `api_keys` lookup with a 30s `HasAPIKeys` cache), web SPA static handler (`static.go`), `LogFetcher` interface, `NewTask`/`NewReadTask` shared task-creation helpers, `CancelTask` and `RetryTask` shared action helpers, and the readings list/detail handlers consumed by the web app
 - **orchestrator/** — Poll loop (`orchestrator.go`), dispatch (`dispatch.go`), monitoring (`monitor.go`, including `handleReadingCompletion` for read-mode tasks), recovery (`recovery.go`). Subpackages: `docker/` (local Docker container management), `outputs/` (filesystem writer for agent logs + task metadata), `lifecycle/` (`Coordinator` owning task state transitions, slot accounting, and paired event emission — callers invoke domain verbs like `Dispatch`/`Complete`/`Requeue`/`Cancel` instead of selecting Store methods; on a `Complete` write failure the slot is **not** released and no event is emitted, so the next monitor tick can retry against the still-`running` row), `chain/` (atomic self-review chained-task creation — exposes a `ChainTx` callback that the lifecycle Coordinator runs in the same SQLite transaction as the parent's `CompleteTask`, so the parent commit and child INSERT either both land or both roll back), `imagerouter/` (selects which agent image to use given task harness + mode + configured images).
 - **store/** — `Store` interface + SQLite (`database/sql`, goose migrations). Includes `UpsertReading` / `GetReadingByURL` / `FindSimilarReadings` for the `readings` table.
 - **models/** — `Task` and `Reading` (+ `Connection`) structs with status enums. `Task.AgentImage` records which Docker image the orchestrator used (read tasks get `ReaderImage`, others get the default agent image). `Task.ParentTaskID` is an optional pointer to the task that spawned this one (retry chains, follow-ups, sub-tasks); the column has a self-referential FK with `ON DELETE SET NULL`. `FindFirstURL` / `InferReviewMode` auto-detect review mode when a prompt's first URL is a GitHub PR URL.
 - **embeddings/** — Thin `Embedder` interface (`Embed(ctx, text) ([]float32, error)`) with an `OpenAIEmbedder` HTTP client (no SDK). Used by the orchestrator to embed a reading's final TL;DR before writing the `readings` row.
-- **config/** — Env-var config (`BACKFLOW_*` prefix). `BACKFLOW_API_KEY` enables single-token API auth; otherwise `api_keys` in SQLite can back authenticated API/debug requests. `TaskDefaults(taskMode)` returns resolved defaults — for `read` mode it swaps in `ReaderImage` plus the `BACKFLOW_DEFAULT_READ_MAX_*` caps. `Apply(task, overrides)` fills zero-value fields using `*bool` overrides (nil = use default, non-nil = use pointed value)
+- **config/** — Env-var config (`BACKFLOW_*` prefix). `BACKFLOW_API_KEY` enables single-token API auth; otherwise `api_keys` in SQLite can back authenticated API/debug requests. `TaskDefaults(taskMode)` returns resolved defaults — for `read` mode it swaps in `ReaderImage` plus the `BACKFLOW_DEFAULT_READ_MAX_*` caps. `Apply(task, overrides)` fills zero-value fields using `*bool` overrides (nil = use default, non-nil = use pointed value). `Load()` enforces an all-or-nothing gate on the email-notification trio (`BACKFLOW_RESEND_API_KEY`, `BACKFLOW_NOTIFY_EMAIL_FROM`, `BACKFLOW_NOTIFY_EMAIL_TO`): setting any one of them without the other two fails startup.
 - **notify/** — `Notifier` interface, `WebhookNotifier` (HTTP POST, 3 retries, event filtering), `NoopNotifier`, `EventBus` (async fan-out delivery via buffered channel), `NewEvent` constructor with `EventOption` functional options (including `WithReading` for read-mode completion events). `Event` carries `TaskMode`, `ParentTaskID` (when set), plus optional reading fields (`TLDR`, `NoveltyVerdict`, `Tags`, `Connections`) populated only for read-task completion events.
 - **debug/** — `/debug/stats` handler: PID, uptime, running task count, database handle metrics
 - **skillcontract/** — Embedded JSON Schema validator (`schema.json`) for skill-agent `status.json` payloads. Tests walk every `docker/skill-agent/skills/*/examples/status.json` fixture and assert the deliberately broken negative fixture fails. Used by the skill-agent build to keep skill bundles' contract test fixtures honest.
+
+### Web app (`web/`)
+
+Reading-library SPA: React 19 + TypeScript + Vite + TanStack Query, with `openapi-typescript` generating types directly off `api/openapi.yaml` and `openapi-fetch` issuing the HTTP calls. The bundle is built to `web/dist/` (gitignored) and served by the Go binary's static handler at `/*`; `make build` runs `web-build` first so a single binary ships the SPA. The user pastes a bearer token into the topbar form (persisted in `localStorage` under `backlite.bearerToken`) and the API calls attach it as `Authorization: Bearer …`. Routes today: `/` (paginated reading list, page size 20) and `/readings/:id` (TL;DR, summary, tags/keywords/people/orgs, connections). Vitest specs live next to the source (`App.test.tsx`).
 
 ### Fake agent (`test/blackbox/fake-agent/`)
 
@@ -151,6 +165,10 @@ Reading-mode env vars:
 
 The `tasks` table carries a `force` boolean column. REST callers can set `force` on `POST /api/v1/tasks`; `Force=true` bypasses the dispatch-time duplicate check and allows an existing reading row to be overwritten on completion.
 
+## Email summary delivery (read mode, opt-in)
+
+When `BACKFLOW_RESEND_API_KEY`, `BACKFLOW_NOTIFY_EMAIL_FROM`, and `BACKFLOW_NOTIFY_EMAIL_TO` are all set, the orchestrator propagates them into skill-agent containers as `RESEND_API_KEY`, `NOTIFY_EMAIL_FROM`, and `NOTIFY_EMAIL_TO` (via the same `--env-file` channel as other secrets — never on the command line). The read skill's `send-email.sh` (`docker/skill-agent/skills/read/`) reads `~/workspace/status.json`, formats a structured plain-text body (URL, title, novelty verdict, tags, keywords, people, orgs, TL;DR, summary markdown, connections, task ID — each section omitted when its source field is empty), and POSTs a single message to `https://api.resend.com/emails`. Subject is the page title (falls back to URL hostname when title is empty). Email send is advisory: missing env vars, missing `status.json`, or a Resend API failure each log to stderr and `exit 0` so they cannot block task completion. Scope is read mode + claude_code + skill-agent image only; codex read tasks (which route to `docker/reader/`) and non-read modes do not send email. Operator setup (Resend account, sender-domain DNS, env vars) is in `docs/resend-setup.md`. The three env-var keys are reserved and cannot be overridden via per-task `env_vars`.
+
 ## Output storage
 
 When a task's container exits and `save_agent_output` is enabled, the orchestrator writes two files under `{BACKFLOW_DATA_DIR}/tasks/{id}/`:
@@ -172,9 +190,9 @@ PR comments include actual cost for `claude_code` (extracted from `total_cost_us
 ## API auth
 
 - `BACKFLOW_API_KEY` — Optional single bearer token for API and debug access in small deployments
-- `api_keys` — SQLite-backed bearer tokens with named scopes (`tasks:read`, `tasks:write`, `health:read`, `stats:read`) and optional expiration
+- `api_keys` — SQLite-backed bearer tokens with named scopes (`tasks:read`, `tasks:write`, `readings:read`, `health:read`, `stats:read`) and optional expiration
 
-When API keys are configured, bearer auth applies to `/api/v1/*` and `/debug/stats`. Root `/health` remains public.
+When API keys are configured, bearer auth applies to `/api/v1/*` (except the reader-container endpoints below) and `/debug/stats`. The static SPA bundle at `/*`, root `/health`, `GET /api/v1/readings/lookup`, and `POST /api/v1/readings/similar` remain public — the latter two are called by reader containers from inside the orchestrator's docker network and are not gated.
 
 ## Documentation guidelines
 
@@ -198,7 +216,7 @@ Secrets (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GITHUB_TOKEN`) are passed via `
 
 SQLite. Tables: `tasks`, `api_keys`, `readings`. See `docs/schema.md` for the full column-level schema. Migrations are managed by [goose](https://github.com/pressly/goose) and live in `migrations/`. The store implementation is in `internal/store/sqlite.go` using `database/sql`. Set `BACKFLOW_DATABASE_PATH` to the local database path.
 
-The schema has been collapsed to a single `001_initial_schema.sql` — any new schema change starts at `002_*.sql`.
+The schema was collapsed to a single `001_initial_schema.sql` baseline; `002_parent_task_id.sql` added `tasks.parent_task_id` plus `idx_tasks_parent_task_id`. Any new schema change starts at the next numeric prefix.
 
 Migration workflow:
 

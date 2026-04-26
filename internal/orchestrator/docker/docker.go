@@ -172,6 +172,7 @@ func (m *Manager) buildEnvFlags(task *models.Task) []string {
 
 	if task.TaskMode == models.TaskModeRead {
 		flags = append(flags, envFlag("BACKFLOW_API_BASE_URL", shellEscape(m.internalAPIBaseURL())))
+		flags = append(flags, fmt.Sprintf("-e MAX_CONTENT_BYTES=%d", m.config.DefaultReadMaxContentBytes))
 	}
 
 	for k, v := range task.EnvVars {

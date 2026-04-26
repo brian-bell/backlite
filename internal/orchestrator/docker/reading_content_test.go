@@ -104,6 +104,37 @@ func TestGetReadingContent_MissingExtractedTolerated(t *testing.T) {
 	}
 }
 
+func TestGetReadingContent_FailureStatusSidecarOnly(t *testing.T) {
+	// On fetch_failed / over_size_cap the in-container fetcher writes only a
+	// sidecar (no raw, no extracted). The extractor must surface the sidecar
+	// bytes so the orchestrator can record the failure status on the row.
+	fake := &fakeRunCmd{
+		responses: map[string]struct {
+			out string
+			err error
+		}{
+			"raw":          {err: errors.New("no such file")},
+			"extracted.md": {err: errors.New("no such file")},
+			"content.json": {out: `{"url":"https://x","content_status":"fetch_failed"}`},
+		},
+	}
+	m := newManagerWithRunner(fake.run)
+
+	raw, extracted, sidecar, err := m.GetReadingContent(context.Background(), "abc")
+	if err != nil {
+		t.Fatalf("GetReadingContent: %v", err)
+	}
+	if raw != nil {
+		t.Errorf("raw should be nil on capture failure, got %q", raw)
+	}
+	if extracted != nil {
+		t.Errorf("extracted should be nil on capture failure, got %q", extracted)
+	}
+	if string(sidecar) != `{"url":"https://x","content_status":"fetch_failed"}` {
+		t.Errorf("sidecar = %q, want failure-status sidecar", sidecar)
+	}
+}
+
 func TestGetReadingContent_LegacyContainerNoFiles(t *testing.T) {
 	// All three files missing — pre-feature container. Should return all-nil
 	// bytes and no error so the caller can mark content_status=''.

@@ -768,6 +768,123 @@ func TestHandleCompletion_ReadSuccess_PersistsCapturedContent(t *testing.T) {
 	}
 }
 
+func TestHandleCompletion_ReadSuccess_RecordsFetchFailedWithoutPersisting(t *testing.T) {
+	// When the in-container fetcher records fetch_failed (e.g. HTTP 4xx, TLS
+	// error), no raw bytes accompany the sidecar. The reading row should
+	// reflect the failure status and SaveReadingContent must not run — there
+	// are no bytes to persist.
+	cases := []struct {
+		name    string
+		status  string
+		sidecar string
+	}{
+		{
+			name:   "fetch_failed",
+			status: "fetch_failed",
+			sidecar: `{
+				"url":"https://example.com/dead",
+				"content_type":"",
+				"content_status":"fetch_failed",
+				"content_bytes":0,
+				"extracted_bytes":0,
+				"content_sha256":"",
+				"fetched_at":"2026-04-25T12:00:00Z"
+			}`,
+		},
+		{
+			name:   "over_size_cap",
+			status: "over_size_cap",
+			sidecar: `{
+				"url":"https://example.com/huge",
+				"content_type":"",
+				"content_status":"over_size_cap",
+				"content_bytes":0,
+				"extracted_bytes":0,
+				"content_sha256":"",
+				"fetched_at":"2026-04-25T12:00:00Z"
+			}`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newMockStore()
+			now := time.Now().UTC()
+			s.CreateTask(context.Background(), &models.Task{
+				ID:          "bf_read_" + tc.status,
+				Status:      models.TaskStatusRunning,
+				TaskMode:    models.TaskModeRead,
+				Prompt:      "https://example.com/" + tc.status,
+				ContainerID: "cont1",
+				StartedAt:   &now,
+			})
+
+			bus, n := newTestBus()
+			emb := &mockEmbedder{vector: []float32{0.1}}
+			mockOut := &mockWriter{}
+			o := newTestOrchestrator(s, bus,
+				withEmbedder(emb),
+				withDocker(&mockDockerManager{
+					readingRaw:       nil, // no raw bytes on capture failure
+					readingExtracted: nil,
+					readingSidecar:   []byte(tc.sidecar),
+				}),
+				withOutputs(mockOut),
+			)
+			o.running = 1
+
+			task, _ := s.GetTask(context.Background(), "bf_read_"+tc.status)
+			o.handleCompletion(context.Background(), task, ContainerStatus{
+				Done:           true,
+				Complete:       true,
+				TaskMode:       models.TaskModeRead,
+				URL:            "https://example.com/" + tc.status,
+				TLDR:           "summary via webfetch fallback",
+				NoveltyVerdict: "new",
+			})
+			bus.Close()
+
+			// Task itself must succeed: capture failure is non-fatal.
+			got, _ := s.GetTask(context.Background(), "bf_read_"+tc.status)
+			if got.Status != models.TaskStatusCompleted {
+				t.Errorf("task.Status = %q, want completed (capture failure must not fail the task)", got.Status)
+			}
+
+			s.mu.Lock()
+			if len(s.upsertedReadings) != 1 {
+				s.mu.Unlock()
+				t.Fatalf("upsertedReadings = %d, want 1", len(s.upsertedReadings))
+			}
+			r := s.upsertedReadings[0]
+			s.mu.Unlock()
+
+			if r.ContentStatus != tc.status {
+				t.Errorf("reading.ContentStatus = %q, want %q", r.ContentStatus, tc.status)
+			}
+			if r.ContentBytes != 0 {
+				t.Errorf("reading.ContentBytes = %d, want 0", r.ContentBytes)
+			}
+
+			if len(mockOut.readingSaves) != 0 {
+				t.Errorf("SaveReadingContent must not run on %s; got %d calls",
+					tc.status, len(mockOut.readingSaves))
+			}
+
+			// Webhook event must surface the failure status.
+			n.mu.Lock()
+			if len(n.events) != 1 {
+				n.mu.Unlock()
+				t.Fatalf("events = %d, want 1", len(n.events))
+			}
+			e := n.events[0]
+			n.mu.Unlock()
+			if e.ContentStatus != tc.status {
+				t.Errorf("event.ContentStatus = %q, want %q", e.ContentStatus, tc.status)
+			}
+		})
+	}
+}
+
 func TestHandleCompletion_ReadSuccess_NoCaptureLeavesContentStatusEmpty(t *testing.T) {
 	// Legacy / pre-capture container: GetReadingContent returns all-nil.
 	// The reading row gets ContentStatus="" and SaveReadingContent is not
@@ -1060,23 +1177,52 @@ func TestHandleCompletion_ReadEmptyURL_MarksTaskFailed(t *testing.T) {
 }
 
 // TestHandleCompletion_ReadDuplicate_SkipsWrite verifies that a non-forced
-// duplicate reading completes successfully without overwriting the existing row.
+// duplicate reading completes successfully without overwriting the existing row,
+// without copying pre-fetched files out of the container, and without writing
+// any captured artifacts to disk. The existing row stays untouched.
 func TestHandleCompletion_ReadDuplicate_SkipsWrite(t *testing.T) {
+	const url = "https://example.com/post"
+	const existingID = "bf_01HX_PRESERVE_EXISTING__"
+
 	s := newMockStore()
 	now := time.Now().UTC()
+	s.readingsByURL[url] = &models.Reading{
+		ID:            existingID,
+		URL:           url,
+		Title:         "old title",
+		ContentStatus: "captured",
+		ContentSHA256: "old-sha",
+		CreatedAt:     now.Add(-72 * time.Hour),
+	}
 	s.CreateTask(context.Background(), &models.Task{
 		ID:          "bf_read_dup",
 		Status:      models.TaskStatusRunning,
 		TaskMode:    models.TaskModeRead,
 		Force:       false,
-		Prompt:      "https://example.com/post",
+		Prompt:      url,
 		ContainerID: "cont1",
 		StartedAt:   &now,
 	})
 
 	bus, n := newTestBus()
 	emb := &mockEmbedder{vector: []float32{0.1}}
-	o := newTestOrchestrator(s, bus, withEmbedder(emb))
+
+	// Track GetReadingContent invocations: a duplicate must not even attempt
+	// to copy pre-fetched files out of the container.
+	var contentCalls int
+	mockDocker := &mockDockerManager{
+		readingContentFn: func(_ context.Context, _ string) (raw, extracted, sidecar []byte, err error) {
+			contentCalls++
+			return nil, nil, nil, nil
+		},
+	}
+	mockOut := &mockWriter{}
+
+	o := newTestOrchestrator(s, bus,
+		withEmbedder(emb),
+		withDocker(mockDocker),
+		withOutputs(mockOut),
+	)
 	o.running = 1
 
 	task, _ := s.GetTask(context.Background(), "bf_read_dup")
@@ -1084,7 +1230,7 @@ func TestHandleCompletion_ReadDuplicate_SkipsWrite(t *testing.T) {
 		Done:           true,
 		Complete:       true,
 		TaskMode:       models.TaskModeRead,
-		URL:            "https://example.com/post",
+		URL:            url,
 		TLDR:           "already read",
 		NoveltyVerdict: "duplicate",
 	})
@@ -1099,7 +1245,19 @@ func TestHandleCompletion_ReadDuplicate_SkipsWrite(t *testing.T) {
 	if len(s.upsertedReadings) != 0 {
 		t.Errorf("upsertedReadings = %d, want 0 for non-forced duplicate", len(s.upsertedReadings))
 	}
+	preserved := s.readingsByURL[url]
 	s.mu.Unlock()
+
+	if preserved == nil || preserved.ID != existingID || preserved.Title != "old title" || preserved.ContentSHA256 != "old-sha" {
+		t.Errorf("existing row was modified; got %+v", preserved)
+	}
+
+	if contentCalls != 0 {
+		t.Errorf("GetReadingContent was called %d time(s) for a non-forced duplicate; pre-fetched files must be discarded", contentCalls)
+	}
+	if len(mockOut.readingSaves) != 0 {
+		t.Errorf("SaveReadingContent was called %d time(s) for a non-forced duplicate; want 0", len(mockOut.readingSaves))
+	}
 
 	// Embedder should not be called for duplicates (no embedding to write).
 	emb.mu.Lock()
@@ -1111,6 +1269,93 @@ func TestHandleCompletion_ReadDuplicate_SkipsWrite(t *testing.T) {
 	events := n.eventTypes()
 	if len(events) != 1 || events[0] != notify.EventTaskCompleted {
 		t.Errorf("events = %v, want [task.completed]", events)
+	}
+}
+
+// TestHandleCompletion_ReadForce_OverwritesSameID verifies that when a forced
+// read task targets a URL that already has a reading row, the upsert keeps the
+// existing reading id and the on-disk persister is invoked under that same id.
+// Without this guarantee, force=true would orphan the prior on-disk artifacts
+// (under the old id) while writing fresh ones under a never-stored id.
+func TestHandleCompletion_ReadForce_OverwritesSameID(t *testing.T) {
+	const existingID = "bf_01HX_OVERWRITE_TARGET___"
+	const url = "https://example.com/refresh-me"
+
+	s := newMockStore()
+	now := time.Now().UTC()
+	s.readingsByURL[url] = &models.Reading{
+		ID:            existingID,
+		URL:           url,
+		Title:         "old title",
+		ContentStatus: "captured",
+		ContentSHA256: "old-sha",
+		CreatedAt:     now.Add(-24 * time.Hour),
+	}
+	s.CreateTask(context.Background(), &models.Task{
+		ID:          "bf_force_overwrite",
+		Status:      models.TaskStatusRunning,
+		TaskMode:    models.TaskModeRead,
+		Force:       true,
+		Prompt:      url,
+		ContainerID: "cont1",
+		StartedAt:   &now,
+	})
+
+	bus, _ := newTestBus()
+	emb := &mockEmbedder{vector: []float32{0.9}}
+	mockOut := &mockWriter{}
+	o := newTestOrchestrator(s, bus,
+		withEmbedder(emb),
+		withDocker(&mockDockerManager{
+			readingRaw:       []byte("<html>fresh</html>"),
+			readingExtracted: []byte("# fresh"),
+			readingSidecar: []byte(`{
+				"url":"` + url + `",
+				"content_type":"text/html",
+				"content_status":"captured",
+				"content_bytes":18,
+				"extracted_bytes":7,
+				"content_sha256":"new-sha",
+				"fetched_at":"2026-04-25T12:00:00Z"
+			}`),
+		}),
+		withOutputs(mockOut),
+	)
+	o.running = 1
+
+	task, _ := s.GetTask(context.Background(), "bf_force_overwrite")
+	o.handleCompletion(context.Background(), task, ContainerStatus{
+		Done:           true,
+		Complete:       true,
+		TaskMode:       models.TaskModeRead,
+		URL:            url,
+		Title:          "fresh title",
+		TLDR:           "fresh tldr",
+		NoveltyVerdict: "new",
+	})
+	bus.Close()
+
+	s.mu.Lock()
+	if len(s.upsertedReadings) != 1 {
+		s.mu.Unlock()
+		t.Fatalf("upsertedReadings = %d, want 1", len(s.upsertedReadings))
+	}
+	upserted := s.upsertedReadings[0]
+	s.mu.Unlock()
+
+	if upserted.ID != existingID {
+		t.Errorf("upserted reading.ID = %q, want existing id %q (force must overwrite the same row, not create a new one)", upserted.ID, existingID)
+	}
+	if upserted.ContentSHA256 != "new-sha" {
+		t.Errorf("upserted reading.ContentSHA256 = %q, want %q (sha must reflect latest fetch)", upserted.ContentSHA256, "new-sha")
+	}
+
+	if len(mockOut.readingSaves) != 1 {
+		t.Fatalf("SaveReadingContent calls = %d, want 1", len(mockOut.readingSaves))
+	}
+	if mockOut.readingSaves[0].readingID != existingID {
+		t.Errorf("SaveReadingContent readingID = %q, want %q (on-disk persist must target the existing id so the API can find it)",
+			mockOut.readingSaves[0].readingID, existingID)
 	}
 }
 

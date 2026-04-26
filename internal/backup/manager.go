@@ -26,13 +26,30 @@ const (
 	metadataExtension = ".meta.json"
 	timestampLayout   = "20060102T150405Z"
 	backupStepPages   = 128
+	// staleTempGrace is how old a partial backup temp file (.tmp / .verify /
+	// .sqlite.tmp / .meta.json.tmp) must be before prune deletes it. The
+	// single-flight mutex already prevents concurrent backup runs; this
+	// grace is defense-in-depth so an unusually slow in-progress backup
+	// cannot have its temps yanked from under it.
+	staleTempGrace = time.Hour
 )
+
+// tempArtifactSuffixes are the trailing fragments produced by an interrupted
+// backup run. prune deletes files matching any of these whose mtime exceeds
+// staleTempGrace.
+var tempArtifactSuffixes = []string{
+	".sqlite.gz.tmp",
+	".sqlite.gz.tmp.verify",
+	".sqlite.tmp",
+	".meta.json.tmp",
+}
 
 type Config struct {
 	Enabled      bool
 	DatabasePath string
 	Directory    string
 	Interval     time.Duration
+	Retention    time.Duration
 }
 
 type Metadata struct {
@@ -50,11 +67,40 @@ type Artifact struct {
 	Metadata     Metadata
 }
 
+// Status is the operator-visible snapshot of the local backup worker.
+// It is exposed via /debug/stats so failures can be diagnosed without
+// shelling into the host.
+type Status struct {
+	Enabled          bool          `json:"enabled"`
+	Directory        string        `json:"directory"`
+	Interval         time.Duration `json:"interval"`
+	Retention        time.Duration `json:"retention"`
+	LatestArtifact   *Metadata     `json:"latest_artifact,omitempty"`
+	WorkerState      string        `json:"worker_state"`
+	LastSuccessAt    *time.Time    `json:"last_success_at,omitempty"`
+	LastErrorAt      *time.Time    `json:"last_error_at,omitempty"`
+	LastErrorMessage string        `json:"last_error_message,omitempty"`
+	RecentErrors     []ErrorEntry  `json:"recent_errors"`
+}
+
+// ErrorEntry captures a single backup or prune failure for the operator
+// status feed. Phase is "backup" or "prune".
+type ErrorEntry struct {
+	At      time.Time `json:"at"`
+	Phase   string    `json:"phase"`
+	Message string    `json:"message"`
+}
+
+const recentErrorsCap = 5
+
 type Manager struct {
 	cfg Config
 
-	mu      sync.Mutex
-	running bool
+	mu          sync.Mutex
+	running     bool
+	lastSuccess *time.Time
+	lastError   *ErrorEntry
+	recent      []ErrorEntry
 
 	now         func() time.Time
 	runBackupFn func(context.Context, time.Time) error
@@ -71,17 +117,28 @@ func New(cfg Config) *Manager {
 
 // MaybeSchedule starts a single background backup worker when local backups are
 // enabled and the latest finalized artifact is older than the configured
-// interval. The call is non-blocking; backup work runs in a goroutine.
+// interval. Before evaluating freshness, it synchronously prunes aged
+// artifacts and stale temp files; pruning errors are recorded but do not
+// block subsequent backup scheduling. The call is non-blocking; backup work
+// runs in a goroutine.
 func (m *Manager) MaybeSchedule(ctx context.Context) {
 	if !m.cfg.Enabled {
+		log.Debug().Str("reason", "disabled").Msg("local sqlite backup skipped")
 		return
 	}
+
+	if err := m.prune(m.now()); err != nil {
+		m.recordError("prune", err)
+	}
+
 	if m.isRunning() {
+		log.Debug().Str("reason", "already_running").Str("backup_dir", m.cfg.Directory).Msg("local sqlite backup skipped")
 		return
 	}
 
 	due, latest, err := m.needsBackup()
 	if err != nil {
+		m.recordError("backup", err)
 		log.Error().
 			Err(err).
 			Str("backup_dir", m.cfg.Directory).
@@ -89,6 +146,7 @@ func (m *Manager) MaybeSchedule(ctx context.Context) {
 		return
 	}
 	if !due {
+		log.Debug().Str("reason", "not_due").Str("backup_dir", m.cfg.Directory).Msg("local sqlite backup skipped")
 		return
 	}
 
@@ -97,6 +155,7 @@ func (m *Manager) MaybeSchedule(ctx context.Context) {
 	m.mu.Lock()
 	if m.running {
 		m.mu.Unlock()
+		log.Debug().Str("reason", "already_running").Str("backup_dir", m.cfg.Directory).Msg("local sqlite backup skipped")
 		return
 	}
 	m.running = true
@@ -114,6 +173,7 @@ func (m *Manager) MaybeSchedule(ctx context.Context) {
 		logger.Time("scheduled_at", startedAt).Msg("starting local sqlite backup")
 
 		if err := m.runBackupFn(ctx, startedAt); err != nil {
+			m.recordError("backup", err)
 			log.Error().
 				Err(err).
 				Str("backup_dir", m.cfg.Directory).
@@ -122,6 +182,7 @@ func (m *Manager) MaybeSchedule(ctx context.Context) {
 			return
 		}
 
+		m.recordSuccess(startedAt)
 		log.Info().
 			Str("backup_dir", m.cfg.Directory).
 			Str("database_path", m.cfg.DatabasePath).
@@ -140,6 +201,74 @@ func (m *Manager) setRunning(v bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.running = v
+}
+
+func (m *Manager) recordSuccess(at time.Time) {
+	t := at.UTC()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastSuccess = &t
+}
+
+func (m *Manager) recordError(phase string, err error) {
+	if err == nil {
+		return
+	}
+	entry := ErrorEntry{
+		At:      m.now().UTC().Truncate(time.Second),
+		Phase:   phase,
+		Message: err.Error(),
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastError = &entry
+	m.recent = append(m.recent, entry)
+	if len(m.recent) > recentErrorsCap {
+		m.recent = m.recent[len(m.recent)-recentErrorsCap:]
+	}
+}
+
+// Status returns the operator-visible snapshot of the backup worker.
+// Latest-artifact detection scans the configured directory at call time;
+// the rest of the fields are read from in-memory state under m.mu.
+func (m *Manager) Status() Status {
+	m.mu.Lock()
+	state := "idle"
+	if m.running {
+		state = "running"
+	}
+	var lastSuccess *time.Time
+	if m.lastSuccess != nil {
+		t := *m.lastSuccess
+		lastSuccess = &t
+	}
+	var lastErrorAt *time.Time
+	var lastErrorMessage string
+	if m.lastError != nil {
+		t := m.lastError.At
+		lastErrorAt = &t
+		lastErrorMessage = m.lastError.Message
+	}
+	recent := make([]ErrorEntry, len(m.recent))
+	copy(recent, m.recent)
+	m.mu.Unlock()
+
+	s := Status{
+		Enabled:          m.cfg.Enabled,
+		Directory:        m.cfg.Directory,
+		Interval:         m.cfg.Interval,
+		Retention:        m.cfg.Retention,
+		WorkerState:      state,
+		LastSuccessAt:    lastSuccess,
+		LastErrorAt:      lastErrorAt,
+		LastErrorMessage: lastErrorMessage,
+		RecentErrors:     recent,
+	}
+	if latest, err := m.findLatestValidArtifact(); err == nil && latest != nil {
+		meta := latest.Metadata
+		s.LatestArtifact = &meta
+	}
+	return s
 }
 
 func (m *Manager) needsBackup() (bool, *Artifact, error) {
@@ -223,6 +352,131 @@ func (m *Manager) findLatestValidArtifact() (*Artifact, error) {
 	}
 
 	return nil, nil
+}
+
+// prune deletes finalized backup artifacts whose age exceeds cfg.Retention,
+// always preserving the newest valid artifact regardless of age. Each deleted
+// artifact's sidecar metadata file is removed alongside it. Per-file delete
+// failures are logged and the loop continues; the final returned error
+// summarizes any failures.
+func (m *Manager) prune(now time.Time) error {
+	if m.cfg.Retention <= 0 {
+		return nil
+	}
+
+	entries, err := os.ReadDir(m.cfg.Directory)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read backup directory: %w", err)
+	}
+
+	latest, err := m.findLatestValidArtifact()
+	if err != nil {
+		return err
+	}
+	var protectedName string
+	if latest != nil {
+		protectedName = filepath.Base(latest.Path)
+	}
+
+	cutoff := now.UTC().Add(-m.cfg.Retention)
+	tempCutoff := now.UTC().Add(-staleTempGrace)
+	var lastErr error
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		fullPath := filepath.Join(m.cfg.Directory, name)
+
+		if ts, ok := parseArtifactTimestamp(name); ok {
+			if name == protectedName {
+				continue
+			}
+			ageRef := ts
+			if meta, valid, mErr := readMetadata(fullPath, metadataPath(fullPath)); mErr == nil && valid && !meta.FinalizedAt.IsZero() {
+				ageRef = meta.FinalizedAt
+			}
+			if !ageRef.Before(cutoff) {
+				continue
+			}
+			ageSec := int64(now.UTC().Sub(ageRef).Seconds())
+			if rmErr := os.Remove(fullPath); rmErr != nil {
+				if !os.IsNotExist(rmErr) {
+					log.Error().Err(rmErr).Str("file_name", name).Msg("failed to prune local sqlite backup artifact")
+					lastErr = rmErr
+				}
+			} else {
+				log.Info().Str("file_name", name).Int64("age_seconds", ageSec).Str("reason", "age").Msg("pruned local sqlite backup artifact")
+			}
+			sidecar := metadataPath(fullPath)
+			if rmErr := os.Remove(sidecar); rmErr != nil && !os.IsNotExist(rmErr) {
+				log.Error().Err(rmErr).Str("file_name", filepath.Base(sidecar)).Msg("failed to prune local sqlite backup sidecar")
+				lastErr = rmErr
+			}
+			continue
+		}
+
+		if isTempArtifactName(name) {
+			info, statErr := entry.Info()
+			if statErr != nil {
+				if !os.IsNotExist(statErr) {
+					log.Error().Err(statErr).Str("file_name", name).Msg("failed to stat backup temp file")
+					lastErr = statErr
+				}
+				continue
+			}
+			if !info.ModTime().Before(tempCutoff) {
+				continue
+			}
+			ageSec := int64(now.UTC().Sub(info.ModTime().UTC()).Seconds())
+			if rmErr := os.Remove(fullPath); rmErr != nil {
+				if !os.IsNotExist(rmErr) {
+					log.Error().Err(rmErr).Str("file_name", name).Msg("failed to prune stale local sqlite backup temp file")
+					lastErr = rmErr
+				}
+			} else {
+				log.Info().Str("file_name", name).Int64("age_seconds", ageSec).Str("reason", "stale_temp").Msg("pruned local sqlite backup temp file")
+			}
+			continue
+		}
+
+		if artifactName, ok := strings.CutSuffix(name, metadataExtension); ok {
+			if _, ok := parseArtifactTimestamp(artifactName); !ok {
+				continue
+			}
+			artifactSibling := filepath.Join(m.cfg.Directory, artifactName)
+			if _, err := os.Stat(artifactSibling); err == nil {
+				continue
+			} else if !os.IsNotExist(err) {
+				log.Error().Err(err).Str("file_name", name).Msg("failed to stat sidecar's artifact")
+				lastErr = err
+				continue
+			}
+			if rmErr := os.Remove(fullPath); rmErr != nil {
+				if !os.IsNotExist(rmErr) {
+					log.Error().Err(rmErr).Str("file_name", name).Msg("failed to prune orphan sidecar")
+					lastErr = rmErr
+				}
+			} else {
+				log.Info().Str("file_name", name).Str("reason", "orphan_metadata").Msg("pruned orphan local sqlite backup sidecar")
+			}
+		}
+	}
+
+	return lastErr
+}
+
+func isTempArtifactName(name string) bool {
+	for _, suffix := range tempArtifactSuffixes {
+		if strings.HasSuffix(name, suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 func verifyArtifactChecksum(path string, expected string) error {

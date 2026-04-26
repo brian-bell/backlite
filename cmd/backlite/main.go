@@ -15,6 +15,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/brian-bell/backlite/internal/api"
+	"github.com/brian-bell/backlite/internal/backup"
 	"github.com/brian-bell/backlite/internal/config"
 	"github.com/brian-bell/backlite/internal/debug"
 	"github.com/brian-bell/backlite/internal/embeddings"
@@ -57,7 +58,7 @@ func setupLogger(logFile string) (zerolog.Logger, io.Closer, error) {
 // buildHTTPHandler wires the HTTP routes exposed by the server binary.
 // Keeping this separate from main lets tests exercise the same routing
 // composition that production uses.
-func buildHTTPHandler(cfg *config.Config, db store.Store, poolStatter debug.PoolStatter, logs api.LogFetcher, bus notify.Emitter, runningFn func() int, startedAt time.Time) http.Handler {
+func buildHTTPHandler(cfg *config.Config, db store.Store, poolStatter debug.PoolStatter, logs api.LogFetcher, bus notify.Emitter, runningFn func() int, backupStatusFn func() backup.Status, startedAt time.Time) http.Handler {
 	if runningFn == nil {
 		runningFn = func() int { return 0 }
 	}
@@ -65,7 +66,7 @@ func buildHTTPHandler(cfg *config.Config, db store.Store, poolStatter debug.Pool
 	router := api.NewServer(db, cfg, logs, bus)
 
 	// Debug stats endpoint (outside /api/v1/; auth is applied explicitly here).
-	router.With(api.AuthMiddleware(db, cfg.APIKey)).Get("/debug/stats", debug.StatsHandler(runningFn, poolStatter, startedAt).ServeHTTP)
+	router.With(api.AuthMiddleware(db, cfg.APIKey)).Get("/debug/stats", debug.StatsHandler(runningFn, poolStatter, startedAt, backupStatusFn).ServeHTTP)
 
 	return router
 }
@@ -121,7 +122,7 @@ func main() {
 	log.Info().Str("data_dir", cfg.DataDir).Msg("filesystem output writer enabled")
 
 	orch := orchestrator.New(db, cfg, bus, runner, fsOutputs, embedder)
-	handler := buildHTTPHandler(cfg, db, db, orch.Docker(), bus, orch.Running, startedAt)
+	handler := buildHTTPHandler(cfg, db, db, orch.Docker(), bus, orch.Running, orch.BackupStatus, startedAt)
 
 	srv := &http.Server{
 		Addr:         cfg.ListenAddr,

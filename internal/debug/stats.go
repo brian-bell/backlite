@@ -9,6 +9,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 
+	"github.com/brian-bell/backlite/internal/backup"
 	"github.com/brian-bell/backlite/internal/store"
 )
 
@@ -24,6 +25,20 @@ type statsResponse struct {
 	UptimeSeconds float64           `json:"uptime_seconds"`
 	Runtime       runtimeStats      `json:"runtime"`
 	PID           int               `json:"pid"`
+	Backup        *backupStats      `json:"backup,omitempty"`
+}
+
+type backupStats struct {
+	Enabled          bool                `json:"enabled"`
+	Directory        string              `json:"directory"`
+	IntervalSeconds  float64             `json:"interval_seconds"`
+	RetentionSeconds float64             `json:"retention_seconds"`
+	WorkerState      string              `json:"worker_state"`
+	LatestArtifact   *backup.Metadata    `json:"latest_artifact,omitempty"`
+	LastSuccessAt    *time.Time          `json:"last_success_at,omitempty"`
+	LastErrorAt      *time.Time          `json:"last_error_at,omitempty"`
+	LastErrorMessage string              `json:"last_error_message,omitempty"`
+	RecentErrors     []backup.ErrorEntry `json:"recent_errors"`
 }
 
 type orchestratorStats struct {
@@ -49,7 +64,10 @@ type envelope struct {
 // StatsHandler returns an http.Handler that serves /debug/stats.
 // runningFn returns the orchestrator's current running task count.
 // ps may be nil if the store does not support pool stats.
-func StatsHandler(runningFn func() int, ps PoolStatter, startedAt time.Time) http.Handler {
+// backupStatusFn may be nil if local backups are not configured;
+// when nil or returning a zero (Directory == "" && Enabled == false) Status,
+// the response omits the "backup" field.
+func StatsHandler(runningFn func() int, ps PoolStatter, startedAt time.Time, backupStatusFn func() backup.Status) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var pool poolStats
 		if ps != nil {
@@ -74,6 +92,27 @@ func StatsHandler(runningFn func() int, ps PoolStatter, startedAt time.Time) htt
 				SysBytes:       mem.Sys,
 			},
 			PID: os.Getpid(),
+		}
+		if backupStatusFn != nil {
+			s := backupStatusFn()
+			if s.Enabled || s.Directory != "" {
+				bs := &backupStats{
+					Enabled:          s.Enabled,
+					Directory:        s.Directory,
+					IntervalSeconds:  s.Interval.Seconds(),
+					RetentionSeconds: s.Retention.Seconds(),
+					WorkerState:      s.WorkerState,
+					LatestArtifact:   s.LatestArtifact,
+					LastSuccessAt:    s.LastSuccessAt,
+					LastErrorAt:      s.LastErrorAt,
+					LastErrorMessage: s.LastErrorMessage,
+					RecentErrors:     s.RecentErrors,
+				}
+				if bs.RecentErrors == nil {
+					bs.RecentErrors = []backup.ErrorEntry{}
+				}
+				resp.Backup = bs
+			}
 		}
 
 		data, err := json.Marshal(envelope{Data: resp})

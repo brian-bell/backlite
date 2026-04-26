@@ -41,6 +41,13 @@ type findSimilarReadingsRequest struct {
 	MatchCount     int       `json:"match_count"`
 }
 
+type listReadingsResponse struct {
+	Readings []*models.Reading `json:"readings"`
+	Limit    int               `json:"limit"`
+	Offset   int               `json:"offset"`
+	HasMore  bool              `json:"has_more"`
+}
+
 func NewHandlers(s store.Store, cfg *config.Config, logs LogFetcher, bus notify.Emitter) *Handlers {
 	return &Handlers{store: s, config: cfg, logs: logs, bus: bus}
 }
@@ -106,6 +113,61 @@ func (h *Handlers) ListTasks(w http.ResponseWriter, r *http.Request) {
 		tasks = []*models.Task{}
 	}
 	writeJSON(w, http.StatusOK, tasks)
+}
+
+func (h *Handlers) ListReadings(w http.ResponseWriter, r *http.Request) {
+	limit := 20
+	offset := 0
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if n, err := strconv.Atoi(l); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	if o := r.URL.Query().Get("offset"); o != "" {
+		if n, err := strconv.Atoi(o); err == nil && n >= 0 {
+			offset = n
+		}
+	}
+
+	readings, err := h.store.ListReadings(r.Context(), store.ReadingFilter{
+		Limit:  limit + 1,
+		Offset: offset,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list readings")
+		return
+	}
+	hasMore := len(readings) > limit
+	if hasMore {
+		readings = readings[:limit]
+	}
+	if readings == nil {
+		readings = []*models.Reading{}
+	}
+
+	writeJSON(w, http.StatusOK, listReadingsResponse{
+		Readings: readings,
+		Limit:    limit,
+		Offset:   offset,
+		HasMore:  hasMore,
+	})
+}
+
+func (h *Handlers) GetReading(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	reading, err := h.store.GetReading(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "reading not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get reading")
+		return
+	}
+	writeJSON(w, http.StatusOK, reading)
 }
 
 func (h *Handlers) DeleteTask(w http.ResponseWriter, r *http.Request) {

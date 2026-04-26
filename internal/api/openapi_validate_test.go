@@ -93,6 +93,24 @@ func checkResponse(t *testing.T, req *http.Request, rec *httptest.ResponseRecord
 	}
 }
 
+func requireSpecRoute(t *testing.T, req *http.Request) {
+	t.Helper()
+	doc := loadSpec(t)
+	router, err := legacyrouter.NewRouter(doc)
+	if err != nil {
+		t.Fatalf("create OpenAPI router: %v", err)
+	}
+
+	reqCopy := req.Clone(req.Context())
+	reqCopy.RequestURI = ""
+	reqCopy.URL.Scheme = "http"
+	reqCopy.URL.Host = "localhost:8080"
+
+	if _, _, err := router.FindRoute(reqCopy); err != nil {
+		t.Fatalf("OpenAPI spec missing route for %s %s: %v", req.Method, req.URL.Path, err)
+	}
+}
+
 // extractID decodes the task ID from a create-task response body.
 func extractID(t *testing.T, body []byte) string {
 	t.Helper()
@@ -309,5 +327,33 @@ func TestOpenAPI_GetTaskLogs_404(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
 	}
+	checkResponse(t, req, rec)
+}
+
+// ---- GET /api/v1/readings ----
+
+func TestOpenAPI_ListReadings_200_Empty(t *testing.T) {
+	srv := testServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/readings?limit=20&offset=0", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	requireSpecRoute(t, req)
+	checkResponse(t, req, rec)
+}
+
+// ---- GET /api/v1/readings/{id} ----
+
+func TestOpenAPI_GetReading_404(t *testing.T) {
+	srv := testServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/readings/bf_READ_MISSING", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+	requireSpecRoute(t, req)
 	checkResponse(t, req, rec)
 }

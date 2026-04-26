@@ -134,6 +134,28 @@ func TestAPIAuth_AllowsDatabaseKeyWithReadScope(t *testing.T) {
 	}
 }
 
+func TestAPIAuth_AllowsDatabaseKeyWithReadingsScope(t *testing.T) {
+	cfg := &config.Config{}
+	s := &apiKeyStoreMock{
+		Store:   newTestStore(t),
+		hasKeys: true,
+		key: &models.APIKey{
+			Name:        "readings",
+			Permissions: []string{"readings:read"},
+		},
+	}
+	router := NewServer(s, cfg, noopLogFetcher{}, noopEmitter{})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/readings", nil)
+	req.Header.Set("Authorization", "Bearer db-secret")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /api/v1/readings: got status %d, want %d; body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+}
+
 func TestAPIAuth_AllowsDatabaseKeyWithWriteScope(t *testing.T) {
 	cfg := &config.Config{}
 	s := &apiKeyStoreMock{

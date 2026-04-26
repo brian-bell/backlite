@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/brian-bell/backlite/internal/config"
 	"github.com/brian-bell/backlite/internal/models"
@@ -476,6 +477,164 @@ func TestLookupReading_EmptyResultReturnsDataArray(t *testing.T) {
 	}
 	if string(raw) != "[]" {
 		t.Fatalf("data = %s, want []", string(raw))
+	}
+}
+
+func TestListReadings_ReturnsNewestFirstPage(t *testing.T) {
+	srv, s, _ := testServerWithEmitter(t)
+	ctx := context.Background()
+	now := time.Date(2026, 4, 25, 12, 0, 0, 0, time.UTC)
+	task := &models.Task{
+		ID:        "bf_READ_TASK",
+		Status:    models.TaskStatusCompleted,
+		TaskMode:  models.TaskModeRead,
+		Harness:   models.HarnessClaudeCode,
+		Prompt:    "https://example.com/source",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := s.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	for _, seed := range []struct {
+		id        string
+		url       string
+		title     string
+		createdAt time.Time
+	}{
+		{"bf_READ_OLD", "https://example.com/old", "Old", now},
+		{"bf_READ_NEW", "https://example.com/new", "New", now.Add(2 * time.Hour)},
+		{"bf_READ_MID", "https://example.com/mid", "Middle", now.Add(time.Hour)},
+	} {
+		r := &models.Reading{
+			ID:             seed.id,
+			TaskID:         task.ID,
+			URL:            seed.url,
+			Title:          seed.title,
+			TLDR:           seed.title + " tldr",
+			Tags:           []string{"research"},
+			Keywords:       []string{},
+			People:         []string{},
+			Orgs:           []string{},
+			NoveltyVerdict: "new",
+			Connections:    []models.Connection{},
+			Summary:        seed.title + " summary",
+			RawOutput:      []byte(`{}`),
+			Embedding:      []float32{1, 0, 0},
+			CreatedAt:      seed.createdAt,
+		}
+		if err := s.UpsertReading(ctx, r); err != nil {
+			t.Fatalf("UpsertReading %s: %v", seed.id, err)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/readings?limit=1&offset=1", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	checkResponse(t, req, w)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp struct {
+		Data struct {
+			Readings []models.Reading `json:"readings"`
+			Limit    int              `json:"limit"`
+			Offset   int              `json:"offset"`
+			HasMore  bool             `json:"has_more"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Data.Limit != 1 || resp.Data.Offset != 1 {
+		t.Fatalf("pagination = limit %d offset %d, want limit 1 offset 1", resp.Data.Limit, resp.Data.Offset)
+	}
+	if !resp.Data.HasMore {
+		t.Fatal("has_more = false, want true")
+	}
+	if len(resp.Data.Readings) != 1 {
+		t.Fatalf("got %d readings, want 1", len(resp.Data.Readings))
+	}
+	if resp.Data.Readings[0].ID != "bf_READ_MID" {
+		t.Fatalf("reading id = %q, want bf_READ_MID", resp.Data.Readings[0].ID)
+	}
+	if resp.Data.Readings[0].Embedding != nil {
+		t.Fatalf("embedding = %v, want nil", resp.Data.Readings[0].Embedding)
+	}
+	if strings.Contains(w.Body.String(), "raw_output") {
+		t.Fatalf("list response exposed raw_output: %s", w.Body.String())
+	}
+}
+
+func TestGetReading_ReturnsDetail(t *testing.T) {
+	srv, s, _ := testServerWithEmitter(t)
+	ctx := context.Background()
+	now := time.Date(2026, 4, 25, 12, 0, 0, 0, time.UTC)
+	task := &models.Task{
+		ID:        "bf_READ_DETAIL_TASK",
+		Status:    models.TaskStatusCompleted,
+		TaskMode:  models.TaskModeRead,
+		Harness:   models.HarnessClaudeCode,
+		Prompt:    "https://example.com/detail",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := s.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	reading := &models.Reading{
+		ID:             "bf_READ_DETAIL",
+		TaskID:         task.ID,
+		URL:            "https://example.com/detail",
+		Title:          "Detailed Reading",
+		TLDR:           "Short version",
+		Tags:           []string{"backend"},
+		Keywords:       []string{"sqlite"},
+		People:         []string{"Ada"},
+		Orgs:           []string{"Backlite"},
+		NoveltyVerdict: "new",
+		Connections:    []models.Connection{{ReadingID: "bf_READ_OTHER", Reason: "same topic"}},
+		Summary:        "The full summary.",
+		RawOutput:      []byte(`{"internal":true}`),
+		Embedding:      []float32{0.1, 0.9},
+		CreatedAt:      now,
+	}
+	if err := s.UpsertReading(ctx, reading); err != nil {
+		t.Fatalf("UpsertReading: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/readings/"+reading.ID, nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	checkResponse(t, req, w)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp struct {
+		Data models.Reading `json:"data"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Data.ID != reading.ID || resp.Data.URL != reading.URL || resp.Data.Summary != reading.Summary {
+		t.Fatalf("reading detail = %#v, want seeded detail", resp.Data)
+	}
+	if len(resp.Data.Keywords) != 1 || resp.Data.Keywords[0] != "sqlite" {
+		t.Fatalf("keywords = %v, want [sqlite]", resp.Data.Keywords)
+	}
+	if len(resp.Data.People) != 1 || resp.Data.People[0] != "Ada" {
+		t.Fatalf("people = %v, want [Ada]", resp.Data.People)
+	}
+	if resp.Data.Embedding != nil {
+		t.Fatalf("embedding = %v, want nil", resp.Data.Embedding)
+	}
+	if strings.Contains(w.Body.String(), "raw_output") {
+		t.Fatalf("detail response exposed raw_output: %s", w.Body.String())
 	}
 }
 

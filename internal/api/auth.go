@@ -124,6 +124,8 @@ func requiredScopeForRequest(r *http.Request) (string, bool) {
 		return "tasks:read", true
 	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/tasks":
 		return "tasks:write", true
+	case r.Method == http.MethodGet && (r.URL.Path == "/api/v1/readings" || strings.HasPrefix(r.URL.Path, "/api/v1/readings/")):
+		return "readings:read", true
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/tasks/") && !strings.HasSuffix(r.URL.Path, "/logs"):
 		return "tasks:read", true
 	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/logs"):

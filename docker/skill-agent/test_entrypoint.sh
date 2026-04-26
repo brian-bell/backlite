@@ -331,6 +331,131 @@ EOF
 )
 pass "installs review skill and runs to completion"
 
+# --- Read mode: pre-fetches HTML content before claude starts ---
+(
+    tmp=$(mktemp -d)
+    trap '[ -n "${SERVER_PID:-}" ] && kill "$SERVER_PID" 2>/dev/null || true; rm -rf "$tmp"' EXIT
+    export HOME="$tmp/home"
+    mkdir -p "$HOME/.claude"
+
+    serve_dir="$tmp/serve"
+    mkdir -p "$serve_dir"
+    cat >"$serve_dir/index.html" <<'HTML'
+<!DOCTYPE html>
+<html>
+  <head><title>Skill Capture Fixture</title></head>
+  <body><main><h1>Skill Capture Fixture</h1><p>Captured before claude starts.</p></main></body>
+</html>
+HTML
+
+    PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+    ( cd "$serve_dir" && python3 -m http.server "$PORT" --bind 127.0.0.1 ) >/dev/null 2>&1 &
+    SERVER_PID=$!
+    for _ in $(seq 1 30); do
+        if curl -sf "http://127.0.0.1:$PORT/index.html" -o /dev/null 2>/dev/null; then
+            break
+        fi
+        sleep 0.1
+    done
+
+    extract_stub="$tmp/extract-stub.sh"
+    cat >"$extract_stub" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+cp "$1" "$2"
+EOF
+    chmod +x "$extract_stub"
+
+    cat >"$tmp/claude" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+for artifact in raw.html extracted.md content.json; do
+    if [ ! -s "$HOME/workspace/$artifact" ]; then
+        echo "missing capture artifact before claude: $artifact" >&2
+        exit 9
+    fi
+done
+if [ "$(jq -r '.content_status' "$HOME/workspace/content.json")" != "captured" ]; then
+    echo "content.json status was not captured: $(cat "$HOME/workspace/content.json")" >&2
+    exit 9
+fi
+cat >"$HOME/workspace/status.json" <<JSON
+{"complete": true, "needs_input": false, "task_mode": "read", "url": "$PROMPT", "title": "x", "tldr": "y", "tags": [], "keywords": [], "people": [], "orgs": [], "novelty_verdict": "novel", "connections": [], "summary_markdown": "z"}
+JSON
+exit 0
+EOF
+    chmod +x "$tmp/claude"
+    export PATH="$tmp:$PATH"
+    export BACKFLOW_SKILLS_DIR="$DIR/skills"
+
+    export PROMPT="http://127.0.0.1:$PORT/index.html"
+    export TASK_ID="bf_read_capture"
+    export TASK_MODE="read"
+    export ANTHROPIC_API_KEY="sk-test"
+    export EXTRACT_CMD="$extract_stub"
+
+    if ! "$ENTRYPOINT" >/dev/null 2>&1; then
+        fail "read mode should pre-fetch raw.html, extracted.md, and content.json before claude starts"
+    fi
+)
+pass "read mode pre-fetches HTML capture artifacts before claude starts"
+
+# --- Read mode: capture failure writes sidecar and still runs claude ---
+(
+    tmp=$(mktemp -d)
+    trap '[ -n "${SERVER_PID:-}" ] && kill "$SERVER_PID" 2>/dev/null || true; rm -rf "$tmp"' EXIT
+    export HOME="$tmp/home"
+    mkdir -p "$HOME/.claude"
+
+    serve_dir="$tmp/serve"
+    mkdir -p "$serve_dir"
+    printf 'ok\n' >"$serve_dir/index.txt"
+
+    PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+    ( cd "$serve_dir" && python3 -m http.server "$PORT" --bind 127.0.0.1 ) >/dev/null 2>&1 &
+    SERVER_PID=$!
+    for _ in $(seq 1 30); do
+        if curl -sf "http://127.0.0.1:$PORT/index.txt" -o /dev/null 2>/dev/null; then
+            break
+        fi
+        sleep 0.1
+    done
+
+    cat >"$tmp/claude" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ -e "$HOME/workspace/raw.html" ] || [ -e "$HOME/workspace/extracted.md" ]; then
+    echo "raw/extracted artifacts should not exist for fetch_failed" >&2
+    exit 9
+fi
+if [ ! -s "$HOME/workspace/content.json" ]; then
+    echo "content.json missing for fetch_failed" >&2
+    exit 9
+fi
+if [ "$(jq -r '.content_status' "$HOME/workspace/content.json")" != "fetch_failed" ]; then
+    echo "content.json status was not fetch_failed: $(cat "$HOME/workspace/content.json")" >&2
+    exit 9
+fi
+cat >"$HOME/workspace/status.json" <<JSON
+{"complete": true, "needs_input": false, "task_mode": "read", "url": "$PROMPT", "title": "x", "tldr": "y", "tags": [], "keywords": [], "people": [], "orgs": [], "novelty_verdict": "novel", "connections": [], "summary_markdown": "z"}
+JSON
+exit 0
+EOF
+    chmod +x "$tmp/claude"
+    export PATH="$tmp:$PATH"
+    export BACKFLOW_SKILLS_DIR="$DIR/skills"
+
+    export PROMPT="http://127.0.0.1:$PORT/does-not-exist.html"
+    export TASK_ID="bf_read_fetch_failed"
+    export TASK_MODE="read"
+    export ANTHROPIC_API_KEY="sk-test"
+
+    if ! "$ENTRYPOINT" >/dev/null 2>&1; then
+        fail "read mode should record fetch_failed capture sidecar and still run claude"
+    fi
+)
+pass "read mode records fetch_failed sidecar and still runs claude"
+
 # --- Read skill bundle ships its helper scripts ---
 (
     tmp=$(mktemp -d)
@@ -358,13 +483,16 @@ EOF
     if ! "$ENTRYPOINT" >/dev/null 2>&1; then
         fail "read skill happy path: expected exit 0"
     fi
-    for helper in read-embed.sh read-similar.sh read-lookup.sh; do
+    for helper in read-embed.sh read-similar.sh read-lookup.sh fetch-and-extract.sh; do
         if [ ! -x "$tmp/.claude/skills/read/${helper}" ]; then
             fail "read skill: helper ${helper} should be installed and executable at ~/.claude/skills/read/"
         fi
     done
+    if [ ! -f "$tmp/.claude/skills/read/extractor/extract.js" ]; then
+        fail "read skill: extractor/extract.js should be installed at ~/.claude/skills/read/"
+    fi
 )
-pass "installs read skill with helper scripts (read-embed.sh, read-similar.sh, read-lookup.sh)"
+pass "installs read skill with helper scripts and extractor"
 
 # --- send-email.sh: happy-path POST shape against fake Resend server ---
 (

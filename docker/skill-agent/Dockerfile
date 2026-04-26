@@ -24,6 +24,10 @@ RUN npm install -g @anthropic-ai/claude-code
 # Skill bundles baked at /opt/backflow/skills/{auto,code,review,read}/
 COPY skills/ /opt/backflow/skills/
 
+# Read-mode pre-fetch + extraction deps. Keep the package lock with the skill
+# bundle so the skill-agent image produces the same extractor output as reader.
+RUN cd /opt/backflow/skills/read/extractor && npm ci --no-audit --no-fund --omit=dev
+
 # Agent user
 RUN useradd -m -s /bin/bash agent
 USER agent

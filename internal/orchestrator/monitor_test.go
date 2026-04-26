@@ -2128,3 +2128,107 @@ func TestSaveAgentOutput_GateOffWhenSaveDisabled(t *testing.T) {
 		t.Errorf("task.OutputURL = %q, want empty when save gated off", task.OutputURL)
 	}
 }
+
+func TestParseCapturedSidecar(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   []byte
+		wantNil bool
+		check   func(t *testing.T, c *capturedContent)
+	}{
+		{
+			name:    "nil bytes",
+			input:   nil,
+			wantNil: true,
+		},
+		{
+			name:    "empty bytes",
+			input:   []byte{},
+			wantNil: true,
+		},
+		{
+			name:    "malformed JSON",
+			input:   []byte(`{not json`),
+			wantNil: true,
+		},
+		{
+			name:    "wrong type for content_bytes",
+			input:   []byte(`{"content_status":"captured","content_bytes":"not-a-number"}`),
+			wantNil: true,
+		},
+		{
+			name:    "missing content_status",
+			input:   []byte(`{"url":"https://example.com","content_type":"text/html"}`),
+			wantNil: true,
+		},
+		{
+			name:    "empty content_status",
+			input:   []byte(`{"url":"https://example.com","content_status":""}`),
+			wantNil: true,
+		},
+		{
+			name: "captured happy path",
+			input: []byte(`{
+				"url":"https://example.com",
+				"content_type":"text/html; charset=utf-8",
+				"content_status":"captured",
+				"content_bytes":1024,
+				"extracted_bytes":256,
+				"content_sha256":"deadbeef",
+				"fetched_at":"2026-04-25T12:00:00Z"
+			}`),
+			check: func(t *testing.T, c *capturedContent) {
+				if c.URL != "https://example.com" {
+					t.Errorf("URL = %q", c.URL)
+				}
+				if c.ContentType != "text/html; charset=utf-8" {
+					t.Errorf("ContentType = %q", c.ContentType)
+				}
+				if c.ContentStatus != "captured" {
+					t.Errorf("ContentStatus = %q", c.ContentStatus)
+				}
+				if c.ContentBytes != 1024 {
+					t.Errorf("ContentBytes = %d", c.ContentBytes)
+				}
+				if c.ExtractedBytes != 256 {
+					t.Errorf("ExtractedBytes = %d", c.ExtractedBytes)
+				}
+				if c.ContentSHA256 != "deadbeef" {
+					t.Errorf("ContentSHA256 = %q", c.ContentSHA256)
+				}
+				if c.FetchedAt != "2026-04-25T12:00:00Z" {
+					t.Errorf("FetchedAt = %q", c.FetchedAt)
+				}
+			},
+		},
+		{
+			name:  "non-captured status (e.g. fetch_failed) returned as-is",
+			input: []byte(`{"content_status":"fetch_failed","content_type":""}`),
+			check: func(t *testing.T, c *capturedContent) {
+				// Forward-compat: future failure-mode statuses must round-trip
+				// through the parser so the row reflects what the agent wrote.
+				if c.ContentStatus != "fetch_failed" {
+					t.Errorf("ContentStatus = %q, want fetch_failed", c.ContentStatus)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseCapturedSidecar(tt.input)
+			if tt.wantNil {
+				if got != nil {
+					t.Errorf("got %+v, want nil", got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatalf("got nil, want non-nil capturedContent")
+			}
+			if tt.check != nil {
+				tt.check(t, got)
+			}
+		})
+	}
+}

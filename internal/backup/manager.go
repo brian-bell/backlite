@@ -42,6 +42,7 @@ var tempArtifactSuffixes = []string{
 	".sqlite.gz.tmp.verify",
 	".sqlite.tmp",
 	".meta.json.tmp",
+	".upload.json.tmp",
 }
 
 type Config struct {
@@ -50,6 +51,8 @@ type Config struct {
 	Directory    string
 	Interval     time.Duration
 	Retention    time.Duration
+	Upload       UploadConfig
+	Uploader     Uploader
 }
 
 type Metadata struct {
@@ -71,16 +74,23 @@ type Artifact struct {
 // It is exposed via /debug/stats so failures can be diagnosed without
 // shelling into the host.
 type Status struct {
-	Enabled          bool          `json:"enabled"`
-	Directory        string        `json:"directory"`
-	Interval         time.Duration `json:"interval"`
-	Retention        time.Duration `json:"retention"`
-	LatestArtifact   *Metadata     `json:"latest_artifact,omitempty"`
-	WorkerState      string        `json:"worker_state"`
-	LastSuccessAt    *time.Time    `json:"last_success_at,omitempty"`
-	LastErrorAt      *time.Time    `json:"last_error_at,omitempty"`
-	LastErrorMessage string        `json:"last_error_message,omitempty"`
-	RecentErrors     []ErrorEntry  `json:"recent_errors"`
+	Enabled             bool          `json:"enabled"`
+	Directory           string        `json:"directory"`
+	Interval            time.Duration `json:"interval"`
+	Retention           time.Duration `json:"retention"`
+	LatestArtifact      *Metadata     `json:"latest_artifact,omitempty"`
+	UploadEnabled       bool          `json:"upload_enabled"`
+	UploadBucket        string        `json:"upload_bucket,omitempty"`
+	UploadPrefix        string        `json:"upload_prefix,omitempty"`
+	UploadEndpoint      string        `json:"upload_endpoint,omitempty"`
+	LatestUploaded      *UploadMarker `json:"latest_uploaded_artifact,omitempty"`
+	PendingUpload       bool          `json:"pending_upload"`
+	NextUploadAttemptAt *time.Time    `json:"next_upload_attempt_at,omitempty"`
+	WorkerState         string        `json:"worker_state"`
+	LastSuccessAt       *time.Time    `json:"last_success_at,omitempty"`
+	LastErrorAt         *time.Time    `json:"last_error_at,omitempty"`
+	LastErrorMessage    string        `json:"last_error_message,omitempty"`
+	RecentErrors        []ErrorEntry  `json:"recent_errors"`
 }
 
 // ErrorEntry captures a single backup or prune failure for the operator
@@ -96,20 +106,28 @@ const recentErrorsCap = 5
 type Manager struct {
 	cfg Config
 
-	mu          sync.Mutex
-	running     bool
-	lastSuccess *time.Time
-	lastError   *ErrorEntry
-	recent      []ErrorEntry
+	mu                  sync.Mutex
+	running             bool
+	lastSuccess         *time.Time
+	lastError           *ErrorEntry
+	recent              []ErrorEntry
+	nextUploadAttemptAt *time.Time
+	uploadFailures      int
 
 	now         func() time.Time
 	runBackupFn func(context.Context, time.Time) error
+	uploader    Uploader
 }
 
 func New(cfg Config) *Manager {
+	uploader := cfg.Uploader
+	if uploader == nil && cfg.Upload.Enabled() {
+		uploader = NewS3Uploader(cfg.Upload)
+	}
 	m := &Manager{
-		cfg: cfg,
-		now: time.Now,
+		cfg:      cfg,
+		now:      time.Now,
+		uploader: uploader,
 	}
 	m.runBackupFn = m.runBackup
 	return m
@@ -145,7 +163,24 @@ func (m *Manager) MaybeSchedule(ctx context.Context) {
 			Msg("failed to inspect local backup state")
 		return
 	}
-	if !due {
+	uploadPending := false
+	if latest != nil {
+		var uploaded *UploadMarker
+		uploadPending, uploaded, err = m.needsUpload(latest)
+		if err != nil {
+			m.recordError("upload", err)
+			log.Error().
+				Err(err).
+				Str("backup_dir", m.cfg.Directory).
+				Msg("failed to inspect backup upload state")
+			if !due {
+				return
+			}
+		}
+		_ = uploaded
+	}
+	uploadDue := uploadPending && m.uploadAttemptDue(m.now())
+	if !due && !uploadDue {
 		log.Debug().Str("reason", "not_due").Str("backup_dir", m.cfg.Directory).Msg("local sqlite backup skipped")
 		return
 	}
@@ -164,30 +199,54 @@ func (m *Manager) MaybeSchedule(ctx context.Context) {
 	go func() {
 		defer m.setRunning(false)
 
-		logger := log.Info().
-			Str("backup_dir", m.cfg.Directory).
-			Str("database_path", m.cfg.DatabasePath)
-		if latest != nil {
-			logger = logger.Time("previous_backup_at", latest.Timestamp)
-		}
-		logger.Time("scheduled_at", startedAt).Msg("starting local sqlite backup")
+		artifact := latest
+		if due {
+			logger := log.Info().
+				Str("backup_dir", m.cfg.Directory).
+				Str("database_path", m.cfg.DatabasePath)
+			if latest != nil {
+				logger = logger.Time("previous_backup_at", latest.Timestamp)
+			}
+			logger.Time("scheduled_at", startedAt).Msg("starting local sqlite backup")
 
-		if err := m.runBackupFn(ctx, startedAt); err != nil {
-			m.recordError("backup", err)
-			log.Error().
-				Err(err).
+			if err := m.runBackupFn(ctx, startedAt); err != nil {
+				m.recordError("backup", err)
+				log.Error().
+					Err(err).
+					Str("backup_dir", m.cfg.Directory).
+					Str("database_path", m.cfg.DatabasePath).
+					Msg("local sqlite backup failed")
+				return
+			}
+
+			m.recordSuccess(startedAt)
+			log.Info().
 				Str("backup_dir", m.cfg.Directory).
 				Str("database_path", m.cfg.DatabasePath).
-				Msg("local sqlite backup failed")
-			return
+				Time("backup_at", startedAt).
+				Msg("local sqlite backup completed")
+
+			var err error
+			artifact, err = m.findLatestValidArtifact()
+			if err != nil {
+				m.recordError("backup", err)
+				log.Error().Err(err).Str("backup_dir", m.cfg.Directory).Msg("failed to inspect completed local backup")
+				return
+			}
 		}
 
-		m.recordSuccess(startedAt)
-		log.Info().
-			Str("backup_dir", m.cfg.Directory).
-			Str("database_path", m.cfg.DatabasePath).
-			Time("backup_at", startedAt).
-			Msg("local sqlite backup completed")
+		if artifact != nil {
+			if err := m.uploadArtifact(ctx, artifact); err != nil {
+				m.recordUploadFailure(err)
+				m.recordError("upload", err)
+				log.Error().
+					Err(err).
+					Str("backup_dir", m.cfg.Directory).
+					Str("artifact", artifact.Path).
+					Msg("backup upload failed")
+				return
+			}
+		}
 	}()
 }
 
@@ -244,31 +303,143 @@ func (m *Manager) Status() Status {
 	}
 	var lastErrorAt *time.Time
 	var lastErrorMessage string
+	var nextUploadAttemptAt *time.Time
 	if m.lastError != nil {
 		t := m.lastError.At
 		lastErrorAt = &t
 		lastErrorMessage = m.lastError.Message
+	}
+	if m.nextUploadAttemptAt != nil {
+		t := *m.nextUploadAttemptAt
+		nextUploadAttemptAt = &t
 	}
 	recent := make([]ErrorEntry, len(m.recent))
 	copy(recent, m.recent)
 	m.mu.Unlock()
 
 	s := Status{
-		Enabled:          m.cfg.Enabled,
-		Directory:        m.cfg.Directory,
-		Interval:         m.cfg.Interval,
-		Retention:        m.cfg.Retention,
-		WorkerState:      state,
-		LastSuccessAt:    lastSuccess,
-		LastErrorAt:      lastErrorAt,
-		LastErrorMessage: lastErrorMessage,
-		RecentErrors:     recent,
+		Enabled:             m.cfg.Enabled,
+		Directory:           m.cfg.Directory,
+		Interval:            m.cfg.Interval,
+		Retention:           m.cfg.Retention,
+		UploadEnabled:       m.cfg.Upload.Enabled(),
+		UploadBucket:        m.cfg.Upload.Bucket,
+		UploadPrefix:        m.cfg.Upload.Prefix,
+		UploadEndpoint:      m.cfg.Upload.Endpoint,
+		WorkerState:         state,
+		NextUploadAttemptAt: nextUploadAttemptAt,
+		LastSuccessAt:       lastSuccess,
+		LastErrorAt:         lastErrorAt,
+		LastErrorMessage:    lastErrorMessage,
+		RecentErrors:        recent,
 	}
 	if latest, err := m.findLatestValidArtifact(); err == nil && latest != nil {
 		meta := latest.Metadata
 		s.LatestArtifact = &meta
+		pending, uploaded, err := m.needsUpload(latest)
+		if err == nil {
+			s.PendingUpload = pending
+			if uploaded != nil {
+				marker := *uploaded
+				s.LatestUploaded = &marker
+			}
+		}
 	}
 	return s
+}
+
+func (m *Manager) uploadAttemptDue(now time.Time) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.nextUploadAttemptAt == nil || !now.UTC().Before(*m.nextUploadAttemptAt)
+}
+
+func (m *Manager) recordUploadFailure(err error) {
+	if err == nil {
+		return
+	}
+	now := m.now().UTC().Truncate(time.Second)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.uploadFailures++
+	backoff := uploadBackoff(m.uploadFailures)
+	next := now.Add(backoff)
+	m.nextUploadAttemptAt = &next
+}
+
+func (m *Manager) recordUploadSuccess() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.uploadFailures = 0
+	m.nextUploadAttemptAt = nil
+}
+
+func uploadBackoff(failures int) time.Duration {
+	if failures <= 1 {
+		return time.Minute
+	}
+	backoff := time.Minute
+	for i := 1; i < failures; i++ {
+		backoff *= 2
+		if backoff >= time.Hour {
+			return time.Hour
+		}
+	}
+	return backoff
+}
+
+func (m *Manager) needsUpload(artifact *Artifact) (bool, *UploadMarker, error) {
+	if !m.cfg.Upload.Enabled() || artifact == nil {
+		return false, nil, nil
+	}
+	marker, valid, err := readUploadMarker(artifact.Path, uploadMarkerPath(artifact.Path), m.cfg.Upload, artifact.Metadata)
+	if err != nil {
+		return false, nil, err
+	}
+	if valid {
+		return false, &marker, nil
+	}
+	return true, nil, nil
+}
+
+func (m *Manager) uploadArtifact(ctx context.Context, artifact *Artifact) error {
+	pending, _, err := m.needsUpload(artifact)
+	if err != nil {
+		return err
+	}
+	if !pending {
+		return nil
+	}
+	if !m.uploadAttemptDue(m.now()) {
+		return nil
+	}
+	if m.uploader == nil {
+		return fmt.Errorf("backup upload is enabled but no uploader is configured")
+	}
+	key := objectKey(m.cfg.Upload.Prefix, filepath.Base(artifact.Path))
+	result, err := m.uploader.Upload(ctx, UploadInput{
+		ArtifactPath: artifact.Path,
+		Bucket:       m.cfg.Upload.Bucket,
+		Key:          key,
+		Endpoint:     m.cfg.Upload.Endpoint,
+		Metadata:     artifact.Metadata,
+	})
+	if err != nil {
+		return err
+	}
+	if err := writeUploadMarker(artifact.Path, UploadMarker{
+		Bucket:     m.cfg.Upload.Bucket,
+		Key:        key,
+		Endpoint:   m.cfg.Upload.Endpoint,
+		ETag:       result.ETag,
+		SizeBytes:  artifact.Metadata.SizeBytes,
+		SHA256:     artifact.Metadata.SHA256,
+		UploadedAt: m.now().UTC().Truncate(time.Second),
+	}); err != nil {
+		return err
+	}
+	m.recordUploadSuccess()
+	return nil
 }
 
 func (m *Manager) needsBackup() (bool, *Artifact, error) {
@@ -417,6 +588,11 @@ func (m *Manager) prune(now time.Time) error {
 				log.Error().Err(rmErr).Str("file_name", filepath.Base(sidecar)).Msg("failed to prune local sqlite backup sidecar")
 				lastErr = rmErr
 			}
+			uploadSidecar := uploadMarkerPath(fullPath)
+			if rmErr := os.Remove(uploadSidecar); rmErr != nil && !os.IsNotExist(rmErr) {
+				log.Error().Err(rmErr).Str("file_name", filepath.Base(uploadSidecar)).Msg("failed to prune local sqlite backup upload marker")
+				lastErr = rmErr
+			}
 			continue
 		}
 
@@ -463,6 +639,29 @@ func (m *Manager) prune(now time.Time) error {
 				}
 			} else {
 				log.Info().Str("file_name", name).Str("reason", "orphan_metadata").Msg("pruned orphan local sqlite backup sidecar")
+			}
+			continue
+		}
+
+		if artifactName, ok := strings.CutSuffix(name, uploadMarkerExtension); ok {
+			if _, ok := parseArtifactTimestamp(artifactName); !ok {
+				continue
+			}
+			artifactSibling := filepath.Join(m.cfg.Directory, artifactName)
+			if _, err := os.Stat(artifactSibling); err == nil {
+				continue
+			} else if !os.IsNotExist(err) {
+				log.Error().Err(err).Str("file_name", name).Msg("failed to stat upload marker's artifact")
+				lastErr = err
+				continue
+			}
+			if rmErr := os.Remove(fullPath); rmErr != nil {
+				if !os.IsNotExist(rmErr) {
+					log.Error().Err(rmErr).Str("file_name", name).Msg("failed to prune orphan upload marker")
+					lastErr = rmErr
+				}
+			} else {
+				log.Info().Str("file_name", name).Str("reason", "orphan_metadata").Msg("pruned orphan local sqlite backup upload marker")
 			}
 		}
 	}

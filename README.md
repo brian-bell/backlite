@@ -242,7 +242,9 @@ Events: `task.created`, `task.running`, `task.completed`, `task.failed`, `task.n
 
 Enabled by default. The server runs a single background worker from the orchestrator tick that takes a consistent online SQLite snapshot, gzip-compresses and verifies it, and writes it into a configurable directory alongside a `.meta.json` sidecar (`file_name`, `created_at`, `finalized_at`, `sha256`, `size_bytes`). Artifacts are named `backlite-YYYYMMDDTHHMMSSZ.sqlite.gz`. The latest artifact's sha256 is recomputed each tick before it is trusted; corrupted artifacts are skipped and the scheduler falls back to the previous valid one.
 
-Each tick also prunes finalized artifacts older than `BACKFLOW_LOCAL_BACKUP_RETENTION_SEC` (with their sidecars), stale temp files, and orphan sidecars. The newest valid artifact is always preserved, regardless of age; setting retention to `0` disables pruning. Operator-visible state lives on `/debug/stats` under the `backup` key: latest-artifact metadata, worker state, last success/error timestamps, and a ring of recent backup/prune errors. Backup and retention failures are logged and recorded in that feed but do not affect health checks (`/health`, `/api/v1/health`) or task orchestration.
+Each tick also prunes finalized artifacts older than `BACKFLOW_LOCAL_BACKUP_RETENTION_SEC` (with their `.meta.json` and `.upload.json` sidecars), stale temp files, and orphan sidecars. The newest valid artifact is always preserved, regardless of age; setting retention to `0` disables pruning. Operator-visible state lives on `/debug/stats` under the `backup` key: latest-artifact metadata, S3 upload state, worker state, last success/error timestamps, and a ring of recent backup/prune/upload errors. Backup, upload, and retention failures are logged and recorded in that feed but do not affect health checks (`/health`, `/api/v1/health`) or task orchestration.
+
+Optional S3-compatible uploads are enabled by setting `BACKFLOW_BACKUP_S3_BUCKET`. The manager uploads the newest valid local artifact and writes `<artifact>.upload.json` next to the local backup after a successful upload. That marker records bucket, key, endpoint, ETag, size, sha256, and upload time; future ticks validate the marker against the local artifact before suppressing duplicate uploads. Upload failures retry with in-memory backoff and do not force a new local backup.
 
 | Variable | Description |
 |----------|-------------|
@@ -250,5 +252,22 @@ Each tick also prunes finalized artifacts older than `BACKFLOW_LOCAL_BACKUP_RETE
 | `BACKFLOW_LOCAL_BACKUP_DIR` | Output directory (supports `~` expansion) |
 | `BACKFLOW_LOCAL_BACKUP_INTERVAL_SEC` | Minimum spacing between successful backups |
 | `BACKFLOW_LOCAL_BACKUP_RETENTION_SEC` | Age past which finalized backups are pruned (`0` disables pruning) |
+| `BACKFLOW_BACKUP_S3_BUCKET` | Enables optional S3-compatible upload to this bucket |
+| `BACKFLOW_BACKUP_S3_PREFIX` | Optional object key prefix |
+| `BACKFLOW_BACKUP_S3_REGION` | Optional S3 region |
+| `BACKFLOW_BACKUP_S3_ENDPOINT` | Optional custom endpoint for S3-compatible providers |
+| `BACKFLOW_BACKUP_S3_PATH_STYLE` | Use path-style addressing for compatible providers that require it |
 
-To restore: stop the server, `gunzip backlite-...sqlite.gz`, optionally `sqlite3 file.sqlite "PRAGMA integrity_check;"`, copy the result over the file at `BACKFLOW_DATABASE_PATH`, and restart.
+`scripts/setup-backup-bucket.sh` creates or verifies a bucket with AWS CLI-compatible commands. It requires the bucket name via `--bucket` or `BACKFLOW_BACKUP_S3_BUCKET`; encryption, public-access blocking, and lifecycle retention are best-effort because S3-compatible providers vary.
+
+Backups cover only the SQLite database at `BACKFLOW_DATABASE_PATH`. Task output files and reading content under `BACKFLOW_DATA_DIR` are not included.
+
+Manual restore:
+
+1. Stop the Backlite server so SQLite is not writing to the database.
+2. Choose a local `.sqlite.gz` artifact, or download the corresponding object from S3.
+3. Decompress to a separate path: `gunzip -c backlite-...sqlite.gz > restore.sqlite`.
+4. Validate the restore candidate: `sqlite3 restore.sqlite "PRAGMA integrity_check;"` should return `ok`.
+5. Preserve the current database: `cp "$BACKFLOW_DATABASE_PATH" "$BACKFLOW_DATABASE_PATH.before-restore"`.
+6. Replace the configured database path with `restore.sqlite`.
+7. Restart Backlite and check `/health` plus `/debug/stats`.

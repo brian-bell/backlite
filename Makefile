@@ -4,6 +4,7 @@
        docker-agents-build-local \
        test-fake-agent test-blackbox test-schema test-soak \
        test-skill-agent-entrypoint \
+       test-setup-backup-bucket \
        db-pending db-running db-completed db-failed \
        deps
 
@@ -56,6 +57,9 @@ docker-agents-build-local: docker-agent-build-local docker-skill-agent-build-loc
 
 test-skill-agent-entrypoint:
 	bash docker/skill-agent/test_entrypoint.sh
+
+test-setup-backup-bucket:
+	bash scripts/test-setup-backup-bucket.sh
 
 DB_QUERY = @$(ENV); sqlite3 -json "$$BACKFLOW_DATABASE_PATH"
 

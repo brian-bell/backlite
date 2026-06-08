@@ -594,8 +594,8 @@ components:
 
     BackupStats:
       type: object
-      description: Operator-visible state of the local SQLite backup worker. Present when local backups are configured.
-      required: [enabled, directory, interval_seconds, retention_seconds, worker_state, recent_errors]
+      description: Operator-visible state of the local SQLite backup worker and optional S3 upload state. Present when local backups are configured.
+      required: [enabled, directory, interval_seconds, retention_seconds, upload_enabled, pending_upload, worker_state, recent_errors]
       properties:
         enabled:
           type: boolean
@@ -610,6 +610,25 @@ components:
           type: number
           minimum: 0
           example: 604800
+        upload_enabled:
+          type: boolean
+          description: True when BACKFLOW_BACKUP_S3_BUCKET is configured.
+        upload_bucket:
+          type: string
+          example: "backlite-prod"
+        upload_prefix:
+          type: string
+          example: "sqlite/daily/"
+        upload_endpoint:
+          type: string
+          example: "https://s3.us-east-2.amazonaws.com"
+        pending_upload:
+          type: boolean
+          description: True when the newest valid local artifact has no matching upload marker.
+        next_upload_attempt_at:
+          type: string
+          format: date-time
+          nullable: true
         worker_state:
           type: string
           enum: [idle, running]
@@ -632,6 +651,28 @@ components:
             size_bytes:
               type: integer
               minimum: 0
+        latest_uploaded_artifact:
+          type: object
+          nullable: true
+          required: [bucket, key, size_bytes, sha256, uploaded_at]
+          properties:
+            bucket:
+              type: string
+            key:
+              type: string
+              example: "sqlite/daily/backlite-20260425T120000Z.sqlite.gz"
+            endpoint:
+              type: string
+            etag:
+              type: string
+            size_bytes:
+              type: integer
+              minimum: 0
+            sha256:
+              type: string
+            uploaded_at:
+              type: string
+              format: date-time
         last_success_at:
           type: string
           format: date-time
@@ -653,7 +694,7 @@ components:
                 format: date-time
               phase:
                 type: string
-                enum: [backup, prune]
+                enum: [backup, prune, upload]
               message:
                 type: string
 

@@ -6,10 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -89,7 +87,7 @@ const taskColumns = `id, status, task_mode, harness, repo_url, branch, target_br
 	create_pr, self_review, save_agent_output, pr_title, pr_body, pr_url, output_url,
 	allowed_tools, claude_md, env_vars,
 	container_id, retry_count, user_retry_count, cost_usd, elapsed_time_sec, error,
-	ready_for_retry, agent_image, force, parent_task_id, inline_content_sha256,
+	ready_for_retry, agent_image, parent_task_id,
 	created_at, updated_at, started_at, completed_at`
 
 func (s *SQLiteStore) CreateTask(ctx context.Context, task *models.Task) error {
@@ -110,7 +108,7 @@ func (s *SQLiteStore) CreateTask(ctx context.Context, task *models.Task) error {
 			create_pr, self_review, save_agent_output, pr_title, pr_body, pr_url, output_url,
 			allowed_tools, claude_md, env_vars,
 			container_id, retry_count, user_retry_count, cost_usd, elapsed_time_sec, error,
-			ready_for_retry, agent_image, force, parent_task_id, inline_content_sha256,
+			ready_for_retry, agent_image, parent_task_id,
 			created_at, updated_at, started_at, completed_at
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?,
@@ -119,7 +117,7 @@ func (s *SQLiteStore) CreateTask(ctx context.Context, task *models.Task) error {
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?,
 			?, ?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?,
+			?, ?, ?,
 			?, ?, ?, ?
 		)`,
 		task.ID, task.Status, task.TaskMode, task.Harness, task.RepoURL, task.Branch, task.TargetBranch,
@@ -129,7 +127,7 @@ func (s *SQLiteStore) CreateTask(ctx context.Context, task *models.Task) error {
 		task.PRTitle, task.PRBody, task.PRURL, task.OutputURL,
 		allowedTools, task.ClaudeMD, envVars,
 		task.ContainerID, task.RetryCount, task.UserRetryCount, task.CostUSD, task.ElapsedTimeSec, task.Error,
-		task.ReadyForRetry, task.AgentImage, task.Force, nullableString(task.ParentTaskID), nullableStringValue(task.InlineContentSHA256),
+		task.ReadyForRetry, task.AgentImage, nullableString(task.ParentTaskID),
 		timeString(task.CreatedAt), timeString(task.UpdatedAt), nullableTimeString(task.StartedAt), nullableTimeString(task.CompletedAt),
 	)
 	return err
@@ -381,247 +379,20 @@ func (s *SQLiteStore) WithTx(ctx context.Context, fn func(Store) error) error {
 	return tx.Commit()
 }
 
-func (s *SQLiteStore) UpsertReading(ctx context.Context, r *models.Reading) error {
-	args, err := readingArgs(r)
-	if err != nil {
-		return err
-	}
-	_, err = s.q.ExecContext(ctx, `
-		INSERT INTO readings (
-			id, task_id, url, title, tldr,
-			tags, keywords, people, orgs,
-			novelty_verdict, connections, summary, raw_output,
-			embedding, created_at,
-			content_type, content_status, content_bytes,
-			extracted_bytes, content_sha256, fetched_at
-		) VALUES (
-			?, ?, ?, ?, ?,
-			?, ?, ?, ?,
-			?, ?, ?, ?,
-			?, ?,
-			?, ?, ?,
-			?, ?, ?
-		)
-		ON CONFLICT(url) DO UPDATE SET
-			task_id         = excluded.task_id,
-			title           = excluded.title,
-			tldr            = excluded.tldr,
-			tags            = excluded.tags,
-			keywords        = excluded.keywords,
-			people          = excluded.people,
-			orgs            = excluded.orgs,
-			novelty_verdict = excluded.novelty_verdict,
-			connections     = excluded.connections,
-			summary         = excluded.summary,
-			raw_output      = excluded.raw_output,
-			embedding       = excluded.embedding,
-			content_type    = excluded.content_type,
-			content_status  = excluded.content_status,
-			content_bytes   = excluded.content_bytes,
-			extracted_bytes = excluded.extracted_bytes,
-			content_sha256  = excluded.content_sha256,
-			fetched_at      = excluded.fetched_at`, args...)
-	return err
-}
-
-const readingColumns = `id, task_id, url, title, tldr,
-	tags, keywords, people, orgs,
-	novelty_verdict, connections, summary, raw_output,
-	created_at,
-	content_type, content_status, content_bytes,
-	extracted_bytes, content_sha256, fetched_at`
-
-func (s *SQLiteStore) ListReadings(ctx context.Context, filter ReadingFilter) ([]*models.Reading, error) {
-	query := "SELECT " + readingColumns + " FROM readings"
-	var (
-		conds []string
-		args  []any
-	)
-	if search := strings.TrimSpace(filter.Search); search != "" {
-		// Wildcard LIKE on the searchable text columns. SQLite's LIKE is
-		// case-insensitive for ASCII by default, which is enough for the
-		// title/url/tldr/summary fields exposed today.
-		conds = append(conds, `(title LIKE ? OR url LIKE ? OR tldr LIKE ? OR summary LIKE ?)`)
-		needle := "%" + search + "%"
-		args = append(args, needle, needle, needle, needle)
-	}
-	if tag := strings.TrimSpace(filter.Tag); tag != "" {
-		// Tags are stored as a JSON text array (e.g. ["go","sqlite"]).
-		// json_each + lower() gives an exact, case-insensitive match without
-		// the false positives a substring LIKE would produce.
-		conds = append(conds, `EXISTS (SELECT 1 FROM json_each(readings.tags) WHERE lower(json_each.value) = lower(?))`)
-		args = append(args, tag)
-	}
-	if len(conds) > 0 {
-		query += " WHERE " + strings.Join(conds, " AND ")
-	}
-	query += " ORDER BY created_at DESC, id ASC"
-	if filter.Limit > 0 {
-		query += " LIMIT ?"
-		args = append(args, filter.Limit)
-	}
-	if filter.Offset > 0 {
-		query += " OFFSET ?"
-		args = append(args, filter.Offset)
-	}
-
-	rows, err := s.q.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var readings []*models.Reading
-	for rows.Next() {
-		r, err := scanReading(rows)
-		if err != nil {
-			return nil, err
-		}
-		readings = append(readings, r)
-	}
-	return readings, rows.Err()
-}
-
-func (s *SQLiteStore) GetReading(ctx context.Context, id string) (*models.Reading, error) {
-	row := s.q.QueryRowContext(ctx, `
-		SELECT `+readingColumns+`
-		FROM readings
-		WHERE id = ?`, id)
-
-	return scanReading(row)
-}
-
-// GetReadingByURL returns the reading row whose url column matches exactly.
-func (s *SQLiteStore) GetReadingByURL(ctx context.Context, url string) (*models.Reading, error) {
-	row := s.q.QueryRowContext(ctx, `
-		SELECT `+readingColumns+`
-		FROM readings
-		WHERE url = ?`, url)
-
-	return scanReading(row)
-}
-
-func scanReading(row sqlScanner) (*models.Reading, error) {
-	var (
-		r               models.Reading
-		tagsJSON        string
-		keywordsJSON    string
-		peopleJSON      string
-		orgsJSON        string
-		connectionsJSON string
-		rawOutputJSON   string
-		createdAt       string
-		fetchedAt       sql.NullString
-	)
-	err := row.Scan(
-		&r.ID, &r.TaskID, &r.URL, &r.Title, &r.TLDR,
-		&tagsJSON, &keywordsJSON, &peopleJSON, &orgsJSON,
-		&r.NoveltyVerdict, &connectionsJSON, &r.Summary, &rawOutputJSON,
-		&createdAt,
-		&r.ContentType, &r.ContentStatus, &r.ContentBytes,
-		&r.ExtractedBytes, &r.ContentSHA256, &fetchedAt,
-	)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrNotFound
-		}
-		return nil, err
-	}
-	if err := unmarshalJSONString(tagsJSON, &r.Tags); err != nil {
-		return nil, fmt.Errorf("unmarshal tags: %w", err)
-	}
-	if err := unmarshalJSONString(keywordsJSON, &r.Keywords); err != nil {
-		return nil, fmt.Errorf("unmarshal keywords: %w", err)
-	}
-	if err := unmarshalJSONString(peopleJSON, &r.People); err != nil {
-		return nil, fmt.Errorf("unmarshal people: %w", err)
-	}
-	if err := unmarshalJSONString(orgsJSON, &r.Orgs); err != nil {
-		return nil, fmt.Errorf("unmarshal orgs: %w", err)
-	}
-	if err := unmarshalJSONString(connectionsJSON, &r.Connections); err != nil {
-		return nil, fmt.Errorf("unmarshal connections: %w", err)
-	}
-	if rawOutputJSON != "" {
-		r.RawOutput = json.RawMessage(rawOutputJSON)
-	}
-	if r.CreatedAt, err = parseTime(createdAt); err != nil {
-		return nil, err
-	}
-	if fetchedAt.Valid {
-		ft, ferr := parseTime(fetchedAt.String)
-		if ferr != nil {
-			return nil, fmt.Errorf("parse fetched_at: %w", ferr)
-		}
-		r.FetchedAt = &ft
-	}
-	return &r, nil
-}
-
-func (s *SQLiteStore) FindSimilarReadings(ctx context.Context, queryEmbedding []float32, limit int) ([]ReadingMatch, error) {
-	if len(queryEmbedding) == 0 || limit <= 0 {
-		return []ReadingMatch{}, nil
-	}
-
-	rows, err := s.q.QueryContext(ctx, `
-		SELECT id, title, tldr, url, embedding
-		FROM readings
-		WHERE embedding IS NOT NULL
-		  AND embedding != ''`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var matches []ReadingMatch
-	for rows.Next() {
-		var (
-			match         ReadingMatch
-			embeddingJSON string
-		)
-		if err := rows.Scan(&match.ID, &match.Title, &match.TLDR, &match.URL, &embeddingJSON); err != nil {
-			return nil, err
-		}
-		var embedding []float32
-		if err := unmarshalJSONString(embeddingJSON, &embedding); err != nil {
-			return nil, fmt.Errorf("unmarshal embedding for %s: %w", match.ID, err)
-		}
-		match.Similarity = cosineSimilarity(queryEmbedding, embedding)
-		if !math.IsNaN(match.Similarity) {
-			matches = append(matches, match)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	sort.Slice(matches, func(i, j int) bool {
-		if matches[i].Similarity == matches[j].Similarity {
-			return matches[i].ID < matches[j].ID
-		}
-		return matches[i].Similarity > matches[j].Similarity
-	})
-	if len(matches) > limit {
-		matches = matches[:limit]
-	}
-	return matches, nil
-}
-
 type sqlScanner interface {
 	Scan(dest ...any) error
 }
 
 func scanTask(row sqlScanner) (*models.Task, error) {
 	var (
-		t                   models.Task
-		allowedToolsJSON    string
-		envVarsJSON         string
-		parentTaskID        sql.NullString
-		inlineContentSHA256 sql.NullString
-		createdAt           string
-		updatedAt           string
-		startedAt           sql.NullString
-		completedAt         sql.NullString
+		t                models.Task
+		allowedToolsJSON string
+		envVarsJSON      string
+		parentTaskID     sql.NullString
+		createdAt        string
+		updatedAt        string
+		startedAt        sql.NullString
+		completedAt      sql.NullString
 	)
 
 	err := row.Scan(
@@ -632,7 +403,7 @@ func scanTask(row sqlScanner) (*models.Task, error) {
 		&t.PRTitle, &t.PRBody, &t.PRURL, &t.OutputURL,
 		&allowedToolsJSON, &t.ClaudeMD, &envVarsJSON,
 		&t.ContainerID, &t.RetryCount, &t.UserRetryCount, &t.CostUSD, &t.ElapsedTimeSec, &t.Error,
-		&t.ReadyForRetry, &t.AgentImage, &t.Force, &parentTaskID, &inlineContentSHA256,
+		&t.ReadyForRetry, &t.AgentImage, &parentTaskID,
 		&createdAt, &updatedAt, &startedAt, &completedAt,
 	)
 	if err != nil {
@@ -644,9 +415,6 @@ func scanTask(row sqlScanner) (*models.Task, error) {
 	if parentTaskID.Valid {
 		v := parentTaskID.String
 		t.ParentTaskID = &v
-	}
-	if inlineContentSHA256.Valid {
-		t.InlineContentSHA256 = inlineContentSHA256.String
 	}
 
 	if err := unmarshalJSONString(allowedToolsJSON, &t.AllowedTools); err != nil {
@@ -679,46 +447,6 @@ func scanTask(row sqlScanner) (*models.Task, error) {
 	return &t, nil
 }
 
-func readingArgs(r *models.Reading) ([]any, error) {
-	tagsJSON, err := jsonString(r.Tags)
-	if err != nil {
-		return nil, fmt.Errorf("marshal tags: %w", err)
-	}
-	keywordsJSON, err := jsonString(r.Keywords)
-	if err != nil {
-		return nil, fmt.Errorf("marshal keywords: %w", err)
-	}
-	peopleJSON, err := jsonString(r.People)
-	if err != nil {
-		return nil, fmt.Errorf("marshal people: %w", err)
-	}
-	orgsJSON, err := jsonString(r.Orgs)
-	if err != nil {
-		return nil, fmt.Errorf("marshal orgs: %w", err)
-	}
-	connectionsJSON, err := jsonString(r.Connections)
-	if err != nil {
-		return nil, fmt.Errorf("marshal connections: %w", err)
-	}
-	rawOutput := r.RawOutput
-	if rawOutput == nil {
-		rawOutput = []byte("{}")
-	}
-	embeddingJSON, err := jsonString(r.Embedding)
-	if err != nil {
-		return nil, fmt.Errorf("marshal embedding: %w", err)
-	}
-
-	return []any{
-		r.ID, r.TaskID, r.URL, r.Title, r.TLDR,
-		tagsJSON, keywordsJSON, peopleJSON, orgsJSON,
-		r.NoveltyVerdict, connectionsJSON, r.Summary, string(rawOutput),
-		embeddingJSON, timeString(r.CreatedAt),
-		r.ContentType, r.ContentStatus, r.ContentBytes,
-		r.ExtractedBytes, r.ContentSHA256, nullableTimeString(r.FetchedAt),
-	}, nil
-}
-
 func timeString(t time.Time) string {
 	return t.UTC().Format(time.RFC3339Nano)
 }
@@ -735,16 +463,6 @@ func nullableString(s *string) any {
 		return nil
 	}
 	return *s
-}
-
-// nullableStringValue returns nil for empty strings so that NULL is stored
-// rather than the empty string. Used for nullable TEXT columns whose
-// in-memory representation is a plain string (not *string).
-func nullableStringValue(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
 }
 
 func parseTime(raw string) (time.Time, error) {
@@ -782,22 +500,4 @@ func unmarshalJSONString(raw string, dest any) error {
 		raw = "null"
 	}
 	return json.Unmarshal([]byte(raw), dest)
-}
-
-func cosineSimilarity(a, b []float32) float64 {
-	if len(a) == 0 || len(a) != len(b) {
-		return math.NaN()
-	}
-	var dot, magA, magB float64
-	for i := range a {
-		af := float64(a[i])
-		bf := float64(b[i])
-		dot += af * bf
-		magA += af * af
-		magB += bf * bf
-	}
-	if magA == 0 || magB == 0 {
-		return math.NaN()
-	}
-	return dot / (math.Sqrt(magA) * math.Sqrt(magB))
 }

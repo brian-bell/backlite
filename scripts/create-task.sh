@@ -30,8 +30,6 @@ The prompt must include a GitHub URL so the agent can infer the repo.
 
 Options:
   --plan <file>           Read prompt from a file (use instead of <prompt> arg)
-  --branch <name>         Working branch name
-  --target-branch <name>  Target branch (default: main)
   --harness <name>        Agent harness: claude_code or codex (defaults to server setting)
   --model <model>         Model to use (defaults to server setting for the selected harness)
   --effort <level>        Reasoning effort: low, medium, high (defaults to server setting)
@@ -65,8 +63,6 @@ fi
 
 # Defaults — empty means "let the server decide"
 HARNESS=""
-BRANCH=""
-TARGET_BRANCH=""
 MODEL=""
 EFFORT=""
 BUDGET=""
@@ -92,8 +88,6 @@ while [ $# -gt 0 ]; do
             shift 2
             ;;
         --harness)      HARNESS="$2"; shift 2 ;;
-        --branch)       BRANCH="$2"; shift 2 ;;
-        --target-branch) TARGET_BRANCH="$2"; shift 2 ;;
         --model)        MODEL="$2"; shift 2 ;;
         --effort)       EFFORT="$2"; shift 2 ;;
         --budget)       BUDGET="$2"; shift 2 ;;
@@ -122,8 +116,6 @@ fi
 JSON=$(jq -n \
     --arg prompt "$PROMPT" \
     --arg harness "$HARNESS" \
-    --arg branch "$BRANCH" \
-    --arg target_branch "$TARGET_BRANCH" \
     --arg model "$MODEL" \
     --arg effort "$EFFORT" \
     --arg budget "$BUDGET" \
@@ -140,8 +132,6 @@ JSON=$(jq -n \
         prompt: $prompt
     }
     + if $harness != "" then {harness: $harness} else {} end
-    + if $branch != "" then {branch: $branch} else {} end
-    + if $target_branch != "" then {target_branch: $target_branch} else {} end
     + if $model != "" then {model: $model} else {} end
     + if $effort != "" then {effort: $effort} else {} end
     + if $budget != "" then {max_budget_usd: ($budget | tonumber)} else {} end

@@ -2,11 +2,9 @@ package orchestrator
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
-	"github.com/oklog/ulid/v2"
 	"github.com/rs/zerolog/log"
 
 	"github.com/brian-bell/backlite/internal/config"
@@ -147,25 +145,9 @@ func (o *Orchestrator) handleCompletion(ctx context.Context, task *models.Task, 
 		result.EventType = notify.EventTaskFailed
 	}
 
-	// Reading-mode completion: embed TL;DR and write the reading row synchronously.
-	// If embedding or the DB write fails, the task itself fails.
-	var readingOpts []notify.EventOption
-	if task.TaskMode == models.TaskModeRead && result.Status == models.TaskStatusCompleted {
-		opts, err := o.handleReadingCompletion(ctx, task, status)
-		if err != nil {
-			log.Error().Err(err).Str("task_id", task.ID).Msg("handleReadingCompletion: reading pipeline failed")
-			result.Status = models.TaskStatusFailed
-			result.EventType = notify.EventTaskFailed
-			result.Error = err.Error()
-		} else {
-			readingOpts = opts
-		}
-	}
-
 	switch result.EventType {
 	case notify.EventTaskCompleted:
 		result.EventOpts = []notify.EventOption{notify.WithContainerStatus(status.PRURL, "", status.LogTail)}
-		result.EventOpts = append(result.EventOpts, readingOpts...)
 	case notify.EventTaskNeedsInput:
 		result.EventOpts = []notify.EventOption{notify.WithContainerStatus("", status.Question, status.LogTail)}
 	default:
@@ -218,179 +200,6 @@ func (o *Orchestrator) handleCompletion(ctx context.Context, task *models.Task, 
 	}
 
 	log.Info().Str("task_id", task.ID).Str("status", string(result.Status)).Msg("task completed")
-}
-
-// capturedContent mirrors the JSON sidecar written by docker/reader/fetch-and-extract.sh.
-type capturedContent struct {
-	URL            string `json:"url"`
-	ContentType    string `json:"content_type"`
-	ContentStatus  string `json:"content_status"`
-	ContentBytes   int64  `json:"content_bytes"`
-	ExtractedBytes int64  `json:"extracted_bytes"`
-	ContentSHA256  string `json:"content_sha256"`
-	FetchedAt      string `json:"fetched_at"`
-}
-
-// handleReadingCompletion embeds the agent's final TL;DR, persists the
-// captured content artifacts, and writes the reading row. Returns the slice of
-// EventOptions that populate the reading fields on the task.completed event.
-// Any error here causes the task itself to fail.
-func (o *Orchestrator) handleReadingCompletion(ctx context.Context, task *models.Task, status ContainerStatus) ([]notify.EventOption, error) {
-	if o.embedder == nil {
-		return nil, fmt.Errorf("reading completion: no embedder configured")
-	}
-	url := status.URL
-	if url == "" {
-		url = task.Prompt // read-mode tasks always have the URL as the prompt
-	}
-	if url == "" {
-		return nil, fmt.Errorf("reading completion: agent reported empty url")
-	}
-
-	// Agent confirmed the URL already exists — complete without overwriting
-	// the existing reading (which has richer content than the duplicate stub).
-	// The captured-but-not-yet-persisted content is dropped on the floor: per
-	// PRD, operators can refresh by resubmitting with force=true.
-	if status.NoveltyVerdict == "duplicate" && !task.Force {
-		return []notify.EventOption{
-			notify.WithReading(status.TLDR, status.NoveltyVerdict, status.Tags, status.Connections),
-		}, nil
-	}
-
-	vec, err := o.embedder.Embed(ctx, status.TLDR)
-	if err != nil {
-		return nil, fmt.Errorf("embed tldr: %w", err)
-	}
-
-	raw, err := json.Marshal(agentStatusFromContainer(status))
-	if err != nil {
-		return nil, fmt.Errorf("marshal raw_output: %w", err)
-	}
-
-	// Pull the captured content (raw + extracted + sidecar) out of the
-	// container. Missing files yield nil byte slices — the reader pipeline
-	// is non-fatal so we tolerate "no capture happened" and just leave the
-	// content-status fields empty on the row.
-	rawContent, extractedContent, sidecarBytes, contentErr := o.docker.GetReadingContent(ctx, task.ContainerID)
-	if contentErr != nil {
-		log.Warn().Err(contentErr).Str("task_id", task.ID).Msg("GetReadingContent failed; persisting reading without captured content")
-	}
-	captured := parseCapturedSidecar(sidecarBytes)
-
-	// If a reading already exists for this URL (force=true overwrite path),
-	// reuse its id so the upsert hits the same row and the on-disk persister
-	// overwrites the existing readings/{id}/ directory atomically. Without
-	// this, the upsert keeps the old row id (per ON CONFLICT(url)) but the
-	// orchestrator would persist files under a never-stored id, orphaning
-	// them on disk and leaving the API endpoints unable to find the new
-	// content.
-	readingID := "bf_" + ulid.Make().String()
-	if existing, err := o.store.GetReadingByURL(ctx, url); err == nil && existing != nil {
-		readingID = existing.ID
-	}
-
-	reading := &models.Reading{
-		ID:             readingID,
-		TaskID:         task.ID,
-		URL:            url,
-		Title:          status.Title,
-		TLDR:           status.TLDR,
-		Tags:           status.Tags,
-		Keywords:       status.Keywords,
-		People:         status.People,
-		Orgs:           status.Orgs,
-		NoveltyVerdict: status.NoveltyVerdict,
-		Connections:    status.Connections,
-		Summary:        status.SummaryMarkdown,
-		RawOutput:      raw,
-		Embedding:      vec,
-		CreatedAt:      time.Now().UTC(),
-	}
-	if captured != nil {
-		reading.ContentType = captured.ContentType
-		reading.ContentStatus = captured.ContentStatus
-		reading.ContentBytes = captured.ContentBytes
-		reading.ExtractedBytes = captured.ExtractedBytes
-		reading.ContentSHA256 = captured.ContentSHA256
-		if ts, err := time.Parse(time.RFC3339, captured.FetchedAt); err == nil {
-			ts = ts.UTC()
-			reading.FetchedAt = &ts
-		}
-	}
-
-	if err := o.store.UpsertReading(ctx, reading); err != nil {
-		return nil, fmt.Errorf("upsert reading: %w", err)
-	}
-
-	// Persist captured artifacts to disk after the row commits so a DB
-	// failure can't leave orphan files. Gated on ContentStatus="captured"
-	// so disk and row stay in sync — without that, a missing/malformed
-	// sidecar would leave bytes on disk that the API endpoints (which
-	// require ContentStatus="captured") will never serve.
-	//
-	// Best-effort: a failure here is logged but does not fail the task.
-	// The row is already committed, and failing here would leave the user
-	// stuck — the duplicate guard at dispatch time would block any retry
-	// without force=true. The API gracefully 404s when the file is absent.
-	if reading.ContentStatus == "captured" && rawContent != nil && o.outputs != nil {
-		if err := o.outputs.SaveReadingContent(ctx, reading.ID, rawContent, extractedContent, sidecarBytes); err != nil {
-			log.Warn().Err(err).
-				Str("task_id", task.ID).
-				Str("reading_id", reading.ID).
-				Msg("save reading content failed; row committed without on-disk artifacts")
-		}
-	}
-
-	opts := []notify.EventOption{
-		notify.WithReading(status.TLDR, status.NoveltyVerdict, status.Tags, status.Connections),
-	}
-	if reading.ContentStatus != "" {
-		opts = append(opts, notify.WithReadingContent(reading.ContentStatus, reading.ContentType))
-	}
-	return opts, nil
-}
-
-// parseCapturedSidecar parses the in-container content.json sidecar. Returns
-// nil when sidecar is empty, malformed, or only partially populated — callers
-// then leave the reading row's content fields at their zero values.
-func parseCapturedSidecar(sidecar []byte) *capturedContent {
-	if len(sidecar) == 0 {
-		return nil
-	}
-	var c capturedContent
-	if err := json.Unmarshal(sidecar, &c); err != nil {
-		log.Warn().Err(err).Msg("malformed content.json sidecar; ignoring")
-		return nil
-	}
-	if c.ContentStatus == "" {
-		return nil
-	}
-	return &c
-}
-
-// agentStatusFromContainer reconstructs the reading-relevant portion of the
-// agent's status output from the parsed ContainerStatus. Used to populate the
-// reading's raw_output JSON text losslessly without depending on the original bytes.
-func agentStatusFromContainer(s ContainerStatus) AgentStatus {
-	return AgentStatus{
-		Complete:        s.Complete,
-		PRURL:           s.PRURL,
-		CostUSD:         s.CostUSD,
-		ElapsedTimeSec:  s.ElapsedTimeSec,
-		RepoURL:         s.RepoURL,
-		TargetBranch:    s.TargetBranch,
-		TaskMode:        s.TaskMode,
-		URL:             s.URL,
-		Title:           s.Title,
-		TLDR:            s.TLDR,
-		Tags:            s.Tags,
-		Keywords:        s.Keywords,
-		People:          s.People,
-		Orgs:            s.Orgs,
-		NoveltyVerdict:  s.NoveltyVerdict,
-		Connections:     s.Connections,
-		SummaryMarkdown: s.SummaryMarkdown,
-	}
 }
 
 // saveAgentOutput extracts the agent's output log from the container and

@@ -49,53 +49,7 @@
     },
     "task_mode": {
       "type": "string",
-      "enum": ["code", "review", "read", "auto"]
-    },
-    "url": {
-      "type": "string",
-      "description": "Read mode: the URL that was summarized."
-    },
-    "title": {
-      "type": "string",
-      "description": "Read mode: page title."
-    },
-    "tldr": {
-      "type": "string",
-      "description": "Read mode: short summary (<= 280 chars by convention)."
-    },
-    "tags": {
-      "type": "array",
-      "items": {"type": "string"}
-    },
-    "keywords": {
-      "type": "array",
-      "items": {"type": "string"}
-    },
-    "people": {
-      "type": "array",
-      "items": {"type": "string"}
-    },
-    "orgs": {
-      "type": "array",
-      "items": {"type": "string"}
-    },
-    "novelty_verdict": {
-      "type": "string",
-      "enum": ["", "novel", "extends_existing", "duplicate"]
-    },
-    "connections": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": ["reading_id", "reason"],
-        "properties": {
-          "reading_id": {"type": "string"},
-          "reason": {"type": "string"}
-        }
-      }
-    },
-    "summary_markdown": {
-      "type": "string"
+      "enum": ["code", "review", "auto"]
     }
   }
 }

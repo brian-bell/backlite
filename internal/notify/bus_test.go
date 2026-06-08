@@ -147,10 +147,10 @@ func TestNewEvent_WithContainerStatus(t *testing.T) {
 }
 
 func TestNewEvent_CopiesTaskMode(t *testing.T) {
-	task := &models.Task{ID: "bf_1", TaskMode: models.TaskModeRead}
+	task := &models.Task{ID: "bf_1", TaskMode: models.TaskModeCode}
 	event := NewEvent(EventTaskCompleted, task)
-	if event.TaskMode != models.TaskModeRead {
-		t.Errorf("TaskMode = %q, want %q", event.TaskMode, models.TaskModeRead)
+	if event.TaskMode != models.TaskModeCode {
+		t.Errorf("TaskMode = %q, want %q", event.TaskMode, models.TaskModeCode)
 	}
 }
 
@@ -171,41 +171,6 @@ func TestNewEvent_OmitsParentTaskIDWhenAbsent(t *testing.T) {
 	event := NewEvent(EventTaskCreated, task)
 	if event.ParentTaskID != nil {
 		t.Errorf("ParentTaskID = %v, want nil", event.ParentTaskID)
-	}
-}
-
-func TestNewEvent_WithReading_PopulatesFields(t *testing.T) {
-	task := &models.Task{ID: "bf_1", TaskMode: models.TaskModeRead}
-	tags := []string{"ai", "systems"}
-	conns := []models.Connection{{ReadingID: "bf_other", Reason: "same topic"}}
-
-	event := NewEvent(EventTaskCompleted, task, WithReading("short summary", "new", tags, conns))
-
-	if event.TLDR != "short summary" {
-		t.Errorf("TLDR = %q", event.TLDR)
-	}
-	if event.NoveltyVerdict != "new" {
-		t.Errorf("NoveltyVerdict = %q", event.NoveltyVerdict)
-	}
-	if len(event.Tags) != 2 || event.Tags[0] != "ai" {
-		t.Errorf("Tags = %v", event.Tags)
-	}
-	if len(event.Connections) != 1 || event.Connections[0].ReadingID != "bf_other" {
-		t.Errorf("Connections = %+v", event.Connections)
-	}
-}
-
-func TestNewEvent_WithReadingContent_PopulatesFields(t *testing.T) {
-	task := &models.Task{ID: "bf_2", TaskMode: models.TaskModeRead}
-
-	event := NewEvent(EventTaskCompleted, task,
-		WithReadingContent("captured", "text/html; charset=utf-8"))
-
-	if event.ContentStatus != "captured" {
-		t.Errorf("ContentStatus = %q, want %q", event.ContentStatus, "captured")
-	}
-	if event.ContentType != "text/html; charset=utf-8" {
-		t.Errorf("ContentType = %q, want %q", event.ContentType, "text/html; charset=utf-8")
 	}
 }
 

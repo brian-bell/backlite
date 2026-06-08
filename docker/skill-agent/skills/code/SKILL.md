@@ -21,7 +21,6 @@ a PR, and write a final `status.json` describing the outcome.
 - `$TASK_CONTEXT` — optional supplementary context from the user
 - `$CREATE_PR` — `true` when the user wants a PR opened, `false` to stop after push
 - `$PR_TITLE`, `$PR_BODY` — optional user-supplied PR metadata; otherwise generate them
-- `$BACKFLOW_API_BASE_URL` — only needed for read-mode helpers (not used here)
 
 ## What you must do
 

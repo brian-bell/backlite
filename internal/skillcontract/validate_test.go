@@ -24,27 +24,6 @@ func TestValidate_HappyPath_CodeMode(t *testing.T) {
 	}
 }
 
-func TestValidate_HappyPath_ReadMode(t *testing.T) {
-	good := []byte(`{
-		"complete": true,
-		"needs_input": false,
-		"task_mode": "read",
-		"url": "https://example.com/post",
-		"title": "Some Post",
-		"tldr": "A short summary.",
-		"tags": ["a", "b"],
-		"keywords": ["x"],
-		"people": [],
-		"orgs": [],
-		"novelty_verdict": "novel",
-		"connections": [],
-		"summary_markdown": "## Summary"
-	}`)
-	if err := Validate(good); err != nil {
-		t.Errorf("Validate(good read) = %v, want nil", err)
-	}
-}
-
 func TestValidate_RejectsMissingRequiredFields(t *testing.T) {
 	tests := []struct {
 		name string
@@ -80,7 +59,7 @@ func TestValidate_RejectsWrongTypes(t *testing.T) {
 		{"cost_usd is string", `{"complete": true, "needs_input": false, "task_mode": "code", "cost_usd": "0.5"}`},
 		{"cost_usd negative", `{"complete": true, "needs_input": false, "task_mode": "code", "cost_usd": -1}`},
 		{"task_mode invalid enum", `{"complete": true, "needs_input": false, "task_mode": "garbage"}`},
-		{"tags element non-string", `{"complete": true, "needs_input": false, "task_mode": "read", "tags": [1,2]}`},
+		{"task_mode read no longer allowed", `{"complete": true, "needs_input": false, "task_mode": "read"}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

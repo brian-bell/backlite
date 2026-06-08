@@ -267,7 +267,6 @@ func resetBetweenTests(t *testing.T) {
 	// NOTE: Keep this list in sync with migrations — add new tables here when
 	// new migrations introduce them.
 	_, err := dbPool.ExecContext(ctx, `
-		DELETE FROM readings;
 		DELETE FROM api_keys;
 		DELETE FROM tasks;`)
 	if err != nil {

@@ -81,235 +81,6 @@ paths:
       security:
         - BearerAuth: [health:read]
 
-  /api/v1/readings:
-    get:
-      operationId: listReadings
-      summary: List saved readings
-      description: >
-        Returns saved reading results newest-first with offset pagination.
-        Optionally filtered by a free-text query (`q`) that matches against
-        title, url, tldr, and summary. Requires bearer authentication when API
-        keys are configured.
-      parameters:
-        - name: limit
-          in: query
-          description: Maximum number of readings to return
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-        - name: offset
-          in: query
-          description: Number of readings to skip for pagination
-          required: false
-          schema:
-            type: integer
-            minimum: 0
-        - name: q
-          in: query
-          description: Free-text query matched case-insensitively against title, url, tldr, and summary.
-          required: false
-          schema:
-            type: string
-        - name: tag
-          in: query
-          description: Restrict results to readings whose tags array contains this tag (case-insensitive exact match).
-          required: false
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Page of saved readings
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ReadingListEnvelope"
-        "401":
-          description: Missing or invalid bearer token
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelope"
-        "403":
-          description: API key lacks required scope
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelope"
-        "500":
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelope"
-      security:
-        - BearerAuth: [readings:read]
-
-  /api/v1/readings/{id}:
-    get:
-      operationId: getReading
-      summary: Get a saved reading
-      description: Returns one saved reading result by ID. Requires bearer authentication when API keys are configured.
-      parameters:
-        - name: id
-          in: path
-          required: true
-          description: Reading ID
-          schema:
-            type: string
-            pattern: "^bf_[0-9A-Z]{26}$"
-      responses:
-        "200":
-          description: Reading details
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ReadingEnvelope"
-        "401":
-          description: Missing or invalid bearer token
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelope"
-        "403":
-          description: API key lacks required scope
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelope"
-        "404":
-          description: Reading not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelope"
-        "500":
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelope"
-      security:
-        - BearerAuth: [readings:read]
-
-  /api/v1/readings/{id}/content:
-    get:
-      operationId: getReadingContent
-      summary: Get the extracted markdown for a reading
-      description: >
-        Streams the markdown extraction (Mozilla Readability + turndown) of a
-        captured reading. Returns 404 when the reading was not captured
-        (`content_status != "captured"`) or no extraction is available
-        (non-HTML payloads).
-      parameters:
-        - name: id
-          in: path
-          required: true
-          description: Reading ID
-          schema:
-            type: string
-            pattern: "^bf_[0-9A-Z]{26}$"
-      responses:
-        "200":
-          description: Extracted markdown
-          content:
-            text/markdown:
-              schema:
-                type: string
-        "400":
-          description: Malformed reading ID
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelope"
-        "401":
-          description: Missing or invalid bearer token
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelope"
-        "403":
-          description: API key lacks required scope
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelope"
-        "404":
-          description: Reading content not available
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelope"
-        "500":
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelope"
-      security:
-        - BearerAuth: [readings:read]
-
-  /api/v1/readings/{id}/content/raw:
-    get:
-      operationId: getReadingContentRaw
-      summary: Get the raw captured bytes for a reading
-      description: >
-        Streams the raw bytes captured for a reading with the original
-        Content-Type as recorded on the reading row. Returns 404 when the
-        reading was not captured (`content_status != "captured"`).
-      parameters:
-        - name: id
-          in: path
-          required: true
-          description: Reading ID
-          schema:
-            type: string
-            pattern: "^bf_[0-9A-Z]{26}$"
-      responses:
-        "200":
-          description: Raw captured content
-          content:
-            text/html:
-              schema:
-                type: string
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
-        "400":
-          description: Malformed reading ID
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelope"
-        "401":
-          description: Missing or invalid bearer token
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelope"
-        "403":
-          description: API key lacks required scope
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelope"
-        "404":
-          description: Reading content not available
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelope"
-        "500":
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelope"
-      security:
-        - BearerAuth: [readings:read]
-
   /api/v1/tasks:
     post:
       operationId: createTask
@@ -910,41 +681,6 @@ components:
           items:
             $ref: "#/components/schemas/Task"
 
-    ReadingListEnvelope:
-      type: object
-      required: [data]
-      properties:
-        data:
-          $ref: "#/components/schemas/ReadingPage"
-
-    ReadingEnvelope:
-      type: object
-      required: [data]
-      properties:
-        data:
-          $ref: "#/components/schemas/ReadingDetail"
-
-    ReadingPage:
-      type: object
-      required: [readings, limit, offset, has_more]
-      properties:
-        readings:
-          type: array
-          items:
-            $ref: "#/components/schemas/Reading"
-        limit:
-          type: integer
-          minimum: 1
-          maximum: 100
-          example: 20
-        offset:
-          type: integer
-          minimum: 0
-          example: 0
-        has_more:
-          type: boolean
-          example: false
-
     # -------------------------------------------------------------------------
     # Core types
     # -------------------------------------------------------------------------
@@ -987,7 +723,7 @@ components:
           $ref: "#/components/schemas/TaskStatus"
         task_mode:
           type: string
-          enum: [auto, code, review, read]
+          enum: [auto, code, review]
           example: auto
         harness:
           type: string
@@ -1017,12 +753,8 @@ components:
           example: medium
         agent_image:
           type: string
-          description: Docker image used by the orchestrator for this task (reader image for read mode, default agent image otherwise).
+          description: Docker image used by the orchestrator for this task.
           example: "backlite-agent:v1"
-        force:
-          type: boolean
-          description: For read-mode tasks, signals the agent to skip duplicate-detection and the completion handler to upsert instead of insert. No effect for code/review tasks.
-          example: false
         max_budget_usd:
           type: number
           minimum: 0
@@ -1079,13 +811,6 @@ components:
         container_id:
           type: string
           example: "abc123def456"
-        inline_content_sha256:
-          type: string
-          description: |
-            Set on read-mode tasks whose source is a markdown body persisted to
-            disk under <DataDir>/ingest/<sha>.md instead of a URL fetched at run
-            time. The task's prompt for such tasks is "markdown://<sha>".
-          example: "9caaf00e460351844ec0267af19e123c624aad0a34794e205fe3d02053cd5c06"
         retry_count:
           type: integer
           minimum: 0
@@ -1134,21 +859,16 @@ components:
       properties:
         prompt:
           type: string
-          description: Task instructions for the agent. For read-mode tasks, the URL to summarize.
+          description: Task instructions for the agent.
           example: "Fix the authentication bug in https://github.com/owner/repo"
         task_mode:
           type: string
-          enum: [auto, read]
+          enum: [auto]
           description: >
             Explicit task mode. Omit (or "auto") to let the agent's Prep stage infer
-            code vs. review from the prompt. Set to "read" to create a reading-mode
-            task (the prompt is the URL to summarize). Explicit "code" and "review"
+            code vs. review from the prompt. Explicit "code" and "review"
             are not accepted — they are always inferred.
-          example: read
-        force:
-          type: boolean
-          description: For read-mode tasks, skip duplicate detection and upsert on completion. No effect for other modes.
-          example: false
+          example: auto
         harness:
           type: string
           enum: [claude_code, codex]
@@ -1219,181 +939,3 @@ components:
           description: Additional environment variables to set in the agent container.
           example:
             CUSTOM_SETTING: "value"
-        inline_content:
-          type: string
-          nullable: true
-          description: |
-            Optional raw markdown body. When set, task_mode must be "read", the
-            prompt must not contain a URL, and the value must be non-empty. The
-            server persists the body to a content-addressed file under the data
-            directory and rewrites the task's prompt to "markdown://<sha256>".
-          example: "# Project notes\n\nbody"
-
-    Reading:
-      type: object
-      description: Saved structured result from a completed read task. Embedding vectors are intentionally not exposed.
-      required:
-        - id
-        - task_id
-        - url
-        - title
-        - tldr
-        - tags
-        - keywords
-        - people
-        - orgs
-        - novelty_verdict
-        - connections
-        - summary
-        - created_at
-      properties:
-        id:
-          type: string
-          example: "bf_01ARZ3NDEKTSV4RRFFQ69G5FAV"
-        task_id:
-          type: string
-          example: "bf_01ARZ3NDEKTSV4RRFFQ69G5FAV"
-        url:
-          type: string
-          format: uri
-          example: "https://example.com/article"
-        title:
-          type: string
-          example: "Example Article"
-        tldr:
-          type: string
-          example: "A concise summary of the article."
-        tags:
-          type: array
-          items:
-            type: string
-          example: ["research", "ai"]
-        keywords:
-          type: array
-          items:
-            type: string
-          example: ["sqlite", "agents"]
-        people:
-          type: array
-          items:
-            type: string
-          example: ["Ada Lovelace"]
-        orgs:
-          type: array
-          items:
-            type: string
-          example: ["Backlite"]
-        novelty_verdict:
-          type: string
-          example: "new"
-        connections:
-          type: array
-          items:
-            $ref: "#/components/schemas/ReadingConnection"
-        summary:
-          type: string
-          example: "A longer summary for detail views."
-        created_at:
-          type: string
-          format: date-time
-        content_type:
-          type: string
-          description: MIME type of the captured raw bytes. Empty when no capture ran.
-          example: "text/html; charset=utf-8"
-        content_status:
-          type: string
-          description: >
-            Capture state: `captured` (raw bytes saved; if HTML, extracted markdown also saved),
-            `fetch_failed`, `over_size_cap`, `unsupported_type`, or empty (legacy / no capture).
-          example: "captured"
-        content_bytes:
-          type: integer
-          format: int64
-          description: Size in bytes of the raw captured payload.
-        extracted_bytes:
-          type: integer
-          format: int64
-          description: Size in bytes of the extracted markdown (HTML only).
-        content_sha256:
-          type: string
-          description: Hex SHA-256 of the raw captured bytes.
-        fetched_at:
-          type: string
-          format: date-time
-          nullable: true
-          description: When the reader container fetched the URL.
-
-    ReadingConnection:
-      type: object
-      required: [reading_id, reason]
-      properties:
-        reading_id:
-          type: string
-          example: "bf_01ARZ3NDEKTSV4RRFFQ69G5FAV"
-        reason:
-          type: string
-          example: "Covers the same deployment pattern."
-
-    ReadingDetail:
-      description: >
-        Reading detail used by the reading-library SPA. Extends Reading with
-        connections resolved against the readings table (related[]) and a
-        snapshot of the task that produced the reading.
-      allOf:
-        - $ref: "#/components/schemas/Reading"
-        - type: object
-          required: [related]
-          properties:
-            related:
-              type: array
-              items:
-                $ref: "#/components/schemas/RelatedReading"
-            originating_task:
-              nullable: true
-              $ref: "#/components/schemas/OriginatingTaskInfo"
-
-    RelatedReading:
-      type: object
-      required: [reading_id, reason, title, tldr, url, novelty_verdict]
-      description: A connection that has been resolved to the linked reading's display fields.
-      properties:
-        reading_id:
-          type: string
-        reason:
-          type: string
-        title:
-          type: string
-        tldr:
-          type: string
-        url:
-          type: string
-          format: uri
-        novelty_verdict:
-          type: string
-
-    OriginatingTaskInfo:
-      type: object
-      required: [id, status, task_mode, repo_url, pr_url, output_url, error, created_at]
-      description: Snapshot of the task that produced the reading.
-      properties:
-        id:
-          type: string
-        status:
-          $ref: "#/components/schemas/TaskStatus"
-        task_mode:
-          type: string
-          enum: [auto, code, review, read]
-        repo_url:
-          type: string
-        pr_url:
-          type: string
-        output_url:
-          type: string
-        error:
-          type: string
-        created_at:
-          type: string
-          format: date-time
-        completed_at:
-          type: string
-          format: date-time

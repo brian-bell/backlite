@@ -2,8 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"errors"
-	"fmt"
 
 	"github.com/rs/zerolog/log"
 
@@ -47,24 +45,6 @@ func (o *Orchestrator) dispatchPending(ctx context.Context) {
 // dispatch assigns a task, starts its container, and transitions
 // pending → provisioning → running.
 func (o *Orchestrator) dispatch(ctx context.Context, task *models.Task) error {
-	if task.TaskMode == models.TaskModeRead {
-		if o.embedder == nil {
-			return fmt.Errorf("cannot dispatch read task: no embedder configured (set OPENAI_API_KEY)")
-		}
-		if !imagerouter.CanRunRead(task, o.config) {
-			return fmt.Errorf("cannot dispatch read task: set BACKFLOW_READER_IMAGE or BACKFLOW_SKILL_AGENT_IMAGE (claude_code only)")
-		}
-		if !task.Force {
-			existing, err := o.store.GetReadingByURL(ctx, task.Prompt)
-			if err != nil && !errors.Is(err, store.ErrNotFound) {
-				return fmt.Errorf("lookup reading by url: %w", err)
-			}
-			if existing != nil {
-				return o.failReadDuplicate(ctx, task, existing)
-			}
-		}
-	}
-
 	task.AgentImage = imagerouter.Resolve(task, o.config)
 
 	if err := o.lifecycle.Assign(ctx, task.ID); err != nil {
@@ -81,19 +61,5 @@ func (o *Orchestrator) dispatch(ctx context.Context, task *models.Task) error {
 	}
 
 	log.Info().Str("task_id", task.ID).Str("container", containerID).Msg("task dispatched")
-	return nil
-}
-
-// failReadDuplicate short-circuits a read-mode dispatch when the URL is
-// already present in the readings table and the task did not request Force.
-// Marks the task failed with a user-actionable message and emits task.failed
-// directly. Returns nil so dispatchPending does not treat this as a dispatch
-// error (the task is already in its terminal state and the event is emitted).
-func (o *Orchestrator) failReadDuplicate(ctx context.Context, task *models.Task, existing *models.Reading) error {
-	msg := fmt.Sprintf("reading already exists for url %q (id=%s); resubmit with force=true to overwrite", task.Prompt, existing.ID)
-	if err := o.lifecycle.FailDispatch(ctx, task, msg); err != nil {
-		log.Warn().Err(err).Str("task_id", task.ID).Msg("failReadDuplicate: FailDispatch returned error")
-	}
-	log.Info().Str("task_id", task.ID).Str("url", task.Prompt).Str("existing_reading_id", existing.ID).Msg("read task short-circuited: duplicate URL")
 	return nil
 }

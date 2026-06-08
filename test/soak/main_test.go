@@ -38,18 +38,16 @@ func TestTruncateTasks_ClearsCurrentSchema(t *testing.T) {
 
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO tasks (id, status, task_mode, harness, prompt, created_at, updated_at)
-		VALUES ('bf_01TESTSOAK0000000000000001', 'completed', 'read', 'claude_code', 'https://example.com', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+		VALUES ('bf_01TESTSOAK0000000000000001', 'completed', 'code', 'claude_code', 'fix it', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 		INSERT INTO api_keys (key_hash, name, permissions, created_at, updated_at)
 		VALUES ('hash-1', 'test', '[]', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
-		INSERT INTO readings (id, task_id, url, title, tldr, created_at)
-		VALUES ('bf_01TESTSOAK0000000000000002', 'bf_01TESTSOAK0000000000000001', 'https://example.com', 'Example', 'TLDR', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 	`); err != nil {
 		t.Fatalf("seed db: %v", err)
 	}
 
 	truncateTasks(dbPath)
 
-	for _, table := range []string{"readings", "api_keys", "tasks"} {
+	for _, table := range []string{"api_keys", "tasks"} {
 		var count int
 		if err := db.QueryRowContext(ctx, "SELECT count(*) FROM "+table).Scan(&count); err != nil {
 			t.Fatalf("count %s: %v", table, err)

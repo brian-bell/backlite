@@ -59,8 +59,8 @@ type Result struct {
 	RepoURL        string
 	TargetBranch   string
 	TaskMode       string
-	// EventOpts are applied to the emitted event (e.g. WithContainerStatus,
-	// WithReading). The retry-gate option (WithReadyForRetry or
+	// EventOpts are applied to the emitted event (e.g. WithContainerStatus).
+	// The retry-gate option (WithReadyForRetry or
 	// WithRetryLimitReached) is applied automatically for non-success terminals.
 	EventOpts []notify.EventOption
 	// ChainTx, if non-nil, runs inside the same SQLite transaction that

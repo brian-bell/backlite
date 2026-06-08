@@ -13,10 +13,6 @@ type Runner interface {
 	StopContainer(ctx context.Context, containerID string) error
 	GetLogs(ctx context.Context, containerID string, tail int) (string, error)
 	GetAgentOutput(ctx context.Context, containerID string) (string, error)
-	// GetReadingContent extracts the captured reading artifacts from a
-	// reader container's workspace. Missing files yield nil byte slices
-	// without an error — callers must distinguish nil from empty.
-	GetReadingContent(ctx context.Context, containerID string) (raw, extracted, sidecar []byte, err error)
 }
 
 // ContainerStatus represents the current state of an agent container.
@@ -34,18 +30,6 @@ type ContainerStatus struct {
 	RepoURL        string
 	TargetBranch   string
 	TaskMode       string
-
-	// Reading-mode fields (populated only for TaskModeRead).
-	URL             string
-	Title           string
-	TLDR            string
-	Tags            []string
-	Keywords        []string
-	People          []string
-	Orgs            []string
-	NoveltyVerdict  string
-	Connections     []models.Connection
-	SummaryMarkdown string
 }
 
 // AgentStatus is the JSON structure written by the agent entrypoint to
@@ -61,16 +45,4 @@ type AgentStatus struct {
 	RepoURL        string  `json:"repo_url,omitempty"`
 	TargetBranch   string  `json:"target_branch,omitempty"`
 	TaskMode       string  `json:"task_mode,omitempty"`
-
-	// Reading-mode fields (populated only for TaskModeRead).
-	URL             string              `json:"url,omitempty"`
-	Title           string              `json:"title,omitempty"`
-	TLDR            string              `json:"tldr,omitempty"`
-	Tags            []string            `json:"tags,omitempty"`
-	Keywords        []string            `json:"keywords,omitempty"`
-	People          []string            `json:"people,omitempty"`
-	Orgs            []string            `json:"orgs,omitempty"`
-	NoveltyVerdict  string              `json:"novelty_verdict,omitempty"`
-	Connections     []models.Connection `json:"connections,omitempty"`
-	SummaryMarkdown string              `json:"summary_markdown,omitempty"`
 }

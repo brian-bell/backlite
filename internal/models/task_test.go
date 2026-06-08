@@ -213,36 +213,6 @@ func TestCreateTaskRequestValidation(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "reserved env var key FORCE",
-			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"FORCE": "true"}},
-			wantErr: true,
-		},
-		{
-			name:    "reserved env var key MAX_CONTENT_BYTES",
-			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"MAX_CONTENT_BYTES": "0"}},
-			wantErr: true,
-		},
-		{
-			name:    "reserved env var key RESEND_API_KEY",
-			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"RESEND_API_KEY": "re_attacker"}},
-			wantErr: true,
-		},
-		{
-			name:    "reserved env var key NOTIFY_EMAIL_FROM",
-			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"NOTIFY_EMAIL_FROM": "evil@attacker.com"}},
-			wantErr: true,
-		},
-		{
-			name:    "reserved env var key NOTIFY_EMAIL_TO",
-			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"NOTIFY_EMAIL_TO": "victim@attacker.com"}},
-			wantErr: true,
-		},
-		{
-			name:    "reserved env var key INLINE_CONTENT_PATH",
-			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"INLINE_CONTENT_PATH": "/etc/passwd"}},
-			wantErr: true,
-		},
-		{
 			name:    "non-reserved env var key allowed",
 			req:     CreateTaskRequest{Prompt: "Fix bug", EnvVars: map[string]string{"MY_CUSTOM_VAR": "val"}},
 			wantErr: false,
@@ -289,12 +259,12 @@ func TestTaskParentTaskIDJSON(t *testing.T) {
 }
 
 func TestTaskAgentImageJSON(t *testing.T) {
-	task := Task{ID: "bf_test", AgentImage: "backlite-reader:v1"}
+	task := Task{ID: "bf_test", AgentImage: "backlite-agent:v1"}
 	data, err := json.Marshal(task)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	if !strings.Contains(string(data), `"agent_image":"backlite-reader:v1"`) {
+	if !strings.Contains(string(data), `"agent_image":"backlite-agent:v1"`) {
 		t.Errorf("missing agent_image in marshaled task: %s", data)
 	}
 
@@ -302,14 +272,8 @@ func TestTaskAgentImageJSON(t *testing.T) {
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	if got.AgentImage != "backlite-reader:v1" {
-		t.Errorf("AgentImage = %q, want %q", got.AgentImage, "backlite-reader:v1")
-	}
-}
-
-func TestTaskModeReadConstant(t *testing.T) {
-	if TaskModeRead != "read" {
-		t.Errorf("TaskModeRead = %q, want %q", TaskModeRead, "read")
+	if got.AgentImage != "backlite-agent:v1" {
+		t.Errorf("AgentImage = %q, want %q", got.AgentImage, "backlite-agent:v1")
 	}
 }
 
@@ -329,85 +293,9 @@ func TestTaskStatusIsTerminal(t *testing.T) {
 	}
 }
 
-func TestCreateTaskRequest_InlineContentRoundTrip(t *testing.T) {
-	body := "# Title\n\nSome markdown body.\n"
-	in := CreateTaskRequest{
-		Prompt:        "ignored",
-		InlineContent: &body,
-	}
-
-	data, err := json.Marshal(in)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	if !strings.Contains(string(data), `"inline_content":"# Title`) {
-		t.Errorf("missing inline_content in marshaled request: %s", data)
-	}
-
-	var got CreateTaskRequest
-	if err := json.Unmarshal(data, &got); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
-	}
-	if got.InlineContent == nil {
-		t.Fatalf("InlineContent nil after round-trip")
-	}
-	if *got.InlineContent != body {
-		t.Errorf("InlineContent = %q, want %q", *got.InlineContent, body)
-	}
-}
-
-func TestTask_InlineContentSHA256RoundTrip(t *testing.T) {
-	task := Task{ID: "bf_test", InlineContentSHA256: "deadbeef"}
-	data, err := json.Marshal(task)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	if !strings.Contains(string(data), `"inline_content_sha256":"deadbeef"`) {
-		t.Errorf("missing inline_content_sha256 in marshaled task: %s", data)
-	}
-
-	var got Task
-	if err := json.Unmarshal(data, &got); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
-	}
-	if got.InlineContentSHA256 != "deadbeef" {
-		t.Errorf("InlineContentSHA256 = %q, want %q", got.InlineContentSHA256, "deadbeef")
-	}
-}
-
-func TestCreateTaskRequest_Validate_RejectsEmptyInlineContent(t *testing.T) {
-	empty := ""
-	mode := TaskModeRead
-	req := CreateTaskRequest{
-		Prompt:        "anything",
-		TaskMode:      &mode,
-		InlineContent: &empty,
-	}
-	err := req.Validate()
-	if err == nil {
-		t.Fatal("Validate accepted empty inline_content; want error")
-	}
-	if !strings.Contains(err.Error(), "inline_content") {
-		t.Errorf("error %q does not mention inline_content", err)
-	}
-}
-
-func TestCreateTaskRequest_Validate_AllowsAbsentInlineContent(t *testing.T) {
+func TestCreateTaskRequest_Validate_AllowsBasicPrompt(t *testing.T) {
 	req := CreateTaskRequest{Prompt: "anything"}
 	if err := req.Validate(); err != nil {
-		t.Errorf("Validate rejected request without inline_content: %v", err)
-	}
-}
-
-func TestCreateTaskRequest_Validate_AllowsNonEmptyInlineContent(t *testing.T) {
-	body := "# title\nbody\n"
-	mode := TaskModeRead
-	req := CreateTaskRequest{
-		Prompt:        "anything",
-		TaskMode:      &mode,
-		InlineContent: &body,
-	}
-	if err := req.Validate(); err != nil {
-		t.Errorf("Validate rejected non-empty inline_content: %v", err)
+		t.Errorf("Validate rejected request with basic prompt: %v", err)
 	}
 }

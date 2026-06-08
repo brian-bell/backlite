@@ -9,7 +9,6 @@ import (
 
 	"github.com/brian-bell/backlite/internal/backup"
 	"github.com/brian-bell/backlite/internal/config"
-	"github.com/brian-bell/backlite/internal/embeddings"
 	"github.com/brian-bell/backlite/internal/models"
 	"github.com/brian-bell/backlite/internal/notify"
 	"github.com/brian-bell/backlite/internal/orchestrator/imagerouter"
@@ -50,7 +49,6 @@ type Orchestrator struct {
 	bus       *notify.EventBus
 	docker    Runner
 	outputs   Writer
-	embedder  embeddings.Embedder
 	lifecycle *lifecycle.Coordinator
 	backups   backupScheduler
 
@@ -65,14 +63,13 @@ type backupScheduler interface {
 	Status() backup.Status
 }
 
-func New(s store.Store, cfg *config.Config, bus *notify.EventBus, runner Runner, outputs Writer, embedder embeddings.Embedder) *Orchestrator {
+func New(s store.Store, cfg *config.Config, bus *notify.EventBus, runner Runner, outputs Writer) *Orchestrator {
 	o := &Orchestrator{
-		store:    s,
-		config:   cfg,
-		bus:      bus,
-		docker:   runner,
-		outputs:  outputs,
-		embedder: embedder,
+		store:   s,
+		config:  cfg,
+		bus:     bus,
+		docker:  runner,
+		outputs: outputs,
 		backups: backup.New(backup.Config{
 			Enabled:      cfg.LocalBackupEnabled,
 			DatabasePath: cfg.DatabasePath,
@@ -132,7 +129,6 @@ func (o *Orchestrator) Docker() Runner {
 func (o *Orchestrator) Start(ctx context.Context) {
 	log.Info().
 		Str("agent_image", o.config.AgentImage).
-		Str("reader_image", o.config.ReaderImage).
 		Str("skill_agent_image", o.config.SkillAgentImage).
 		Str("image_routing", imagerouter.Describe(o.config)).
 		Int("max_concurrent", o.config.MaxConcurrent()).

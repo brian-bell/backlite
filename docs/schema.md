@@ -12,7 +12,7 @@ Stores agent tasks submitted via the REST API.
 |--------|------|---------|-------------|
 | `id` | `TEXT` | — | **Primary key.** ULID with `bf_` prefix (e.g. `bf_01KKQW82994E87Z99QVEMBN8V0`). |
 | `status` | `TEXT` | `'pending'` | Task lifecycle state. One of: `pending`, `provisioning`, `running`, `completed`, `failed`, `interrupted`, `cancelled`, `recovering`. |
-| `task_mode` | `TEXT` | `'auto'` | Task mode. One of: `code`, `review`, `read`, or `auto`. The user-facing API only accepts `auto` or `read`; the agent's prep stage resolves `auto` to the concrete `code` or `review` mode. |
+| `task_mode` | `TEXT` | `'auto'` | Task mode. `auto` is the user-facing default; the agent's prep stage resolves it to the concrete `code` or `review` mode. |
 | `harness` | `TEXT` | `'claude_code'` | Agent CLI harness. `claude_code` (default) or `codex`. |
 | `repo_url` | `TEXT` | — | Git repository URL to clone (required). |
 | `branch` | `TEXT` | `''` | Branch to check out before running the agent. |
@@ -41,8 +41,7 @@ Stores agent tasks submitted via the REST API.
 | `elapsed_time_sec` | `INTEGER` | `0` | Wall-clock seconds the agent ran. |
 | `error` | `TEXT` | `''` | Error message if the task failed. |
 | `ready_for_retry` | `BOOLEAN` | `false` | Whether the task is ready for user retry. Set `true` after container cleanup completes (for failed/cancelled/interrupted tasks under the retry cap). Reset to `false` on requeue. |
-| `agent_image` | `TEXT` | `''` | Docker image the orchestrator used for this task's container. Populated at creation time from the resolved task defaults — read tasks get `BACKFLOW_READER_IMAGE`; other modes get `BACKFLOW_AGENT_IMAGE`. The orchestrator's image router (`internal/orchestrator/imagerouter`) re-derives this at dispatch time, so setting `BACKFLOW_SKILL_AGENT_IMAGE` reroutes any in-flight `claude_code` task to the skill-agent image without restarts. Not user-settable via the API. |
-| `force` | `BOOLEAN` | `false` | For reading tasks, skip the exact-URL duplicate check and upsert the existing `readings` row on completion. Ignored for `code`/`review` tasks. |
+| `agent_image` | `TEXT` | `''` | Docker image the orchestrator used for this task's container. Populated at creation time from the resolved task defaults. The orchestrator's image router (`internal/orchestrator/imagerouter`) re-derives this at dispatch time, so setting `BACKFLOW_SKILL_AGENT_IMAGE` reroutes any in-flight `claude_code` task to the skill-agent image without restarts. Not user-settable via the API. |
 | `parent_task_id` | `TEXT` | `NULL` | Optional pointer to the task that spawned this one (e.g. self-review children, retry chains, follow-ups). Foreign key to `tasks(id)` with `ON DELETE SET NULL` — deleting a parent nulls the reference rather than cascading. For chained self-review children, this is populated atomically in the same SQLite transaction as the parent's `CompleteTask`, so child and parent appear together or not at all. Indexed via `idx_tasks_parent_task_id`. |
 | `created_at` | `TEXT` | current UTC timestamp | When the task was created. |
 | `updated_at` | `TEXT` | current UTC timestamp | Last modification time. |
@@ -70,41 +69,6 @@ Stores bearer tokens used to authenticate API and debug requests.
 **Indexes:**
 - `idx_api_keys_expires_at` on `expires_at` — used to support expiration checks and cleanup.
 
-### `readings`
-
-Structured output of completed `task_mode=read` tasks. Populated by the orchestrator's `handleReadingCompletion` helper.
-
-| Column | Type | Default | Description |
-|--------|------|---------|-------------|
-| `id` | `TEXT` | — | **Primary key.** ULID with `bf_` prefix. |
-| `task_id` | `TEXT` | — | Foreign key to `tasks(id)`, `ON DELETE CASCADE`. |
-| `url` | `TEXT` | — | Source URL. `UNIQUE` index for duplicate lookups and upsert. |
-| `title` | `TEXT` | `''` | Page title as reported by the reader agent. |
-| `tldr` | `TEXT` | `''` | Short summary. The orchestrator embeds this text to populate `embedding`. |
-| `tags` | `TEXT` | `'[]'` | JSON array of topic tags from the agent. |
-| `keywords` | `TEXT` | `'[]'` | JSON array of salient keywords. |
-| `people` | `TEXT` | `'[]'` | JSON array of people named in the article. |
-| `orgs` | `TEXT` | `'[]'` | JSON array of organizations named in the article. |
-| `novelty_verdict` | `TEXT` | `''` | Agent's judgment relative to existing readings (`new`, `nothing new`, etc.). |
-| `connections` | `TEXT` | `'[]'` | JSON array of `{reading_id, reason}` pointing at similar prior readings. |
-| `summary` | `TEXT` | `''` | Full markdown summary. |
-| `raw_output` | `TEXT` | `'{}'` | Lossless JSON of the agent's parsed `status.json`, kept for future re-normalization. |
-| `embedding` | `TEXT` | `''` | JSON-encoded OpenAI `text-embedding-3-small` vector of the final TL;DR. Embedded by the orchestrator, not the agent. |
-| `created_at` | `TEXT` | current UTC timestamp | When the reading was stored. |
-| `content_type` | `TEXT` | `''` | MIME type of the captured raw bytes (e.g. `text/html; charset=utf-8`). Empty when no capture ran. |
-| `content_status` | `TEXT` | `''` | Capture state: `captured`, `fetch_failed`, `over_size_cap`, `unsupported_type`, or `''` (legacy / no capture attempted). |
-| `content_bytes` | `INTEGER` | `0` | Size in bytes of `raw.<ext>` on disk. |
-| `extracted_bytes` | `INTEGER` | `0` | Size in bytes of `extracted.md` on disk (HTML only). |
-| `content_sha256` | `TEXT` | `''` | Hex SHA-256 of the raw bytes. Change-detection signal for `force=true` re-fetches. |
-| `fetched_at` | `TEXT` | `NULL` | RFC3339 UTC timestamp of when the reader container fetched the URL. NULL when no capture ran. |
-
-**Indexes:**
-- Unique `idx_readings_url` on `url` — duplicate detection and upsert.
-
-Similarity search is computed in the application layer by decoding stored embeddings and ranking cosine similarity in Go.
-
-When `content_status = 'captured'` the orchestrator persists the capture artifacts under `{BACKFLOW_DATA_DIR}/readings/{id}/`: `raw.<ext>`, `extracted.md` (HTML only), and a `content.json` sidecar. The DB row is authoritative for metadata; the sidecar is a debug copy.
-
 ## Status Lifecycles
 
 ### Task statuses
@@ -127,7 +91,7 @@ The `recovering` status is set on startup for tasks orphaned by a server restart
 
 - All timestamps are stored as UTC RFC3339 strings. Nullable timestamps (`started_at`, `completed_at`) are NULL until set.
 - Booleans use SQLite `BOOLEAN` affinity.
-- JSON fields (`allowed_tools`, `env_vars`, reading arrays/objects) are stored as JSON text.
+- JSON fields (`allowed_tools`, `env_vars`) are stored as JSON text.
 - API key secrets are stored as SHA-256 hashes in `api_keys.key_hash`; scope membership is stored in `permissions`.
 - Schema migrations are managed by goose in `migrations/`.
 

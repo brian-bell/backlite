@@ -32,26 +32,6 @@ func WithContainerStatus(prURL, message, agentLogTail string) EventOption {
 	}
 }
 
-// WithReading sets reading-specific fields on a task completion event.
-func WithReading(tldr, noveltyVerdict string, tags []string, connections []models.Connection) EventOption {
-	return func(e *Event) {
-		e.TLDR = tldr
-		e.NoveltyVerdict = noveltyVerdict
-		e.Tags = tags
-		e.Connections = connections
-	}
-}
-
-// WithReadingContent attaches the captured content's metadata (its capture
-// state and MIME type) to a read-mode task completion event so consumers can
-// react to capture-vs-fail without an extra API round-trip.
-func WithReadingContent(contentStatus, contentType string) EventOption {
-	return func(e *Event) {
-		e.ContentStatus = contentStatus
-		e.ContentType = contentType
-	}
-}
-
 // NewEvent constructs an Event from a task, populating core fields.
 func NewEvent(eventType EventType, task *models.Task, opts ...EventOption) Event {
 	e := Event{

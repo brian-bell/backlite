@@ -86,17 +86,6 @@ func TestPlan_TableDriven(t *testing.T) {
 			wantNil: true,
 		},
 		{
-			name: "no chain: parent is read mode",
-			parent: models.Task{
-				ID:         "bf_READ00001",
-				Status:     models.TaskStatusCompleted,
-				TaskMode:   models.TaskModeRead,
-				SelfReview: true,
-				PRURL:      "https://github.com/owner/repo/pull/42",
-			},
-			wantNil: true,
-		},
-		{
 			// Auto should have been resolved to code/review by the agent's
 			// prep stage before completion. An auto here means the agent
 			// didn't report a resolved mode — don't speculate, don't chain.

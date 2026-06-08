@@ -12,7 +12,6 @@ type TaskDefaults struct {
 	MaxBudgetUSD    float64
 	MaxRuntimeSec   int
 	MaxTurns        int
-	MaxContentBytes int64 // Read-mode size cap; 0 in other modes.
 	CreatePR        bool
 	SelfReview      bool
 	SaveAgentOutput bool
@@ -44,13 +43,6 @@ func (c *Config) TaskDefaults(taskMode string) TaskDefaults {
 
 	switch taskMode {
 	case models.TaskModeReview:
-		d.CreatePR = false
-	case models.TaskModeRead:
-		d.AgentImage = c.ReaderImage
-		d.MaxBudgetUSD = c.DefaultReadMaxBudget
-		d.MaxRuntimeSec = int(c.DefaultReadMaxRuntime.Seconds())
-		d.MaxTurns = c.DefaultReadMaxTurns
-		d.MaxContentBytes = c.DefaultReadMaxContentBytes
 		d.CreatePR = false
 	}
 	// Auto mode uses the same defaults as code mode (superset).
@@ -89,8 +81,8 @@ func (d TaskDefaults) Apply(task *models.Task, overrides *BoolOverrides) {
 	}
 
 	// Booleans: use override if provided, otherwise default.
-	// Review and read modes always force CreatePR=false regardless of override.
-	if task.TaskMode == models.TaskModeReview || task.TaskMode == models.TaskModeRead {
+	// Review mode always forces CreatePR=false regardless of override.
+	if task.TaskMode == models.TaskModeReview {
 		task.CreatePR = false
 	} else {
 		task.CreatePR = boolOrDefault(overrides.createPR(), d.CreatePR)

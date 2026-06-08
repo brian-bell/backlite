@@ -4,12 +4,12 @@
 
 Backlite is a Go service that runs coding agents (Claude Code or Codex) in ephemeral containers. Tasks come in via REST API; the orchestrator provisions infrastructure, runs agents, and cleans up.
 
-Three task modes: `code` (default: clone → code → commit → PR), `review` (PR review with inline comments), and `read` (fetch a URL, summarize it via a reader agent, embed the TL;DR, store the result in the `readings` table for later similarity search).
+Two task modes: `code` (clone → code → commit → PR) and `review` (PR review with inline comments). The public API defaults to `auto`, and the agent prep stage resolves the prompt to code or review from the GitHub URL.
 
 ## Commands
 
 ```bash
-make build              # Build web bundle + Go binary to bin/backlite
+make build              # Build Go binary to bin/backlite
 make run                # Build + run (sources .env if present)
 make test               # Unit/integration tests with -tags nocontainers (excludes blackbox; see make test-blackbox)
 make lint               # go vet ./...
@@ -20,17 +20,10 @@ make test-fake-agent    # Unit tests for the fake agent Docker image
 make deps               # go mod tidy
 make clean              # Remove bin/ directory
 make db-running         # Show running tasks (also: db-pending, db-completed, db-failed)
-make web-deps           # Install web/ npm dependencies
-make web-generate       # Regenerate web/src/generated/api.d.ts from api/openapi.yaml
-make web-dev            # Run the Vite dev server against a local Backlite instance
-make web-build          # Generate API types + tsc + vite build (also runs as part of make build)
-make web-test           # Vitest suite for the web app
 make docker-agent-build-local        # Agent image (native arch)
-make docker-reader-build-local       # Reader image (native arch)
 make docker-skill-agent-build-local  # Skill-agent image (native arch; opt-in via BACKFLOW_SKILL_AGENT_IMAGE)
-make docker-agents-build-local       # Build all three agent images
+make docker-agents-build-local       # Build agent images
 make test-skill-agent-entrypoint     # Shell tests for the skill-agent entrypoint
-make test-reader-fetch-extract       # Hermetic shell test for the reader's pre-fetch + extraction pipeline
 goose -dir migrations status # Show pending/applied migrations
 goose -dir migrations up     # Apply the next migration(s)
 goose -dir migrations down   # Roll back the last migration
@@ -46,7 +39,7 @@ Two goroutines: chi REST API on `:8080` + polling orchestrator (5s default). The
 
 ### API endpoints
 
-All JSON responses are wrapped in a `{"data": …}` envelope; errors use `{"error": "…"}`. The web app and any first-party clients consume the wrapped shape.
+All JSON responses are wrapped in a `{"data": …}` envelope; errors use `{"error": "…"}`. First-party clients consume the wrapped shape.
 
 - `GET /health` — Health check (root-level, always accessible)
 - `GET /debug/stats` — Operational stats: PID, uptime, running tasks, pool metrics (outside `/api/v1/`, bearer-auth protected when API keys are configured)
@@ -59,30 +52,18 @@ All JSON responses are wrapped in a `{"data": …}` envelope; errors use `{"erro
 - `GET /api/v1/tasks/{id}/logs` — Stream container logs
 - `GET /api/v1/tasks/{id}/output` — Return the agent's stdout log (`container_output.log`) persisted to `BACKFLOW_DATA_DIR` after the container exits
 - `GET /api/v1/tasks/{id}/output.json` — Return the JSON task metadata snapshot (`task.json`) persisted alongside the output log
-- `GET /api/v1/readings` — Paginated newest-first list of stored readings (query params: `limit`, `offset`); requires `readings:read` scope when API keys are configured
-- `GET /api/v1/readings/{id}` — Single reading detail (full TL;DR, summary, tags, connections); requires `readings:read` scope
-- `GET /api/v1/readings/{id}/content` — Streams the extracted markdown for a reading (HTML-derived). 404 when `content_status != "captured"`. Requires `readings:read` scope.
-- `GET /api/v1/readings/{id}/content/raw` — Streams the raw captured bytes for a reading with the recorded `Content-Type`. 404 when `content_status != "captured"`. Requires `readings:read` scope.
-- `GET /api/v1/readings/lookup` — Exact-URL duplicate check (public route — no auth — used by reader containers and the orchestrator's dispatch-time guard)
-- `POST /api/v1/readings/similar` — Semantic similarity search over stored `readings` (public route, cosine similarity in Go over JSON-encoded embeddings)
-- `GET /*` — Static SPA bundle from `BACKFLOW_WEB_DIR` (defaults to `./web/dist`). Falls back to `index.html` for client-side routes; `/api/*`, `/debug/*`, and `/health` are reserved and never served by the SPA handler. Disabled when the directory is empty.
 
 ### Key modules (`internal/`)
 
-- **api/** — chi router, handlers, JSON responses (envelope helpers in `responses.go`), bearer-token auth middleware (`auth.go`: `BACKFLOW_API_KEY` short-circuit + DB-backed scoped `api_keys` lookup with a 30s `HasAPIKeys` cache), web SPA static handler (`static.go`), `LogFetcher` interface, `NewTask`/`NewReadTask` shared task-creation helpers, `CancelTask` and `RetryTask` shared action helpers, and the readings list/detail handlers consumed by the web app
-- **orchestrator/** — Poll loop (`orchestrator.go`), dispatch (`dispatch.go`), monitoring (`monitor.go`, including `handleReadingCompletion` for read-mode tasks), recovery (`recovery.go`). Subpackages: `docker/` (local Docker container management), `outputs/` (filesystem writer for agent logs + task metadata), `lifecycle/` (`Coordinator` owning task state transitions, slot accounting, and paired event emission — callers invoke domain verbs like `Dispatch`/`Complete`/`Requeue`/`Cancel` instead of selecting Store methods; on a `Complete` write failure the slot is **not** released and no event is emitted, so the next monitor tick can retry against the still-`running` row), `chain/` (atomic self-review chained-task creation — exposes a `ChainTx` callback that the lifecycle Coordinator runs in the same SQLite transaction as the parent's `CompleteTask`, so the parent commit and child INSERT either both land or both roll back), `imagerouter/` (selects which agent image to use given task harness + mode + configured images).
-- **store/** — `Store` interface + SQLite (`database/sql`, goose migrations). Includes `UpsertReading` / `GetReadingByURL` / `FindSimilarReadings` for the `readings` table.
-- **models/** — `Task` and `Reading` (+ `Connection`) structs with status enums. `Task.AgentImage` records which Docker image the orchestrator used (read tasks get `ReaderImage`, others get the default agent image). `Task.ParentTaskID` is an optional pointer to the task that spawned this one (retry chains, follow-ups, sub-tasks); the column has a self-referential FK with `ON DELETE SET NULL`. `FindFirstURL` / `InferReviewMode` auto-detect review mode when a prompt's first URL is a GitHub PR URL.
-- **embeddings/** — Thin `Embedder` interface (`Embed(ctx, text) ([]float32, error)`) with an `OpenAIEmbedder` HTTP client (no SDK). Used by the orchestrator to embed a reading's final TL;DR before writing the `readings` row.
-- **config/** — Env-var config (`BACKFLOW_*` prefix). `BACKFLOW_API_KEY` enables single-token API auth; otherwise `api_keys` in SQLite can back authenticated API/debug requests. `TaskDefaults(taskMode)` returns resolved defaults — for `read` mode it swaps in `ReaderImage` plus the `BACKFLOW_DEFAULT_READ_MAX_*` caps. `Apply(task, overrides)` fills zero-value fields using `*bool` overrides (nil = use default, non-nil = use pointed value). `Load()` enforces an all-or-nothing gate on the email-notification trio (`BACKFLOW_RESEND_API_KEY`, `BACKFLOW_NOTIFY_EMAIL_FROM`, `BACKFLOW_NOTIFY_EMAIL_TO`): setting any one of them without the other two fails startup.
-- **notify/** — `Notifier` interface, `WebhookNotifier` (HTTP POST, 3 retries, event filtering), `NoopNotifier`, `EventBus` (async fan-out delivery via buffered channel), `NewEvent` constructor with `EventOption` functional options (including `WithReading` for read-mode completion events). `Event` carries `TaskMode`, `ParentTaskID` (when set), plus optional reading fields (`TLDR`, `NoveltyVerdict`, `Tags`, `Connections`) populated only for read-task completion events.
+- **api/** — chi router, handlers, JSON responses (envelope helpers in `responses.go`), bearer-token auth middleware (`auth.go`: `BACKFLOW_API_KEY` short-circuit + DB-backed scoped `api_keys` lookup with a 30s `HasAPIKeys` cache), `LogFetcher` interface, `NewTask` shared task-creation helper, and shared `CancelTask` / `RetryTask` action helpers
+- **orchestrator/** — Poll loop (`orchestrator.go`), dispatch (`dispatch.go`), monitoring (`monitor.go`), recovery (`recovery.go`). Subpackages: `docker/` (local Docker container management), `outputs/` (filesystem writer for agent logs + task metadata), `lifecycle/` (`Coordinator` owning task state transitions, slot accounting, and paired event emission — callers invoke domain verbs like `Dispatch`/`Complete`/`Requeue`/`Cancel` instead of selecting Store methods; on a `Complete` write failure the slot is **not** released and no event is emitted, so the next monitor tick can retry against the still-`running` row), `chain/` (atomic self-review chained-task creation — exposes a `ChainTx` callback that the lifecycle Coordinator runs in the same SQLite transaction as the parent's `CompleteTask`, so the parent commit and child INSERT either both land or both roll back), `imagerouter/` (selects which agent image to use given task harness + configured images).
+- **store/** — `Store` interface + SQLite (`database/sql`, goose migrations)
+- **models/** — `Task` structs with status enums. `Task.AgentImage` records which Docker image the orchestrator used. `Task.ParentTaskID` is an optional pointer to the task that spawned this one (retry chains, follow-ups, sub-tasks); the column has a self-referential FK with `ON DELETE SET NULL`. `FindFirstURL` / `InferReviewMode` auto-detect review mode when a prompt's first URL is a GitHub PR URL.
+- **config/** — Env-var config (`BACKFLOW_*` prefix). `BACKFLOW_API_KEY` enables single-token API auth; otherwise `api_keys` in SQLite can back authenticated API/debug requests. `TaskDefaults(taskMode)` returns resolved defaults. `Apply(task, overrides)` fills zero-value fields using `*bool` overrides (nil = use default, non-nil = use pointed value).
+- **notify/** — `Notifier` interface, `WebhookNotifier` (HTTP POST, 3 retries, event filtering), `NoopNotifier`, `EventBus` (async fan-out delivery via buffered channel), `NewEvent` constructor with `EventOption` functional options. `Event` carries `TaskMode` and `ParentTaskID` when set.
 - **debug/** — `/debug/stats` handler: PID, uptime, running task count, database handle metrics
 - **backup/** — Local SQLite backup manager. `Manager.MaybeSchedule(ctx)` is invoked from each orchestrator tick; when enabled and the latest valid artifact is older than the configured interval, it spawns a single background goroutine that uses the SQLite online-backup API, gzip-compresses the snapshot, decompresses + `PRAGMA integrity_check`s it, then atomically renames into place and writes a sidecar with size, sha256, and finalization time. Subsequent ticks recompute the sha256 of the latest candidate before trusting it; mismatches fall back to the next-older valid artifact.
 - **skillcontract/** — Embedded JSON Schema validator (`schema.json`) for skill-agent `status.json` payloads. Tests walk every `docker/skill-agent/skills/*/examples/status.json` fixture and assert the deliberately broken negative fixture fails. Used by the skill-agent build to keep skill bundles' contract test fixtures honest.
-
-### Web app (`web/`)
-
-Reading-library SPA: React 19 + TypeScript + Vite + TanStack Query, with `openapi-typescript` generating types directly off `api/openapi.yaml` and `openapi-fetch` issuing the HTTP calls. The bundle is built to `web/dist/` (gitignored) and served by the Go binary's static handler at `/*`; `make build` runs `web-build` first so a single binary ships the SPA. The user pastes a bearer token into the topbar form (persisted in `localStorage` under `backlite.bearerToken`) and the API calls attach it as `Authorization: Bearer …`. Routes today: `/` (paginated reading list, page size 20) and `/readings/:id` (TL;DR, summary, tags/keywords/people/orgs, connections). Vitest specs live next to the source (`App.test.tsx`).
 
 ### Fake agent (`test/blackbox/fake-agent/`)
 
@@ -92,20 +73,18 @@ Minimal Alpine image used by black-box and soak tests. Reads `FAKE_OUTCOME` env 
 
 Long-running resource leak detector. Submits tasks at intervals, collects RSS, pool stats, and container counts, then analyzes for memory growth and container accumulation. Run via `make test-soak` (10-min short mode). It derives a sibling `-soak.db` path from `BACKFLOW_DATABASE_PATH`, starts a dedicated Backlite subprocess against that database, truncates the soak tables there, and prunes stale containers at start and end. The wrapper script (`scripts/test-soak.sh`) warns before truncating and asks for confirmation.
 
-### Agent containers — three coexisting images
+### Agent containers
 
-Three docker images coexist; the orchestrator picks one per dispatch via `internal/orchestrator/imagerouter`:
+The orchestrator picks an image per dispatch via `internal/orchestrator/imagerouter`:
 
 - **`docker/agent/`** — Original agent. Node.js 24 + Claude Code CLI + Codex CLI + git + gh. `entrypoint.sh` (~611 lines) does prep stage → clone → CLAUDE.md inject → run agent (in-container retry up to 3 attempts) → commit → push → create PR → optional self-review. Supports both `claude_code` and `codex` harnesses in code and review modes.
-- **`docker/reader/`** — Read-mode agent. Same base, `reader-entrypoint.sh` runs the harness against a URL and emits a structured reading JSON.
-- **`docker/skill-agent/`** — Opt-in via `BACKFLOW_SKILL_AGENT_IMAGE`. **Claude Code only** (codex tasks are rejected with a clear error). Skill bundles bake at `/opt/backflow/skills/{auto,code,review,read}/`. `entrypoint.sh` is ~95 lines: validate env, fetch S3-offloaded fields, gh auth, copy the requested skill into `~/.claude/skills/<mode>/`, exec `claude` with a starter prompt, then notarize `cost_usd` from the harness stream-json into the agent-written `status.json` (or synthesize a fallback failure status if missing/unparsable). No harness branching, no in-container retry, no prep stage. `auto` is the only mode that branches at runtime — its skill inspects the prompt and dispatches to `code` or `review`, so the entrypoint installs both sub-bundles alongside it. `status_writer.sh` and `reader_helpers.sh` do not exist on this image. Source-tree skill bundles live at `docker/skill-agent/skills/{auto,code,review,read}/`.
+- **`docker/skill-agent/`** — Opt-in via `BACKFLOW_SKILL_AGENT_IMAGE`. **Claude Code only** (codex tasks are rejected with a clear error). Skill bundles bake at `/opt/backflow/skills/{auto,code,review}/`. `entrypoint.sh` is ~95 lines: validate env, fetch S3-offloaded fields, gh auth, copy the requested skill into `~/.claude/skills/<mode>/`, exec `claude` with a starter prompt, then notarize `cost_usd` from the harness stream-json into the agent-written `status.json` (or synthesize a fallback failure status if missing/unparsable). No harness branching, no in-container retry, no prep stage. `auto` is the only mode that branches at runtime — its skill inspects the prompt and dispatches to `code` or `review`, so the entrypoint installs both sub-bundles alongside it. Source-tree skill bundles live at `docker/skill-agent/skills/{auto,code,review}/`.
 
 **Image routing** (`internal/orchestrator/imagerouter`):
 1. `task.harness == "claude_code"` and `cfg.SkillAgentImage != ""` → `SkillAgentImage`
-2. `task.task_mode == "read"` and `cfg.ReaderImage != ""` → `ReaderImage`
-3. Otherwise → `cfg.AgentImage`
+2. Otherwise → `cfg.AgentImage`
 
-When `BACKFLOW_SKILL_AGENT_IMAGE` is unset, behavior is identical to before. When set, only claude_code tasks reroute — codex tasks continue to use the existing images. If the orchestrator routes a codex task to the skill-agent image (which it shouldn't), the entrypoint fails fast.
+When `BACKFLOW_SKILL_AGENT_IMAGE` is unset, behavior is identical to the standard agent image path. When set, only claude_code tasks reroute — codex tasks continue to use the existing image. If the orchestrator routes a codex task to the skill-agent image (which it shouldn't), the entrypoint fails fast.
 
 ### Statuses
 
@@ -131,57 +110,9 @@ Success is the agent's call, not the harness's. `monitor.handleCompletion` requi
 
 `task.created`, `task.running`, `task.completed`, `task.failed`, `task.needs_input`, `task.interrupted`, `task.recovering`, `task.cancelled`, `task.retry`
 
-## Reading mode
-
-When a task's `task_mode` is `read`, the orchestrator selects `BACKFLOW_READER_IMAGE` instead of the default agent image. The reader container fetches the URL in the prompt, drafts a summary, and emits structured JSON (url/title/tldr/tags/connections/novelty_verdict/etc.) to `status.json`.
-
-**At dispatch** (before the reader container launches), the orchestrator looks up the URL via `store.GetReadingByURL`. If the row already exists and `!task.Force`, the task is marked `failed` with `"reading already exists for url X (id=Y); resubmit with force=true to overwrite"` and no container is started. This avoids spending reader-container minutes and LLM tokens on a URL that's already captured — and means the orchestrator, not the agent, is the source of truth for duplicate detection. The in-container `read-lookup.sh` script still exists as a best-effort hint during the agent's session but is no longer authoritative. If the DB lookup itself errors, dispatch fails through the generic error path and the task is marked failed with the DB error.
-
-On completion, the orchestrator's `handleReadingCompletion` helper (in `internal/orchestrator/monitor.go`) runs synchronously:
-
-1. Parses the reading-specific fields off `ContainerStatus`.
-2. If the agent's `novelty_verdict` is `"duplicate"` and `!task.Force`, short-circuits with no write (agent noticed a dup mid-run; preserve the existing row).
-3. Calls `embeddings.Embedder.Embed(ctx, tldr)` to embed the final TL;DR (re-embedded by the orchestrator, not reused from the agent — the agent's draft TL;DR can be refined after similarity lookup).
-4. Pulls the captured-content artifacts (`raw.html`, `extracted.md`, `content.json`) out of the container via `Runner.GetReadingContent`. Missing files are tolerated — the reader's pre-fetch step is non-fatal.
-5. Parses the `content.json` sidecar and copies its metadata fields (`content_type`, `content_status`, `content_bytes`, `extracted_bytes`, `content_sha256`, `fetched_at`) onto the reading row.
-6. Writes the row via `store.UpsertReading`.
-7. Persists the captured artifacts to disk under `{BACKFLOW_DATA_DIR}/readings/{id}/` via `outputs.SaveReadingContent` (atomic `*.tmp` + rename, mirroring `tasks/{id}/`). On-disk persist is best-effort — failure is logged but does not fail the task, since the row is already committed and failing here would block retries on the duplicate guard. The API gracefully 404s when a file is absent.
-8. Emits `task.completed` with `WithReading(tldr, verdict, tags, connections)` plus, when capture ran, `WithReadingContent(content_status, content_type)`.
-
-If the embedding API call or the DB write fails, the task is marked `failed` rather than silently `completed`, and `task.failed` is emitted. If `embedder` is nil (no `OPENAI_API_KEY` configured), reading tasks fail at completion.
-
-The reader container's pre-fetch + extraction step (`fetch-and-extract.sh` + `extract.js`, both in `docker/reader/`) runs before the harness. It downloads the URL with `curl --max-filesize $MAX_CONTENT_BYTES`, computes a SHA-256, derives an extension from `Content-Type`, and writes `raw.<ext>` (`html`/`pdf`/`json`/`txt`/`bin`). For HTML payloads it then runs the in-container Node pipeline (`@mozilla/readability` + `jsdom` + `turndown`) to produce `extracted.md`. Capture is independent of summarization: the agent's prompt is unchanged, and the agent continues to use `WebFetch` (claude_code) or `curl` (codex) as the primary read path. Capture failures log a warning and the agent runs anyway. Failure modes recorded on the `readings` row via `content_status`:
-
-- `captured` — raw saved (and `extracted.md` for HTML).
-- `fetch_failed` — curl exited non-zero (TLS/network error), HTTP 4xx/5xx, or empty body. No files on disk.
-- `over_size_cap` — `curl --max-filesize` tripped (exit 63). No files on disk.
-
-`force=true` resubmissions overwrite the existing reading row and the on-disk content under the same `readings/{id}/` directory (the orchestrator looks up the existing row by URL before generating an id, so the upsert and the on-disk persist target the same id). When the agent reports `novelty_verdict=duplicate` without `force`, `handleReadingCompletion` returns early — no `GetReadingContent`, no `SaveReadingContent`, no `UpsertReading` — preserving the existing row and discarding the pre-fetched container artifacts. Skill-agent (`docker/skill-agent/`) parity for capture is deferred to a follow-up slice.
-
-The reading agent image and reader-side shell scripts live in `docker/reader/`:
-
-- `reader-entrypoint.sh` — Image entrypoint: runs the pre-fetch step (best-effort), then the harness, extracts JSON via `reader_helpers.sh`, writes `status.json` via `status_writer.sh`.
-- `fetch-and-extract.sh` — Pre-fetch + extraction. Writes `raw.html`, `extracted.md`, and a `content.json` sidecar to the workspace.
-- `extractor/extract.js` — Node script that turns HTML into markdown using `@mozilla/readability` + `jsdom` + `turndown`.
-- `read-embed.sh` — Embeds text via OpenAI `text-embedding-3-small`. Used by the agent to embed a draft TL;DR for similarity search.
-- `read-similar.sh` — Semantic similarity search: embeds input text, calls Backlite's `/api/v1/readings/similar` endpoint.
-- `read-lookup.sh` — Exact-URL duplicate check via Backlite's `/api/v1/readings/lookup` endpoint.
-- `reader_helpers.sh` — JSON extraction helpers (pulls the first JSON object from the agent transcript).
-- `status_writer.sh` — Shared helper for writing `status.json`.
-
-Reading-mode env vars:
-
-- `BACKFLOW_READER_IMAGE` — Docker image for reading-mode containers
-- `BACKFLOW_DEFAULT_READ_MAX_BUDGET` / `BACKFLOW_DEFAULT_READ_MAX_RUNTIME_SEC` / `BACKFLOW_DEFAULT_READ_MAX_TURNS` — Tighter defaults applied by `TaskDefaults("read")`
-- `BACKFLOW_DEFAULT_READ_MAX_CONTENT_BYTES` — Hard cap on the reader's pre-fetch download size; passed into reader containers as `MAX_CONTENT_BYTES` and enforced via `curl --max-filesize`. Over-cap responses produce `content_status=over_size_cap` with no files on disk. See config for the current default.
-- `OPENAI_API_KEY` — Required for the orchestrator's embeddings client (and for the reader container's `read-embed.sh`)
-- `BACKFLOW_INTERNAL_API_BASE_URL` — Optional override for the Backlite API base URL used by reader containers; defaults to `http://host.docker.internal:<listen-port>`
-
 ## Skill-based agent image (opt-in)
 
-`BACKFLOW_SKILL_AGENT_IMAGE` opts a deployment into the `docker/skill-agent/` image (claude_code-only). See **Agent containers — three coexisting images** above for the routing rule and the absent-from-this-image components (`status_writer.sh`, `reader_helpers.sh`, prep stage, in-container retry loop). Skill bundles live in the source tree at `docker/skill-agent/skills/{auto,code,review,read}/`; the entrypoint copies the requested bundle into `~/.claude/skills/<mode>/` at start so Claude Code's native skill loader picks it up. The `auto` bundle dispatches at runtime to `code` or `review`, so the entrypoint installs both sub-bundles alongside it. The `status.json` contract is enforced by the Go validator in `internal/skillcontract`, which embeds `schema.json` and walks every `docker/skill-agent/skills/*/examples/status.json` fixture in tests. Skills are not a user-facing extension point — operators do not supply or override skill content per task.
-
-The `tasks` table carries a `force` boolean column. REST callers can set `force` on `POST /api/v1/tasks`; `Force=true` bypasses the dispatch-time duplicate check and allows an existing reading row to be overwritten on completion.
+`BACKFLOW_SKILL_AGENT_IMAGE` opts a deployment into the `docker/skill-agent/` image (claude_code-only). See **Agent containers** above for the routing rule and the absent-from-this-image components (prep stage and in-container retry loop). Skill bundles live in the source tree at `docker/skill-agent/skills/{auto,code,review}/`; the entrypoint copies the requested bundle into `~/.claude/skills/<mode>/` at start so Claude Code's native skill loader picks it up. The `auto` bundle dispatches at runtime to `code` or `review`, so the entrypoint installs both sub-bundles alongside it. The `status.json` contract is enforced by the Go validator in `internal/skillcontract`, which embeds `schema.json` and walks every `docker/skill-agent/skills/*/examples/status.json` fixture in tests. Skills are not a user-facing extension point — operators do not supply or override skill content per task.
 
 ## Local SQLite backups
 
@@ -215,10 +146,6 @@ Env vars (see `internal/config/config.go` for current defaults):
 
 Restore is manual: stop the server, copy the chosen `.sqlite.gz` aside, `gunzip` it, optionally re-run `PRAGMA integrity_check`, replace the file at `BACKFLOW_DATABASE_PATH`, and restart.
 
-## Email summary delivery (read mode, opt-in)
-
-When `BACKFLOW_RESEND_API_KEY`, `BACKFLOW_NOTIFY_EMAIL_FROM`, and `BACKFLOW_NOTIFY_EMAIL_TO` are all set, the orchestrator propagates them into skill-agent containers as `RESEND_API_KEY`, `NOTIFY_EMAIL_FROM`, and `NOTIFY_EMAIL_TO` (via the same `--env-file` channel as other secrets — never on the command line). The read skill's `send-email.sh` (`docker/skill-agent/skills/read/`) reads `~/workspace/status.json`, formats a structured plain-text body (URL, title, novelty verdict, tags, keywords, people, orgs, TL;DR, summary markdown, connections, task ID — each section omitted when its source field is empty), and POSTs a single message to `https://api.resend.com/emails`. Subject is the page title (falls back to URL hostname when title is empty). Email send is advisory: missing env vars, missing `status.json`, or a Resend API failure each log to stderr and `exit 0` so they cannot block task completion. Scope is read mode + claude_code + skill-agent image only; codex read tasks (which route to `docker/reader/`) and non-read modes do not send email. Operator setup (Resend account, sender-domain DNS, env vars) is in `docs/resend-setup.md`. The three env-var keys are reserved and cannot be overridden via per-task `env_vars`.
-
 ## Output storage
 
 When a task's container exits and `save_agent_output` is enabled, the orchestrator writes two files under `{BACKFLOW_DATA_DIR}/tasks/{id}/`:
@@ -226,7 +153,7 @@ When a task's container exits and `save_agent_output` is enabled, the orchestrat
 - `container_output.log` — raw agent stdout, served by `GET /api/v1/tasks/{id}/output`
 - `task.json` — JSON snapshot of the task row, served by `GET /api/v1/tasks/{id}/output.json`
 
-Writes are atomic (`*.tmp` sibling + `os.Rename`), so readers never observe a half-written file. `BACKFLOW_DATA_DIR` defaults to `./data`; see config for current defaults.
+Writes are atomic (`*.tmp` sibling + `os.Rename`), so consumers never observe a half-written file. `BACKFLOW_DATA_DIR` defaults to `./data`; see config for current defaults.
 
 ## Harnesses
 
@@ -240,9 +167,9 @@ PR comments include actual cost for `claude_code` (extracted from `total_cost_us
 ## API auth
 
 - `BACKFLOW_API_KEY` — Optional single bearer token for API and debug access in small deployments
-- `api_keys` — SQLite-backed bearer tokens with named scopes (`tasks:read`, `tasks:write`, `readings:read`, `health:read`, `stats:read`) and optional expiration
+- `api_keys` — SQLite-backed bearer tokens with named scopes (`tasks:read`, `tasks:write`, `health:read`, `stats:read`) and optional expiration
 
-When API keys are configured, bearer auth applies to `/api/v1/*` (except the reader-container endpoints below) and `/debug/stats`. The static SPA bundle at `/*`, root `/health`, `GET /api/v1/readings/lookup`, and `POST /api/v1/readings/similar` remain public — the latter two are called by reader containers from inside the orchestrator's docker network and are not gated.
+When API keys are configured, bearer auth applies to `/api/v1/*` and `/debug/stats`. Root `/health` remains public.
 
 ## Documentation guidelines
 
@@ -264,9 +191,9 @@ Secrets (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GITHUB_TOKEN`) are passed via `
 
 ## Database
 
-SQLite. Tables: `tasks`, `api_keys`, `readings`. See `docs/schema.md` for the full column-level schema. Migrations are managed by [goose](https://github.com/pressly/goose) and live in `migrations/`. The store implementation is in `internal/store/sqlite.go` using `database/sql`. Set `BACKFLOW_DATABASE_PATH` to the local database path.
+SQLite. Tables: `tasks` and `api_keys`. See `docs/schema.md` for the full column-level schema. Migrations are managed by [goose](https://github.com/pressly/goose) and live in `migrations/`. The store implementation is in `internal/store/sqlite.go` using `database/sql`. Set `BACKFLOW_DATABASE_PATH` to the local database path.
 
-The schema was collapsed to a single `001_initial_schema.sql` baseline; `002_parent_task_id.sql` added `tasks.parent_task_id` plus `idx_tasks_parent_task_id`; `003_reading_content.sql` added the six content-capture columns to `readings` (`content_type`, `content_status`, `content_bytes`, `extracted_bytes`, `content_sha256`, `fetched_at`). Any new schema change starts at the next numeric prefix.
+The schema was collapsed to a single `001_initial_schema.sql` baseline; `002_parent_task_id.sql` added `tasks.parent_task_id` plus `idx_tasks_parent_task_id`. Any new schema change starts at the next numeric prefix.
 
 Migration workflow:
 
@@ -283,7 +210,6 @@ Create new migrations in `migrations/` with the next numeric prefix, `-- +goose 
 Additional docs in `docs/`:
 - `schema.md` — Database schema (tables, columns, indexes, status lifecycles)
 - `self-hosting.md` — Single-host deployment walkthrough
-- `resend-setup.md` — Operator setup for the read skill's email summary delivery (Resend account, sender-domain DNS, env vars)
 - `adrs/` — Architecture Decision Records (historical; see individual files for current status)
 
 The OpenAPI 3.0 spec lives at `api/openapi.yaml`. `make test-schema` runs Schemathesis fuzz tests against it.

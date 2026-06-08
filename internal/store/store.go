@@ -30,28 +30,7 @@ type TaskFilter struct {
 	Offset int
 }
 
-// ReadingFilter controls reading-library listing behavior.
-type ReadingFilter struct {
-	// Search restricts results to readings whose title, url, tldr, or summary
-	// contain the substring (case-insensitive). Empty means no filter.
-	Search string
-	// Tag restricts results to readings whose tags array contains the tag
-	// (case-insensitive). Empty means no filter.
-	Tag    string
-	Limit  int
-	Offset int
-}
-
-// ReadingMatch is a similarity-search result for an existing reading.
-type ReadingMatch struct {
-	ID         string  `json:"id"`
-	Title      string  `json:"title"`
-	TLDR       string  `json:"tldr"`
-	URL        string  `json:"url"`
-	Similarity float64 `json:"similarity"`
-}
-
-// Store is the persistence interface for tasks, api keys, and readings.
+// Store is the persistence interface for tasks and api keys.
 type Store interface {
 	// Tasks
 	CreateTask(ctx context.Context, task *models.Task) error
@@ -74,13 +53,6 @@ type Store interface {
 	HasAPIKeys(ctx context.Context) (bool, error)
 	GetAPIKeyByHash(ctx context.Context, keyHash string) (*models.APIKey, error)
 	CreateAPIKey(ctx context.Context, key *models.APIKey) error
-
-	// Readings
-	UpsertReading(ctx context.Context, r *models.Reading) error
-	ListReadings(ctx context.Context, filter ReadingFilter) ([]*models.Reading, error)
-	GetReading(ctx context.Context, id string) (*models.Reading, error)
-	GetReadingByURL(ctx context.Context, url string) (*models.Reading, error)
-	FindSimilarReadings(ctx context.Context, queryEmbedding []float32, limit int) ([]ReadingMatch, error)
 
 	// Transactions
 	WithTx(ctx context.Context, fn func(Store) error) error

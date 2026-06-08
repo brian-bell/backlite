@@ -65,7 +65,7 @@ func TestNew_PropagatesLocalBackupRetention(t *testing.T) {
 		LocalBackupRetention: wantRetention,
 	}
 
-	o := New(ms, cfg, bus, &mockDockerManager{}, nil, nil)
+	o := New(ms, cfg, bus, &mockDockerManager{}, nil)
 
 	if got := o.BackupStatus().Retention; got != wantRetention {
 		t.Fatalf("BackupStatus().Retention = %v, want %v", got, wantRetention)

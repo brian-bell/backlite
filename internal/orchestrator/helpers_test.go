@@ -8,7 +8,6 @@ import (
 
 	"github.com/brian-bell/backlite/internal/backup"
 	"github.com/brian-bell/backlite/internal/config"
-	"github.com/brian-bell/backlite/internal/embeddings"
 	"github.com/brian-bell/backlite/internal/models"
 	"github.com/brian-bell/backlite/internal/notify"
 	"github.com/brian-bell/backlite/internal/orchestrator/lifecycle"
@@ -26,20 +25,11 @@ type mockStore struct {
 	updateTaskStatusErr    error
 	clearTaskAssignmentErr error
 	markReadyForRetryErr   error
-	upsertReadingErr       error
-	getReadingByURLErr     error
-
-	// Recorded reading calls.
-	upsertedReadings []models.Reading
-
-	// Pre-seeded readings for GetReadingByURL lookups, keyed by URL.
-	readingsByURL map[string]*models.Reading
 }
 
 func newMockStore() *mockStore {
 	return &mockStore{
-		tasks:         make(map[string]*models.Task),
-		readingsByURL: make(map[string]*models.Reading),
+		tasks: make(map[string]*models.Task),
 	}
 }
 
@@ -220,60 +210,6 @@ func (s *mockStore) WithTx(_ context.Context, fn func(store.Store) error) error 
 	return fn(s)
 }
 
-func (s *mockStore) UpsertReading(_ context.Context, r *models.Reading) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.upsertReadingErr != nil {
-		return s.upsertReadingErr
-	}
-	cp := *r
-	s.upsertedReadings = append(s.upsertedReadings, cp)
-	stored := cp
-	s.readingsByURL[r.URL] = &stored
-	return nil
-}
-
-func (s *mockStore) GetReadingByURL(_ context.Context, url string) (*models.Reading, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.getReadingByURLErr != nil {
-		return nil, s.getReadingByURLErr
-	}
-	r, ok := s.readingsByURL[url]
-	if !ok {
-		return nil, store.ErrNotFound
-	}
-	cp := *r
-	return &cp, nil
-}
-
-func (s *mockStore) ListReadings(_ context.Context, _ store.ReadingFilter) ([]*models.Reading, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	readings := make([]*models.Reading, 0, len(s.readingsByURL))
-	for _, r := range s.readingsByURL {
-		cp := *r
-		readings = append(readings, &cp)
-	}
-	return readings, nil
-}
-
-func (s *mockStore) GetReading(_ context.Context, id string) (*models.Reading, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, r := range s.readingsByURL {
-		if r.ID == id {
-			cp := *r
-			return &cp, nil
-		}
-	}
-	return nil, store.ErrNotFound
-}
-
-func (s *mockStore) FindSimilarReadings(_ context.Context, _ []float32, _ int) ([]store.ReadingMatch, error) {
-	return []store.ReadingMatch{}, nil
-}
-
 func (s *mockStore) Close() error { return nil }
 
 // --- Mock notifier ---
@@ -318,13 +254,6 @@ type mockDockerManager struct {
 	// GetAgentOutput behavior.
 	agentOutput    string
 	agentOutputErr error
-
-	// GetReadingContent behavior. When zero-valued, the mock reports a
-	// legacy container with no captured content (all-nil bytes, no error).
-	readingRaw       []byte
-	readingExtracted []byte
-	readingSidecar   []byte
-	readingContentFn func(ctx context.Context, containerID string) (raw, extracted, sidecar []byte, err error)
 }
 
 func (m *mockDockerManager) RunAgent(ctx context.Context, task *models.Task) (string, error) {
@@ -365,21 +294,12 @@ func (m *mockDockerManager) GetAgentOutput(_ context.Context, _ string) (string,
 	return m.agentOutput, nil
 }
 
-func (m *mockDockerManager) GetReadingContent(ctx context.Context, containerID string) (raw, extracted, sidecar []byte, err error) {
-	if m.readingContentFn != nil {
-		return m.readingContentFn(ctx, containerID)
-	}
-	return m.readingRaw, m.readingExtracted, m.readingSidecar, nil
-}
-
 // --- Mock filesystem writer ---
 
 type mockWriter struct {
-	logSaves       []mockWriterLogSave
-	metadataSaves  []mockWriterMetadataSave
-	readingSaves   []mockWriterReadingSave
-	err            error
-	readingSaveErr error
+	logSaves      []mockWriterLogSave
+	metadataSaves []mockWriterMetadataSave
+	err           error
 }
 
 type mockWriterLogSave struct {
@@ -390,13 +310,6 @@ type mockWriterLogSave struct {
 type mockWriterMetadataSave struct {
 	taskID   string
 	metadata any
-}
-
-type mockWriterReadingSave struct {
-	readingID string
-	raw       []byte
-	extracted []byte
-	sidecar   []byte
 }
 
 func (m *mockWriter) SaveLog(_ context.Context, taskID string, logBytes []byte) (string, error) {
@@ -412,22 +325,6 @@ func (m *mockWriter) SaveMetadata(_ context.Context, taskID string, metadata any
 		return m.err
 	}
 	m.metadataSaves = append(m.metadataSaves, mockWriterMetadataSave{taskID: taskID, metadata: metadata})
-	return nil
-}
-
-func (m *mockWriter) SaveReadingContent(_ context.Context, readingID string, raw, extracted, sidecar []byte) error {
-	if m.readingSaveErr != nil {
-		return m.readingSaveErr
-	}
-	if m.err != nil {
-		return m.err
-	}
-	m.readingSaves = append(m.readingSaves, mockWriterReadingSave{
-		readingID: readingID,
-		raw:       raw,
-		extracted: extracted,
-		sidecar:   sidecar,
-	})
 	return nil
 }
 
@@ -499,28 +396,6 @@ func withOutputs(w Writer) func(*Orchestrator) {
 	return func(o *Orchestrator) { o.outputs = w }
 }
 
-func withEmbedder(e embeddings.Embedder) func(*Orchestrator) {
-	return func(o *Orchestrator) { o.embedder = e }
-}
-
 func withBackups(b backupScheduler) func(*Orchestrator) {
 	return func(o *Orchestrator) { o.backups = b }
-}
-
-// mockEmbedder records Embed calls and returns a fixed vector or injected error.
-type mockEmbedder struct {
-	mu      sync.Mutex
-	calls   []string
-	vector  []float32
-	errToFn error
-}
-
-func (m *mockEmbedder) Embed(_ context.Context, text string) ([]float32, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.calls = append(m.calls, text)
-	if m.errToFn != nil {
-		return nil, m.errToFn
-	}
-	return m.vector, nil
 }

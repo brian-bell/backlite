@@ -18,7 +18,6 @@ import (
 	"github.com/brian-bell/backlite/internal/backup"
 	"github.com/brian-bell/backlite/internal/config"
 	"github.com/brian-bell/backlite/internal/debug"
-	"github.com/brian-bell/backlite/internal/embeddings"
 	"github.com/brian-bell/backlite/internal/notify"
 	"github.com/brian-bell/backlite/internal/orchestrator"
 	orchdocker "github.com/brian-bell/backlite/internal/orchestrator/docker"
@@ -113,15 +112,10 @@ func main() {
 
 	runner := orchdocker.NewManager(cfg)
 
-	var embedder embeddings.Embedder
-	if cfg.OpenAIAPIKey != "" {
-		embedder = embeddings.NewOpenAIEmbedder(cfg.OpenAIAPIKey, "", nil)
-	}
-
 	fsOutputs := outputs.New(cfg.DataDir)
 	log.Info().Str("data_dir", cfg.DataDir).Msg("filesystem output writer enabled")
 
-	orch := orchestrator.New(db, cfg, bus, runner, fsOutputs, embedder)
+	orch := orchestrator.New(db, cfg, bus, runner, fsOutputs)
 	handler := buildHTTPHandler(cfg, db, db, orch.Docker(), bus, orch.Running, orch.BackupStatus, startedAt)
 
 	srv := &http.Server{

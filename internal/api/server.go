@@ -20,18 +20,11 @@ func NewServer(s store.Store, cfg *config.Config, logs LogFetcher, bus notify.Em
 	h := NewHandlers(s, cfg, logs, bus)
 
 	r.Get("/health", h.HealthCheck)
-	r.Get("/api/v1/readings/lookup", h.LookupReading)
-	r.Post("/api/v1/readings/similar", h.FindSimilarReadings)
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(AuthMiddleware(s, cfg.APIKey))
 
 		r.Get("/health", h.HealthCheck)
-
-		r.Get("/readings", h.ListReadings)
-		r.Get("/readings/{id}", h.GetReading)
-		r.Get("/readings/{id}/content", h.GetReadingContent)
-		r.Get("/readings/{id}/content/raw", h.GetReadingContentRaw)
 
 		r.Route("/tasks", func(r chi.Router) {
 			r.Post("/", h.CreateTask)
@@ -44,10 +37,6 @@ func NewServer(s store.Store, cfg *config.Config, logs LogFetcher, bus notify.Em
 			r.Get("/{id}/output.json", h.GetTaskOutputJSON)
 		})
 	})
-
-	if cfg != nil && cfg.WebDir != "" {
-		r.Get("/*", webAppHandler{dir: cfg.WebDir}.ServeHTTP)
-	}
 
 	return r
 }

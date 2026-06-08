@@ -490,7 +490,6 @@ func truncateTasks(databasePath string) {
 	defer db.Close()
 
 	if _, err := db.ExecContext(ctx, `
-		DELETE FROM readings;
 		DELETE FROM api_keys;
 		DELETE FROM tasks;`); err != nil {
 		fmt.Printf("  [warn] failed to truncate tasks: %v\n", err)

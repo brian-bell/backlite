@@ -33,7 +33,6 @@ CREATE TABLE tasks (
     error            TEXT NOT NULL DEFAULT '',
     ready_for_retry  BOOLEAN NOT NULL DEFAULT false,
     agent_image      TEXT NOT NULL DEFAULT '',
-    force            BOOLEAN NOT NULL DEFAULT false,
     created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     started_at       TEXT,
@@ -54,28 +53,7 @@ CREATE TABLE api_keys (
 
 CREATE INDEX idx_api_keys_expires_at ON api_keys(expires_at);
 
-CREATE TABLE readings (
-    id              TEXT PRIMARY KEY,
-    task_id         TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    url             TEXT NOT NULL,
-    title           TEXT NOT NULL DEFAULT '',
-    tldr            TEXT NOT NULL DEFAULT '',
-    tags            TEXT NOT NULL DEFAULT '[]',
-    keywords        TEXT NOT NULL DEFAULT '[]',
-    people          TEXT NOT NULL DEFAULT '[]',
-    orgs            TEXT NOT NULL DEFAULT '[]',
-    novelty_verdict TEXT NOT NULL DEFAULT '',
-    connections     TEXT NOT NULL DEFAULT '[]',
-    summary         TEXT NOT NULL DEFAULT '',
-    raw_output      TEXT NOT NULL DEFAULT '{}',
-    embedding       TEXT NOT NULL DEFAULT '',
-    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-);
-
-CREATE UNIQUE INDEX idx_readings_url ON readings(url);
-
 -- +goose Down
 
-DROP TABLE IF EXISTS readings;
 DROP TABLE IF EXISTS api_keys;
 DROP TABLE IF EXISTS tasks;

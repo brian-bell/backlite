@@ -329,31 +329,3 @@ func TestOpenAPI_GetTaskLogs_404(t *testing.T) {
 	}
 	checkResponse(t, req, rec)
 }
-
-// ---- GET /api/v1/readings ----
-
-func TestOpenAPI_ListReadings_200_Empty(t *testing.T) {
-	srv := testServer(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/readings?limit=20&offset=0", nil)
-	rec := httptest.NewRecorder()
-	srv.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
-	requireSpecRoute(t, req)
-	checkResponse(t, req, rec)
-}
-
-// ---- GET /api/v1/readings/{id} ----
-
-func TestOpenAPI_GetReading_404(t *testing.T) {
-	srv := testServer(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/readings/bf_READ_MISSING", nil)
-	rec := httptest.NewRecorder()
-	srv.ServeHTTP(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404", rec.Code)
-	}
-	requireSpecRoute(t, req)
-	checkResponse(t, req, rec)
-}

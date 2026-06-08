@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -57,6 +58,132 @@ func sanitizeTestName(name string) string {
 	name = strings.ReplaceAll(name, "/", "-")
 	name = strings.ReplaceAll(name, " ", "-")
 	return name
+}
+
+func TestMigration005_PreservesParentTaskLinks(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "pre-read-removal.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
+		t.Fatalf("enable foreign keys: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		CREATE TABLE goose_db_version (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			version_id INTEGER NOT NULL,
+			is_applied INTEGER NOT NULL,
+			tstamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);
+		INSERT INTO goose_db_version(version_id, is_applied)
+		VALUES (1, 1), (2, 1), (3, 1), (4, 1);
+
+		CREATE TABLE tasks (
+			id                TEXT PRIMARY KEY,
+			status            TEXT NOT NULL DEFAULT 'pending',
+			task_mode         TEXT NOT NULL DEFAULT 'auto',
+			harness           TEXT NOT NULL DEFAULT 'claude_code',
+			repo_url          TEXT NOT NULL DEFAULT '',
+			branch            TEXT NOT NULL DEFAULT '',
+			target_branch     TEXT NOT NULL DEFAULT '',
+			prompt            TEXT NOT NULL,
+			context           TEXT NOT NULL DEFAULT '',
+			model             TEXT NOT NULL DEFAULT '',
+			effort            TEXT NOT NULL DEFAULT '',
+			max_budget_usd    REAL NOT NULL DEFAULT 0,
+			max_runtime_sec   INTEGER NOT NULL DEFAULT 0,
+			max_turns         INTEGER NOT NULL DEFAULT 0,
+			create_pr         BOOLEAN NOT NULL DEFAULT false,
+			self_review       BOOLEAN NOT NULL DEFAULT false,
+			save_agent_output BOOLEAN NOT NULL DEFAULT true,
+			pr_title          TEXT NOT NULL DEFAULT '',
+			pr_body           TEXT NOT NULL DEFAULT '',
+			pr_url            TEXT NOT NULL DEFAULT '',
+			output_url        TEXT NOT NULL DEFAULT '',
+			allowed_tools     TEXT NOT NULL DEFAULT '[]',
+			claude_md         TEXT NOT NULL DEFAULT '',
+			env_vars          TEXT NOT NULL DEFAULT '{}',
+			container_id      TEXT NOT NULL DEFAULT '',
+			retry_count       INTEGER NOT NULL DEFAULT 0,
+			user_retry_count  INTEGER NOT NULL DEFAULT 0,
+			cost_usd          REAL NOT NULL DEFAULT 0,
+			elapsed_time_sec  INTEGER NOT NULL DEFAULT 0,
+			error             TEXT NOT NULL DEFAULT '',
+			ready_for_retry   BOOLEAN NOT NULL DEFAULT false,
+			agent_image       TEXT NOT NULL DEFAULT '',
+			force             BOOLEAN NOT NULL DEFAULT false,
+			parent_task_id    TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+			inline_content_sha256 TEXT NULL,
+			created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+			updated_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+			started_at        TEXT,
+			completed_at      TEXT
+		);
+		CREATE INDEX idx_tasks_status ON tasks(status);
+		CREATE INDEX idx_tasks_created ON tasks(created_at);
+		CREATE INDEX idx_tasks_parent_task_id ON tasks(parent_task_id);
+
+		CREATE TABLE readings (
+			id TEXT PRIMARY KEY,
+			task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+			url TEXT NOT NULL
+		);
+		CREATE UNIQUE INDEX idx_readings_url ON readings(url);
+
+		INSERT INTO tasks(id, status, task_mode, harness, prompt)
+		VALUES ('bf_PARENT_LINK', 'completed', 'code', 'claude_code', 'parent');
+		INSERT INTO tasks(id, status, task_mode, harness, prompt, parent_task_id)
+		VALUES ('bf_CHILD_LINK', 'completed', 'review', 'claude_code', 'child', 'bf_PARENT_LINK');
+		INSERT INTO tasks(id, status, task_mode, harness, prompt)
+		VALUES ('bf_READ_OLD', 'pending', 'read', 'claude_code', 'https://example.com/old');
+		INSERT INTO tasks(id, status, task_mode, harness, prompt, parent_task_id)
+		VALUES ('bf_CHILD_OF_READ', 'completed', 'review', 'claude_code', 'review child', 'bf_READ_OLD');
+	`); err != nil {
+		db.Close()
+		t.Fatalf("seed pre-migration db: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close seed db: %v", err)
+	}
+
+	s, err := NewSQLite(ctx, dbPath, filepath.Join("..", "..", "migrations"))
+	if err != nil {
+		t.Fatalf("NewSQLite: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Fatalf("Close store: %v", err)
+		}
+	})
+
+	child, err := s.GetTask(ctx, "bf_CHILD_LINK")
+	if err != nil {
+		t.Fatalf("GetTask child: %v", err)
+	}
+	if child.ParentTaskID == nil || *child.ParentTaskID != "bf_PARENT_LINK" {
+		t.Fatalf("ParentTaskID = %v, want bf_PARENT_LINK", child.ParentTaskID)
+	}
+
+	if _, err := s.GetTask(ctx, "bf_READ_OLD"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("read task lookup err = %v, want ErrNotFound", err)
+	}
+	childOfRead, err := s.GetTask(ctx, "bf_CHILD_OF_READ")
+	if err != nil {
+		t.Fatalf("GetTask child of read: %v", err)
+	}
+	if childOfRead.ParentTaskID != nil {
+		t.Fatalf("child of dropped read task ParentTaskID = %v, want nil", childOfRead.ParentTaskID)
+	}
+
+	var fkTarget string
+	if err := s.db.QueryRowContext(ctx, "SELECT [table] FROM pragma_foreign_key_list('tasks') WHERE [from] = 'parent_task_id'").Scan(&fkTarget); err != nil {
+		t.Fatalf("query parent_task_id foreign key: %v", err)
+	}
+	if fkTarget != "tasks" {
+		t.Fatalf("parent_task_id FK target = %q, want tasks", fkTarget)
+	}
 }
 
 func TestSQLite_TaskRoundTrip(t *testing.T) {
@@ -163,37 +290,6 @@ func TestSQLite_TaskRoundTrip_DefaultAgentImage(t *testing.T) {
 	}
 	if got.AgentImage != "" {
 		t.Errorf("AgentImage = %q, want empty (default)", got.AgentImage)
-	}
-	if got.Force {
-		t.Errorf("Force = true, want false (default)")
-	}
-}
-
-func TestSQLite_CreateTask_PersistsForce(t *testing.T) {
-	s := testSQLiteStore(t)
-	ctx := context.Background()
-	now := time.Now().UTC().Truncate(time.Microsecond)
-
-	task := &models.Task{
-		ID:        "bf_TEST_FORCE",
-		Status:    models.TaskStatusPending,
-		TaskMode:  models.TaskModeRead,
-		Harness:   models.HarnessClaudeCode,
-		Prompt:    "https://example.com/post",
-		Force:     true,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	if err := s.CreateTask(ctx, task); err != nil {
-		t.Fatalf("CreateTask: %v", err)
-	}
-
-	got, err := s.GetTask(ctx, "bf_TEST_FORCE")
-	if err != nil {
-		t.Fatalf("GetTask: %v", err)
-	}
-	if !got.Force {
-		t.Errorf("Force = false, want true")
 	}
 }
 
@@ -765,563 +861,5 @@ func TestSQLite_ReviewTaskCRUD(t *testing.T) {
 	}
 	if got.PRURL != "https://github.com/test/repo/pull/42" {
 		t.Errorf("PRURL = %q", got.PRURL)
-	}
-}
-
-func TestSQLite_UpsertReading_Insert(t *testing.T) {
-	s := testSQLiteStore(t)
-	ctx := context.Background()
-	now := time.Now().UTC().Truncate(time.Microsecond)
-
-	// Need a task for the FK.
-	task := sqliteTestTask(t, s)
-
-	embedding := make([]float32, 1536)
-	embedding[0] = 0.1
-	embedding[1] = 0.9
-
-	r := &models.Reading{
-		ID:             "bf_READ001",
-		TaskID:         task.ID,
-		URL:            "https://example.com/article",
-		Title:          "Test Article",
-		TLDR:           "A short summary",
-		Tags:           []string{"go", "testing"},
-		Keywords:       []string{"tdd", "sqlite"},
-		People:         []string{"Alice"},
-		Orgs:           []string{"Acme"},
-		NoveltyVerdict: "novel",
-		Connections: []models.Connection{
-			{ReadingID: "bf_READ000", Reason: "similar topic"},
-		},
-		Summary:   "A longer summary of the article.",
-		RawOutput: []byte(`{"key":"value"}`),
-		Embedding: embedding,
-		CreatedAt: now,
-	}
-
-	if err := s.UpsertReading(ctx, r); err != nil {
-		t.Fatalf("UpsertReading: %v", err)
-	}
-
-	// Read back via raw SQL to verify all fields.
-	var (
-		gotID, gotTaskID, gotURL, gotTitle, gotTLDR string
-		gotNovelty, gotSummary                      string
-		gotTags, gotKeywords, gotPeople, gotOrgs    string
-		gotConnections, gotRawOutput                string
-		gotEmbedding                                string
-		gotCreatedAt                                string
-	)
-	err := s.db.QueryRowContext(ctx, `
-		SELECT id, task_id, url, title, tldr,
-		       tags, keywords, people, orgs,
-		       novelty_verdict, connections, summary, raw_output,
-		       embedding, created_at
-		FROM readings WHERE id = ?`, r.ID).Scan(
-		&gotID, &gotTaskID, &gotURL, &gotTitle, &gotTLDR,
-		&gotTags, &gotKeywords, &gotPeople, &gotOrgs,
-		&gotNovelty, &gotConnections, &gotSummary, &gotRawOutput,
-		&gotEmbedding, &gotCreatedAt,
-	)
-	if err != nil {
-		t.Fatalf("query reading back: %v", err)
-	}
-
-	if gotID != r.ID {
-		t.Errorf("ID = %q, want %q", gotID, r.ID)
-	}
-	if gotTaskID != r.TaskID {
-		t.Errorf("TaskID = %q, want %q", gotTaskID, r.TaskID)
-	}
-	if gotURL != r.URL {
-		t.Errorf("URL = %q, want %q", gotURL, r.URL)
-	}
-	if gotTitle != r.Title {
-		t.Errorf("Title = %q, want %q", gotTitle, r.Title)
-	}
-	if gotTLDR != r.TLDR {
-		t.Errorf("TLDR = %q, want %q", gotTLDR, r.TLDR)
-	}
-	if gotNovelty != r.NoveltyVerdict {
-		t.Errorf("NoveltyVerdict = %q, want %q", gotNovelty, r.NoveltyVerdict)
-	}
-	if gotSummary != r.Summary {
-		t.Errorf("Summary = %q, want %q", gotSummary, r.Summary)
-	}
-	if gotTags != `["go","testing"]` {
-		t.Errorf("Tags = %v, want %v", gotTags, r.Tags)
-	}
-	if gotKeywords != `["tdd","sqlite"]` {
-		t.Errorf("Keywords = %v, want %v", gotKeywords, r.Keywords)
-	}
-	if gotPeople != `["Alice"]` {
-		t.Errorf("People = %v, want %v", gotPeople, r.People)
-	}
-	if gotOrgs != `["Acme"]` {
-		t.Errorf("Orgs = %v, want %v", gotOrgs, r.Orgs)
-	}
-	if gotCreatedAt != timeString(r.CreatedAt) {
-		t.Errorf("CreatedAt = %v, want %v", gotCreatedAt, r.CreatedAt)
-	}
-	// Verify embedding is non-empty (starts with "[0.1,0.9,")
-	if gotEmbedding == "" || gotEmbedding[0] != '[' {
-		t.Errorf("Embedding = %q, want non-empty vector", gotEmbedding)
-	}
-}
-
-func TestSQLite_UpsertReading_Update(t *testing.T) {
-	s := testSQLiteStore(t)
-	ctx := context.Background()
-	now := time.Now().UTC().Truncate(time.Microsecond)
-	task := sqliteTestTask(t, s)
-
-	embedding := make([]float32, 1536)
-	embedding[0] = 0.3
-
-	original := &models.Reading{
-		ID:             "bf_READ003",
-		TaskID:         task.ID,
-		URL:            "https://example.com/updated",
-		Title:          "Original Title",
-		TLDR:           "Original TLDR",
-		Tags:           []string{"v1"},
-		Keywords:       []string{"old"},
-		People:         []string{},
-		Orgs:           []string{},
-		NoveltyVerdict: "novel",
-		Connections:    []models.Connection{},
-		Summary:        "Original summary",
-		RawOutput:      []byte(`{"v":1}`),
-		Embedding:      embedding,
-		CreatedAt:      now,
-	}
-	if err := s.UpsertReading(ctx, original); err != nil {
-		t.Fatalf("UpsertReading (seed): %v", err)
-	}
-
-	// Upsert with same URL but different content and a new ID (force re-read).
-	embedding[0] = 0.7
-	updated := &models.Reading{
-		ID:             "bf_READ004",
-		TaskID:         task.ID,
-		URL:            "https://example.com/updated",
-		Title:          "Updated Title",
-		TLDR:           "Updated TLDR",
-		Tags:           []string{"v2"},
-		Keywords:       []string{"new"},
-		People:         []string{"Bob"},
-		Orgs:           []string{"NewCo"},
-		NoveltyVerdict: "not_novel",
-		Connections:    []models.Connection{{ReadingID: "bf_READ001", Reason: "overlap"}},
-		Summary:        "Updated summary",
-		RawOutput:      []byte(`{"v":2}`),
-		Embedding:      embedding,
-		CreatedAt:      now,
-	}
-	if err := s.UpsertReading(ctx, updated); err != nil {
-		t.Fatalf("UpsertReading (update): %v", err)
-	}
-
-	// Verify exactly one row for that URL.
-	var count int
-	if err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM readings WHERE url = ?", original.URL).Scan(&count); err != nil {
-		t.Fatalf("count: %v", err)
-	}
-	if count != 1 {
-		t.Fatalf("row count = %d, want 1", count)
-	}
-
-	// Verify the row has updated content but keeps the original ID.
-	var gotID, gotTitle, gotTLDR, gotNovelty string
-	err := s.db.QueryRowContext(ctx, "SELECT id, title, tldr, novelty_verdict FROM readings WHERE url = ?", original.URL).
-		Scan(&gotID, &gotTitle, &gotTLDR, &gotNovelty)
-	if err != nil {
-		t.Fatalf("query after upsert-update: %v", err)
-	}
-	if gotID != original.ID {
-		t.Errorf("ID = %q, want original %q (upsert should preserve ID)", gotID, original.ID)
-	}
-	if gotTitle != "Updated Title" {
-		t.Errorf("Title = %q, want %q", gotTitle, "Updated Title")
-	}
-	if gotTLDR != "Updated TLDR" {
-		t.Errorf("TLDR = %q, want %q", gotTLDR, "Updated TLDR")
-	}
-	if gotNovelty != "not_novel" {
-		t.Errorf("NoveltyVerdict = %q, want %q", gotNovelty, "not_novel")
-	}
-}
-
-func TestSQLite_GetReadingByURL(t *testing.T) {
-	s := testSQLiteStore(t)
-	ctx := context.Background()
-	now := time.Now().UTC().Truncate(time.Microsecond)
-	task := sqliteTestTask(t, s)
-
-	embedding := make([]float32, 1536)
-	embedding[0] = 0.42
-
-	seeded := &models.Reading{
-		ID:             "bf_READ_LOOKUP",
-		TaskID:         task.ID,
-		URL:            "https://example.com/lookup",
-		Title:          "Lookup Target",
-		TLDR:           "exact-url lookup",
-		Tags:           []string{"lookup"},
-		Keywords:       []string{},
-		People:         []string{},
-		Orgs:           []string{},
-		NoveltyVerdict: "novel",
-		Connections:    []models.Connection{},
-		Summary:        "",
-		RawOutput:      []byte(`{}`),
-		Embedding:      embedding,
-		CreatedAt:      now,
-	}
-	if err := s.UpsertReading(ctx, seeded); err != nil {
-		t.Fatalf("UpsertReading: %v", err)
-	}
-
-	// Hit: exact URL match returns the seeded row.
-	got, err := s.GetReadingByURL(ctx, "https://example.com/lookup")
-	if err != nil {
-		t.Fatalf("GetReadingByURL (hit): %v", err)
-	}
-	if got == nil {
-		t.Fatal("GetReadingByURL: returned nil reading for hit")
-	}
-	if got.ID != seeded.ID {
-		t.Errorf("ID = %q, want %q", got.ID, seeded.ID)
-	}
-	if got.URL != seeded.URL {
-		t.Errorf("URL = %q, want %q", got.URL, seeded.URL)
-	}
-	if got.Title != seeded.Title {
-		t.Errorf("Title = %q, want %q", got.Title, seeded.Title)
-	}
-	if got.TLDR != seeded.TLDR {
-		t.Errorf("TLDR = %q, want %q", got.TLDR, seeded.TLDR)
-	}
-
-	// Miss: unknown URL returns ErrNotFound.
-	_, err = s.GetReadingByURL(ctx, "https://example.com/does-not-exist")
-	if !errors.Is(err, ErrNotFound) {
-		t.Errorf("GetReadingByURL (miss) err = %v, want ErrNotFound", err)
-	}
-}
-
-func TestSQLite_UpsertReading_RoundTripsContentFields(t *testing.T) {
-	s := testSQLiteStore(t)
-	ctx := context.Background()
-	now := time.Now().UTC().Truncate(time.Microsecond)
-	task := sqliteTestTask(t, s)
-
-	fetchedAt := now.Add(-3 * time.Second)
-	seeded := &models.Reading{
-		ID:             "bf_READ_CONTENT",
-		TaskID:         task.ID,
-		URL:            "https://example.com/content-roundtrip",
-		Title:          "Round-trip target",
-		TLDR:           "verifies content columns persist",
-		Tags:           []string{"content"},
-		Keywords:       []string{},
-		People:         []string{},
-		Orgs:           []string{},
-		NoveltyVerdict: "novel",
-		Connections:    []models.Connection{},
-		Summary:        "",
-		RawOutput:      []byte(`{}`),
-		CreatedAt:      now,
-
-		ContentType:    "text/html; charset=utf-8",
-		ContentStatus:  "captured",
-		ContentBytes:   1234,
-		ExtractedBytes: 567,
-		ContentSHA256:  "deadbeefcafef00d",
-		FetchedAt:      &fetchedAt,
-	}
-	if err := s.UpsertReading(ctx, seeded); err != nil {
-		t.Fatalf("UpsertReading: %v", err)
-	}
-
-	got, err := s.GetReadingByURL(ctx, seeded.URL)
-	if err != nil {
-		t.Fatalf("GetReadingByURL: %v", err)
-	}
-	if got.ContentType != seeded.ContentType {
-		t.Errorf("ContentType = %q, want %q", got.ContentType, seeded.ContentType)
-	}
-	if got.ContentStatus != seeded.ContentStatus {
-		t.Errorf("ContentStatus = %q, want %q", got.ContentStatus, seeded.ContentStatus)
-	}
-	if got.ContentBytes != seeded.ContentBytes {
-		t.Errorf("ContentBytes = %d, want %d", got.ContentBytes, seeded.ContentBytes)
-	}
-	if got.ExtractedBytes != seeded.ExtractedBytes {
-		t.Errorf("ExtractedBytes = %d, want %d", got.ExtractedBytes, seeded.ExtractedBytes)
-	}
-	if got.ContentSHA256 != seeded.ContentSHA256 {
-		t.Errorf("ContentSHA256 = %q, want %q", got.ContentSHA256, seeded.ContentSHA256)
-	}
-	if got.FetchedAt == nil || !got.FetchedAt.Equal(fetchedAt) {
-		t.Errorf("FetchedAt = %v, want %v", got.FetchedAt, fetchedAt)
-	}
-
-	// Legacy/empty content path: zero-value content fields round-trip too.
-	legacy := &models.Reading{
-		ID:             "bf_READ_LEGACY",
-		TaskID:         task.ID,
-		URL:            "https://example.com/legacy",
-		Tags:           []string{},
-		Keywords:       []string{},
-		People:         []string{},
-		Orgs:           []string{},
-		Connections:    []models.Connection{},
-		NoveltyVerdict: "novel",
-		RawOutput:      []byte(`{}`),
-		CreatedAt:      now,
-	}
-	if err := s.UpsertReading(ctx, legacy); err != nil {
-		t.Fatalf("UpsertReading legacy: %v", err)
-	}
-	gotLegacy, err := s.GetReadingByURL(ctx, legacy.URL)
-	if err != nil {
-		t.Fatalf("GetReadingByURL legacy: %v", err)
-	}
-	if gotLegacy.ContentStatus != "" {
-		t.Errorf("legacy ContentStatus = %q, want empty", gotLegacy.ContentStatus)
-	}
-	if gotLegacy.ContentBytes != 0 {
-		t.Errorf("legacy ContentBytes = %d, want 0", gotLegacy.ContentBytes)
-	}
-	if gotLegacy.FetchedAt != nil {
-		t.Errorf("legacy FetchedAt = %v, want nil", gotLegacy.FetchedAt)
-	}
-}
-
-func TestSQLite_ListReadings_NewestFirstWithPagination(t *testing.T) {
-	s := testSQLiteStore(t)
-	ctx := context.Background()
-	task := sqliteTestTask(t, s)
-	base := time.Date(2026, 4, 25, 12, 0, 0, 0, time.UTC)
-
-	for i, seed := range []struct {
-		id        string
-		url       string
-		title     string
-		createdAt time.Time
-	}{
-		{"bf_READ_OLD", "https://example.com/old", "Oldest", base},
-		{"bf_READ_NEW", "https://example.com/new", "Newest", base.Add(2 * time.Hour)},
-		{"bf_READ_MID", "https://example.com/mid", "Middle", base.Add(time.Hour)},
-	} {
-		r := &models.Reading{
-			ID:          seed.id,
-			TaskID:      task.ID,
-			URL:         seed.url,
-			Title:       seed.title,
-			TLDR:        fmt.Sprintf("summary %d", i),
-			Tags:        []string{},
-			Keywords:    []string{},
-			People:      []string{},
-			Orgs:        []string{},
-			Connections: []models.Connection{},
-			RawOutput:   []byte(`{}`),
-			Embedding:   []float32{float32(i + 1)},
-			CreatedAt:   seed.createdAt,
-		}
-		if err := s.UpsertReading(ctx, r); err != nil {
-			t.Fatalf("UpsertReading %s: %v", seed.id, err)
-		}
-	}
-
-	got, err := s.ListReadings(ctx, ReadingFilter{Limit: 2, Offset: 1})
-	if err != nil {
-		t.Fatalf("ListReadings: %v", err)
-	}
-	if len(got) != 2 {
-		t.Fatalf("got %d readings, want 2", len(got))
-	}
-	if got[0].ID != "bf_READ_MID" || got[1].ID != "bf_READ_OLD" {
-		t.Fatalf("reading order = [%s %s], want [bf_READ_MID bf_READ_OLD]", got[0].ID, got[1].ID)
-	}
-	if got[0].Embedding != nil {
-		t.Fatalf("list result exposed embedding vector, want nil")
-	}
-}
-
-func TestSQLite_GetReadingByID(t *testing.T) {
-	s := testSQLiteStore(t)
-	ctx := context.Background()
-	now := time.Now().UTC().Truncate(time.Microsecond)
-	task := sqliteTestTask(t, s)
-
-	seeded := &models.Reading{
-		ID:             "bf_READ_DETAIL",
-		TaskID:         task.ID,
-		URL:            "https://example.com/detail",
-		Title:          "Detail Target",
-		TLDR:           "detail tldr",
-		Tags:           []string{"systems", "ai"},
-		Keywords:       []string{"sqlite"},
-		People:         []string{"Ada"},
-		Orgs:           []string{"Backlite"},
-		NoveltyVerdict: "new",
-		Connections: []models.Connection{
-			{ReadingID: "bf_READ_OTHER", Reason: "same deployment topic"},
-		},
-		Summary:   "Full detail summary.",
-		RawOutput: []byte(`{"debug":true}`),
-		Embedding: []float32{0.2, 0.8},
-		CreatedAt: now,
-	}
-	if err := s.UpsertReading(ctx, seeded); err != nil {
-		t.Fatalf("UpsertReading: %v", err)
-	}
-
-	got, err := s.GetReading(ctx, seeded.ID)
-	if err != nil {
-		t.Fatalf("GetReading: %v", err)
-	}
-	if got.ID != seeded.ID || got.URL != seeded.URL || got.Summary != seeded.Summary {
-		t.Fatalf("GetReading returned %#v, want seeded detail", got)
-	}
-	if len(got.Tags) != 2 || got.Tags[1] != "ai" {
-		t.Fatalf("Tags = %v, want [systems ai]", got.Tags)
-	}
-	if len(got.People) != 1 || got.People[0] != "Ada" {
-		t.Fatalf("People = %v, want [Ada]", got.People)
-	}
-	if got.Embedding != nil {
-		t.Fatalf("detail result exposed embedding vector, want nil")
-	}
-
-	_, err = s.GetReading(ctx, "bf_READ_MISSING")
-	if !errors.Is(err, ErrNotFound) {
-		t.Fatalf("GetReading missing err = %v, want ErrNotFound", err)
-	}
-}
-
-func TestSQLite_MatchReadings_SimilarityOrdering(t *testing.T) {
-	s := testSQLiteStore(t)
-	ctx := context.Background()
-	now := time.Now().UTC().Truncate(time.Microsecond)
-	task := sqliteTestTask(t, s)
-
-	// Create 3 readings with unit vectors along different dimensions.
-	// Reading A: dimension 0
-	// Reading B: dimension 1
-	// Reading C: dimension 2
-	makeEmbedding := func(dim int) []float32 {
-		v := make([]float32, 1536)
-		v[dim] = 1.0
-		return v
-	}
-
-	readings := []struct {
-		id    string
-		url   string
-		title string
-		dim   int
-	}{
-		{"bf_SIM_A", "https://example.com/a", "Article A", 0},
-		{"bf_SIM_B", "https://example.com/b", "Article B", 1},
-		{"bf_SIM_C", "https://example.com/c", "Article C", 2},
-	}
-	for _, rd := range readings {
-		r := &models.Reading{
-			ID:          rd.id,
-			TaskID:      task.ID,
-			URL:         rd.url,
-			Title:       rd.title,
-			Tags:        []string{},
-			Keywords:    []string{},
-			People:      []string{},
-			Orgs:        []string{},
-			Connections: []models.Connection{},
-			RawOutput:   []byte(`{}`),
-			Embedding:   makeEmbedding(rd.dim),
-			CreatedAt:   now,
-		}
-		if err := s.UpsertReading(ctx, r); err != nil {
-			t.Fatalf("UpsertReading %s: %v", rd.id, err)
-		}
-	}
-
-	// Query with a vector close to dimension 0 (should rank A first).
-	query := makeEmbedding(0)
-	query[1] = 0.1 // slight component toward B
-
-	results, err := s.FindSimilarReadings(ctx, query, 3)
-	if err != nil {
-		t.Fatalf("FindSimilarReadings: %v", err)
-	}
-
-	if len(results) != 3 {
-		t.Fatalf("got %d results, want 3", len(results))
-	}
-
-	// A should be most similar (closest to dim 0).
-	if results[0].ID != "bf_SIM_A" {
-		t.Errorf("rank 1 = %q, want bf_SIM_A", results[0].ID)
-	}
-	// B should be second (slight component in dim 1).
-	if results[1].ID != "bf_SIM_B" {
-		t.Errorf("rank 2 = %q, want bf_SIM_B", results[1].ID)
-	}
-	// C should be last.
-	if results[2].ID != "bf_SIM_C" {
-		t.Errorf("rank 3 = %q, want bf_SIM_C", results[2].ID)
-	}
-
-	// Similarities should be monotonically decreasing.
-	for i := 1; i < len(results); i++ {
-		if results[i].Similarity >= results[i-1].Similarity {
-			t.Errorf("similarity[%d] = %f >= similarity[%d] = %f, want decreasing",
-				i, results[i].Similarity, i-1, results[i-1].Similarity)
-		}
-	}
-}
-
-func TestSQLite_PersistsInlineContentSHA256(t *testing.T) {
-	s := testSQLiteStore(t)
-	ctx := context.Background()
-	now := time.Now().UTC().Truncate(time.Microsecond)
-
-	task := &models.Task{
-		ID:                  "bf_INLINE001",
-		Status:              models.TaskStatusPending,
-		TaskMode:            models.TaskModeRead,
-		Harness:             models.HarnessClaudeCode,
-		Prompt:              "markdown://abc123",
-		InlineContentSHA256: "abc123def456",
-		CreatedAt:           now,
-		UpdatedAt:           now,
-	}
-	if err := s.CreateTask(ctx, task); err != nil {
-		t.Fatalf("CreateTask: %v", err)
-	}
-
-	got, err := s.GetTask(ctx, task.ID)
-	if err != nil {
-		t.Fatalf("GetTask: %v", err)
-	}
-	if got.InlineContentSHA256 != "abc123def456" {
-		t.Errorf("InlineContentSHA256 = %q, want %q", got.InlineContentSHA256, "abc123def456")
-	}
-}
-
-func TestSQLite_DefaultEmptyInlineContentSHA(t *testing.T) {
-	s := testSQLiteStore(t)
-	ctx := context.Background()
-	task := sqliteTestTask(t, s)
-
-	got, err := s.GetTask(ctx, task.ID)
-	if err != nil {
-		t.Fatalf("GetTask: %v", err)
-	}
-	if got.InlineContentSHA256 != "" {
-		t.Errorf("InlineContentSHA256 = %q, want empty", got.InlineContentSHA256)
 	}
 }

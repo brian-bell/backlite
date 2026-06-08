@@ -167,18 +167,6 @@ func TestBuildEnvFlags(t *testing.T) {
 	}
 }
 
-func TestBuildEnvFlagsForceFlag(t *testing.T) {
-	dm := NewManager(&config.Config{})
-	for _, force := range []bool{true, false} {
-		task := &models.Task{ID: "bf_x", Prompt: "p", Force: force}
-		joined := strings.Join(dm.buildEnvFlags(task), " ")
-		want := "-e FORCE=" + map[bool]string{true: "true", false: "false"}[force]
-		if !strings.Contains(joined, want) {
-			t.Errorf("force=%v: flags missing %q\ngot: %s", force, want, joined)
-		}
-	}
-}
-
 func TestBuildRunCommand(t *testing.T) {
 	cfg := &config.Config{
 		AnthropicAPIKey: "sk-test",
@@ -256,70 +244,6 @@ func TestBuildRunCommand_CustomImage(t *testing.T) {
 	}
 }
 
-func TestBuildEnvFlags_ReadModeIncludesInternalAPIBaseURL(t *testing.T) {
-	cfg := &config.Config{
-		ListenAddr: ":8080",
-	}
-	dm := NewManager(cfg)
-	task := &models.Task{ID: "bf_01ABC", TaskMode: models.TaskModeRead}
-
-	joined := strings.Join(dm.buildEnvFlags(task), " ")
-
-	if !strings.Contains(joined, "-e BACKFLOW_API_BASE_URL='http://host.docker.internal:8080'") {
-		t.Errorf("flags should include BACKFLOW_API_BASE_URL, got: %s", joined)
-	}
-}
-
-func TestBuildEnvFlags_NonReadModeOmitsInternalAPIBaseURL(t *testing.T) {
-	cfg := &config.Config{
-		InternalAPIBaseURL: "http://host.docker.internal:8080",
-	}
-	dm := NewManager(cfg)
-	task := &models.Task{ID: "bf_01ABC", TaskMode: models.TaskModeCode}
-
-	joined := strings.Join(dm.buildEnvFlags(task), " ")
-
-	if strings.Contains(joined, "BACKFLOW_API_BASE_URL") {
-		t.Errorf("flags should not include BACKFLOW_API_BASE_URL for non-read mode, got: %s", joined)
-	}
-}
-
-func TestBuildEnvFlags_ReadModeFallsBackToHostGatewayURL(t *testing.T) {
-	cfg := &config.Config{ListenAddr: ":9090"}
-	dm := NewManager(cfg)
-	task := &models.Task{ID: "bf_01ABC", TaskMode: models.TaskModeRead}
-
-	joined := strings.Join(dm.buildEnvFlags(task), " ")
-
-	if !strings.Contains(joined, "BACKFLOW_API_BASE_URL") {
-		t.Errorf("flags should include BACKFLOW_API_BASE_URL when cfg is empty, got: %s", joined)
-	}
-}
-
-func TestBuildEnvFlags_ReadModeIncludesMaxContentBytes(t *testing.T) {
-	cfg := &config.Config{DefaultReadMaxContentBytes: 2097152}
-	dm := NewManager(cfg)
-	task := &models.Task{ID: "bf_01ABC", TaskMode: models.TaskModeRead}
-
-	joined := strings.Join(dm.buildEnvFlags(task), " ")
-
-	if !strings.Contains(joined, "-e MAX_CONTENT_BYTES=2097152") {
-		t.Errorf("read-mode flags must include MAX_CONTENT_BYTES, got: %s", joined)
-	}
-}
-
-func TestBuildEnvFlags_NonReadModeOmitsMaxContentBytes(t *testing.T) {
-	cfg := &config.Config{DefaultReadMaxContentBytes: 2097152}
-	dm := NewManager(cfg)
-	task := &models.Task{ID: "bf_01ABC", TaskMode: models.TaskModeCode}
-
-	joined := strings.Join(dm.buildEnvFlags(task), " ")
-
-	if strings.Contains(joined, "MAX_CONTENT_BYTES") {
-		t.Errorf("non-read flags must not include MAX_CONTENT_BYTES, got: %s", joined)
-	}
-}
-
 func TestBuildRunCommand_UsesTaskAgentImage(t *testing.T) {
 	cfg := &config.Config{
 		ContainerCPUs:  2,
@@ -329,12 +253,12 @@ func TestBuildRunCommand_UsesTaskAgentImage(t *testing.T) {
 	dm := NewManager(cfg)
 	task := &models.Task{
 		ID:         "bf_01ABC",
-		AgentImage: "backlite-reader:v1",
+		AgentImage: "custom-agent:v1",
 	}
 
 	cmd := dm.buildRunCommand(task, "")
 
-	if !strings.HasSuffix(cmd, "backlite-reader:v1") {
+	if !strings.HasSuffix(cmd, "custom-agent:v1") {
 		t.Errorf("command should end with task.AgentImage, got: %s", cmd)
 	}
 	if strings.HasSuffix(cmd, "backlite-agent") {
@@ -413,41 +337,6 @@ func TestBuildSecretEnvPairs_NoSecrets(t *testing.T) {
 	pairs := dm.buildSecretEnvPairs(task)
 	if len(pairs) != 0 {
 		t.Errorf("expected no secret pairs, got %v", pairs)
-	}
-}
-
-func TestBuildSecretEnvPairs_IncludesResendVars(t *testing.T) {
-	cfg := &config.Config{
-		ResendAPIKey:    "re_test",
-		NotifyEmailFrom: "from@example.com",
-		NotifyEmailTo:   "to@example.com",
-	}
-	dm := NewManager(cfg)
-
-	pairs := dm.buildSecretEnvPairs(&models.Task{ID: "bf_01ABC"})
-
-	for _, want := range []string{
-		"RESEND_API_KEY=re_test",
-		"NOTIFY_EMAIL_FROM=from@example.com",
-		"NOTIFY_EMAIL_TO=to@example.com",
-	} {
-		if !contains(pairs, want) {
-			t.Errorf("expected %q in secret env pairs, got %v", want, pairs)
-		}
-	}
-}
-
-func TestBuildSecretEnvPairs_OmitsResendVarsWhenUnset(t *testing.T) {
-	cfg := &config.Config{}
-	dm := NewManager(cfg)
-
-	pairs := dm.buildSecretEnvPairs(&models.Task{ID: "bf_01ABC"})
-
-	joined := strings.Join(pairs, "\n")
-	for _, key := range []string{"RESEND_API_KEY", "NOTIFY_EMAIL_FROM", "NOTIFY_EMAIL_TO"} {
-		if strings.Contains(joined, key) {
-			t.Errorf("env-file must not contain %q when unset, got %v", key, pairs)
-		}
 	}
 }
 
@@ -559,62 +448,7 @@ func TestIsHexString(t *testing.T) {
 	}
 }
 
-func TestBuildRunCommand_ReadModeWithInlineContent(t *testing.T) {
-	cfg := &config.Config{
-		ContainerCPUs:  2,
-		ContainerMemGB: 8,
-		AgentImage:     "backlite-agent",
-		ReaderImage:    "backlite-reader:v1",
-		DataDir:        "/data",
-	}
-	dm := NewManager(cfg)
-
-	task := &models.Task{
-		ID:                  "bf_INLINE001",
-		TaskMode:            models.TaskModeRead,
-		Prompt:              "markdown://abc123",
-		InlineContentSHA256: "abc123",
-		AgentImage:          "backlite-reader:v1",
-	}
-
-	cmd := dm.buildRunCommand(task, "")
-
-	if !strings.Contains(cmd, "-v /data/ingest/abc123.md:/workspace/inline.md:ro") {
-		t.Errorf("command missing inline-content bind-mount, got: %s", cmd)
-	}
-	if !strings.Contains(cmd, "-e INLINE_CONTENT_PATH=/workspace/inline.md") {
-		t.Errorf("command missing INLINE_CONTENT_PATH env var, got: %s", cmd)
-	}
-}
-
-func TestBuildRunCommand_ReadModeNoInlineContentNoMount(t *testing.T) {
-	cfg := &config.Config{
-		ContainerCPUs:  2,
-		ContainerMemGB: 8,
-		AgentImage:     "backlite-agent",
-		ReaderImage:    "backlite-reader:v1",
-		DataDir:        "/data",
-	}
-	dm := NewManager(cfg)
-
-	task := &models.Task{
-		ID:         "bf_URL001",
-		TaskMode:   models.TaskModeRead,
-		Prompt:     "https://example.com/post",
-		AgentImage: "backlite-reader:v1",
-	}
-
-	cmd := dm.buildRunCommand(task, "")
-
-	if strings.Contains(cmd, "/workspace/inline.md") {
-		t.Errorf("URL-source read task should not bind-mount inline.md, got: %s", cmd)
-	}
-	if strings.Contains(cmd, "INLINE_CONTENT_PATH") {
-		t.Errorf("URL-source read task should not set INLINE_CONTENT_PATH, got: %s", cmd)
-	}
-}
-
-func TestBuildRunCommand_NonReadModeNoInlineContent(t *testing.T) {
+func TestBuildRunCommand_DoesNotMountRemovedContentSource(t *testing.T) {
 	cfg := &config.Config{
 		ContainerCPUs:  2,
 		ContainerMemGB: 8,
@@ -623,19 +457,15 @@ func TestBuildRunCommand_NonReadModeNoInlineContent(t *testing.T) {
 	}
 	dm := NewManager(cfg)
 
-	// Defensive: even if a code-mode task somehow has InlineContentSHA256 set
-	// (it shouldn't reach here through the API), the command should still
-	// not include the read-only mount or env var.
 	task := &models.Task{
-		ID:                  "bf_CODE001",
-		TaskMode:            models.TaskModeCode,
-		InlineContentSHA256: "abc",
+		ID:       "bf_CODE001",
+		TaskMode: models.TaskModeCode,
 	}
 	cmd := dm.buildRunCommand(task, "")
 	if strings.Contains(cmd, "INLINE_CONTENT_PATH") {
-		t.Errorf("non-read task should not set INLINE_CONTENT_PATH, got: %s", cmd)
+		t.Errorf("command should not set INLINE_CONTENT_PATH, got: %s", cmd)
 	}
 	if strings.Contains(cmd, "/workspace/inline.md") {
-		t.Errorf("non-read task should not bind-mount inline.md, got: %s", cmd)
+		t.Errorf("command should not bind-mount inline.md, got: %s", cmd)
 	}
 }

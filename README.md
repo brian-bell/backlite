@@ -1,13 +1,10 @@
 # Backlite
 
-Agent orchestrator that runs coding agents (Claude Code or Codex) in ephemeral containers. POST a task (repo + prompt), get back a branch with commits and a PR. The current runtime is local Docker plus a local SQLite database.
-
-Also supports a `read` task mode that runs a dedicated reader image against a URL, summarizes it, embeds the TL;DR, and stores the result in a `readings` table for similarity search. See [CLAUDE.md](CLAUDE.md#reading-mode). The same Go binary serves a small React reading-library SPA at `/` so saved readings can be browsed in a browser.
+Agent orchestrator that runs coding agents (Claude Code or Codex) in ephemeral containers. POST a code task (repo + prompt) or a PR review task, get back commits, PRs, and review comments. The current runtime is local Docker plus a local SQLite database.
 
 ## Prerequisites
 
 - Go 1.25+
-- Node.js 20+ and npm (for the bundled web app — `make build` compiles it into the Go binary)
 - Docker
 - SQLite
 - `jq` (for helper scripts)
@@ -22,7 +19,7 @@ cp .env.example .env
 ```
 
 ```bash
-make build          # Build web bundle (web/dist) + Go binary at bin/backlite
+make build          # Build Go binary at bin/backlite
 make run            # Build + run (auto-sources .env)
 make test           # Run all Go tests with -tags nocontainers (no cache)
 make lint           # go vet
@@ -34,25 +31,12 @@ Single test: `go test ./internal/store/ -run TestCreateTask -v`
 
 DB-backed tests use temporary SQLite files ending in `-test.db`.
 
-### Web app
-
-```bash
-make web-deps       # npm install
-make web-generate   # Regenerate web/src/generated/api.d.ts from api/openapi.yaml
-make web-dev        # Vite dev server (point it at a running Backlite via the Auth token form)
-make web-build      # tsc + vite build (also runs as part of `make build`)
-make web-test       # Vitest suite
-```
-
-The build output lives in `web/dist/` (gitignored). The Go server statically serves it at `/*`, with SPA fallback to `index.html` for client-side routes; set `BACKFLOW_WEB_DIR` to a different directory if you serve a prebuilt bundle from elsewhere.
-
 ```bash
 make test-blackbox                # End-to-end: builds fake agent, starts server + DB, runs happy-path
 make test-soak                    # Resource leak detector (10 min; starts dedicated server on sibling -soak.db)
 make test-fake-agent              # Unit tests for the fake agent image
 make test-schema                  # Schemathesis fuzz tests against OpenAPI spec
 make test-skill-agent-entrypoint  # Shell-level e2e tests for the skill-agent container entrypoint
-make test-reader-fetch-extract    # Hermetic shell test for the reader's pre-fetch + extraction pipeline
 ```
 
 ## Submitting Tasks
@@ -89,16 +73,6 @@ make test-reader-fetch-extract    # Hermetic shell test for the reader's pre-fet
 ./scripts/review-pr.sh https://github.com/org/repo/pull/42 --harness codex --budget 5
 ```
 
-### Reading Mode
-
-Submits a URL to a dedicated reader image, which fetches the page, drafts a TL;DR, and persists a row in the `readings` table (with an embedding for similarity search). HTML pages also have their raw bytes and a Readability-derived markdown rendering captured under `BACKFLOW_DATA_DIR/readings/<id>/` and exposed via `GET /api/v1/readings/{id}/content` and `/content/raw`. Requires `BACKFLOW_READER_IMAGE` and `OPENAI_API_KEY`.
-
-```bash
-./scripts/read-url.sh https://example.com/article
-./scripts/read-url.sh https://example.com/article --force          # overwrite existing row
-./scripts/read-url.sh https://example.com/article --budget 0.5
-```
-
 ### Direct API
 
 ```bash
@@ -111,11 +85,6 @@ curl -X POST http://localhost:8080/api/v1/tasks \
 curl -X POST http://localhost:8080/api/v1/tasks \
   -H "Content-Type: application/json" \
   -d '{"prompt": "Review https://github.com/org/repo/pull/42"}'
-
-# Read mode (explicit; URL goes in the prompt)
-curl -X POST http://localhost:8080/api/v1/tasks \
-  -H "Content-Type: application/json" \
-  -d '{"task_mode": "read", "prompt": "https://example.com/article"}'
 
 # Codex harness (requires OPENAI_API_KEY)
 curl -X POST http://localhost:8080/api/v1/tasks \
@@ -137,30 +106,22 @@ The full OpenAPI 3.0 spec lives at [`api/openapi.yaml`](api/openapi.yaml). `make
 | `GET` | `/api/v1/tasks/{id}/logs` | Container logs (`?tail=100`) |
 | `GET` | `/api/v1/tasks/{id}/output` | Persisted agent stdout log |
 | `GET` | `/api/v1/tasks/{id}/output.json` | Persisted task metadata snapshot |
-| `GET` | `/api/v1/readings` | List stored readings (`?limit=`, `?offset=`); requires `readings:read` scope |
-| `GET` | `/api/v1/readings/{id}` | Reading detail (TL;DR, summary, tags, connections); requires `readings:read` scope |
-| `GET` | `/api/v1/readings/{id}/content` | Extracted markdown for the reading (HTML-derived); 404 when content was not captured; requires `readings:read` scope |
-| `GET` | `/api/v1/readings/{id}/content/raw` | Raw captured bytes with the recorded `Content-Type`; 404 when content was not captured; requires `readings:read` scope |
-| `GET` | `/api/v1/readings/lookup` | Exact-URL duplicate check (public — used by reader containers) |
-| `POST` | `/api/v1/readings/similar` | Semantic similarity search over stored readings (public) |
 | `GET` | `/api/v1/health` | Health check |
 | `GET` | `/debug/stats` | Operational stats (PID, uptime, running tasks, pool metrics) |
-| `GET` | `/*` | Reading-library SPA from `BACKFLOW_WEB_DIR` (defaults to `./web/dist`) |
 
 ### Task Request Fields
 
-The only required field is `prompt`. For code/review tasks, the prompt must contain a GitHub URL — the prep stage extracts `repo_url`, `target_branch`, and the concrete `task_mode`. The user-facing `task_mode` enum is `auto` (default) or `read`; code/review are inferred and not user-settable.
+The only required field is `prompt`. The prompt must contain a GitHub URL — the prep stage extracts `repo_url`, `target_branch`, and whether the task is code or review. The user-facing `task_mode` value is `auto` by default; code/review are inferred from the prompt.
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `prompt` | string | **Required.** Agent instructions; for code/review must include a GitHub URL |
-| `task_mode` | string | `auto` (default) or `read`. Code vs review is inferred from the prompt |
+| `task_mode` | string | `auto` by default. Code vs review is inferred from the prompt |
 | `harness` | string | `claude_code` or `codex` (omit to use server default) |
 | `model` | string | Model override (per-harness; see server config) |
 | `effort` | string | `low`, `medium`, `high`, or `xhigh` |
 | `create_pr` | bool | Create a PR on completion (omit to use server default) |
 | `self_review` | bool | When `true` and the code task creates a PR, the orchestrator atomically chains a follow-up review task with a flat $2 budget and `parent_task_id` pointing at this task |
-| `force` | bool | Read mode only: overwrite an existing `readings` row for the URL |
 | `pr_title` | string | Custom PR title |
 | `pr_body` | string | Custom PR body |
 | `max_budget_usd` | float | Budget cap in USD |
@@ -219,14 +180,13 @@ To add a migration: create a new file in `migrations/` (e.g. `002_add_column.sql
 
 ```bash
 make docker-agent-build-local         # Agent image (claude_code + codex)
-make docker-reader-build-local        # Reader image (for task_mode=read)
 make docker-skill-agent-build-local   # Skill-agent image (claude_code-only; opt-in)
-make docker-agents-build-local        # Build all three agent images
+make docker-agents-build-local        # Build agent images
 ```
 
 Backlite runs agent containers directly against the local Docker daemon; there is no remote orchestration runtime.
 
-The three agent images coexist: `docker/agent/` and `docker/reader/` are the originals, and `docker/skill-agent/` is a thin claude_code-only image that expresses each task mode as a Claude Code skill bundle. Set `BACKFLOW_SKILL_AGENT_IMAGE=<image>` to opt in — claude_code tasks reroute to the skill-agent image (regardless of mode); codex tasks continue to use the existing images. Unset to roll back instantly. See [CLAUDE.md](CLAUDE.md#agent-containers--three-coexisting-images) for the full routing rule.
+The standard agent image lives in `docker/agent/`. `docker/skill-agent/` is a thin claude_code-only image that expresses task behavior as Claude Code skill bundles. Set `BACKFLOW_SKILL_AGENT_IMAGE=<image>` to opt in — claude_code tasks reroute to the skill-agent image; codex tasks continue to use the standard image. Unset to roll back instantly. See [CLAUDE.md](CLAUDE.md#agent-containers) for the full routing rule.
 
 ## Configuration
 
@@ -237,7 +197,7 @@ All config via environment variables or `.env` file. See `.env.example` for the 
 | Variable | Description |
 |----------|-------------|
 | `ANTHROPIC_API_KEY` | Required for `claude_code` harness |
-| `OPENAI_API_KEY` | Required for `codex` harness; also required for reading-mode completion (embedding the TL;DR) |
+| `OPENAI_API_KEY` | Required for `codex` harness |
 | `GITHUB_TOKEN` | For cloning private repos and creating PRs |
 | `BACKFLOW_LISTEN_ADDR` | Server listen address |
 | `BACKFLOW_DATABASE_PATH` | SQLite database path (required) |
@@ -246,16 +206,6 @@ All config via environment variables or `.env` file. See `.env.example` for the 
 | `BACKFLOW_POLL_INTERVAL_SEC` | Orchestrator poll interval (seconds) |
 
 See `internal/config/config.go` and `.env.example` for the full surface and current defaults.
-
-### Reading Mode
-
-| Variable | Description |
-|----------|-------------|
-| `BACKFLOW_READER_IMAGE` | Docker image used for `task_mode=read` containers |
-| `BACKFLOW_DEFAULT_READ_MAX_BUDGET` | Budget cap for reading tasks |
-| `BACKFLOW_DEFAULT_READ_MAX_RUNTIME_SEC` | Runtime cap for reading tasks |
-| `BACKFLOW_DEFAULT_READ_MAX_TURNS` | Max turns for reading tasks |
-| `BACKFLOW_INTERNAL_API_BASE_URL` | Optional override for the Backlite API base URL that reader containers use for duplicate/similarity lookups |
 
 ### Agent Defaults
 
@@ -274,7 +224,7 @@ Defaults are set in `internal/config/config.go` and can be overridden via env va
 | `BACKFLOW_DEFAULT_SELF_REVIEW` | Self-review by default |
 | `BACKFLOW_DEFAULT_SAVE_AGENT_OUTPUT` | Save agent output by default |
 | `BACKFLOW_AGENT_IMAGE` | Docker image for agent containers (see config for default) |
-| `BACKFLOW_SKILL_AGENT_IMAGE` | Optional opt-in: when set, routes every `claude_code` task to a skill-bundle image instead of `BACKFLOW_AGENT_IMAGE` / `BACKFLOW_READER_IMAGE`. Codex tasks are unaffected. See [CLAUDE.md](CLAUDE.md#skill-based-agent-image-opt-in). |
+| `BACKFLOW_SKILL_AGENT_IMAGE` | Optional opt-in: when set, routes every `claude_code` task to a skill-bundle image instead of `BACKFLOW_AGENT_IMAGE`. Codex tasks are unaffected. See [CLAUDE.md](CLAUDE.md#skill-based-agent-image-opt-in). |
 | `BACKFLOW_MAX_USER_RETRIES` | Max user-initiated retries per task (see config for default) |
 | `BACKFLOW_CONTAINER_CPUS` | CPU cores per container |
 | `BACKFLOW_CONTAINER_MEMORY_GB` | Memory (GB) per container |
@@ -287,22 +237,6 @@ Defaults are set in `internal/config/config.go` and can be overridden via env va
 | `BACKFLOW_WEBHOOK_EVENTS` | all | Comma-separated event filter |
 
 Events: `task.created`, `task.running`, `task.completed`, `task.failed`, `task.needs_input`, `task.interrupted`, `task.recovering`, `task.cancelled`, `task.retry`
-
-### Email summary delivery (read mode)
-
-Optional Resend integration that emails a structured summary of every completed `task_mode=read` task. Read mode + `claude_code` harness + skill-agent image only — codex read tasks and non-read modes do not send email. All three vars must be set together; partial config blocks startup. See [docs/resend-setup.md](docs/resend-setup.md) for sender-domain DNS setup.
-
-| Variable | Description |
-|----------|-------------|
-| `BACKFLOW_RESEND_API_KEY` | Resend API key (`re_…`) |
-| `BACKFLOW_NOTIFY_EMAIL_FROM` | Verified sender address — must use a Resend-verified domain |
-| `BACKFLOW_NOTIFY_EMAIL_TO` | Recipient inbox |
-
-### Web app
-
-| Variable | Description |
-|----------|-------------|
-| `BACKFLOW_WEB_DIR` | Directory of the prebuilt web bundle served at `/*` (defaults to `./web/dist`). Leave the directory empty to disable the SPA route. |
 
 ### Local SQLite backups
 

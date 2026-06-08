@@ -7,7 +7,7 @@
 // The schema lives in schema.json (also embedded into the binary) for use by
 // external tools and human readers. Validate enforces the parts the
 // orchestrator actually depends on: required fields, well-known field types,
-// enum constraints on task_mode and novelty_verdict.
+// enum constraints on task_mode.
 package skillcontract
 
 import (
@@ -25,15 +25,7 @@ var requiredFields = []string{"complete", "needs_input", "task_mode"}
 var validTaskModes = map[string]bool{
 	"code":   true,
 	"review": true,
-	"read":   true,
 	"auto":   true,
-}
-
-var validNoveltyVerdicts = map[string]bool{
-	"":                 true,
-	"novel":            true,
-	"extends_existing": true,
-	"duplicate":        true,
 }
 
 // Validate parses raw as JSON and confirms it matches the skill-agent status
@@ -61,7 +53,7 @@ func Validate(raw []byte) error {
 		return err
 	}
 	if mode, _ := m["task_mode"].(string); !validTaskModes[mode] {
-		return fmt.Errorf("task_mode %q not in allowed enum {code,review,read,auto}", mode)
+		return fmt.Errorf("task_mode %q not in allowed enum {code,review,auto}", mode)
 	}
 
 	if err := expectOptionalString(m, "question"); err != nil {
@@ -86,44 +78,6 @@ func Validate(raw []byte) error {
 		return err
 	}
 	if err := expectOptionalNonNegativeNumber(m, "exit_code"); err != nil {
-		return err
-	}
-
-	// Read-mode fields: optional but when present, must have the right shape.
-	if err := expectOptionalString(m, "url"); err != nil {
-		return err
-	}
-	if err := expectOptionalString(m, "title"); err != nil {
-		return err
-	}
-	if err := expectOptionalString(m, "tldr"); err != nil {
-		return err
-	}
-	if err := expectOptionalString(m, "summary_markdown"); err != nil {
-		return err
-	}
-	if err := expectOptionalStringArray(m, "tags"); err != nil {
-		return err
-	}
-	if err := expectOptionalStringArray(m, "keywords"); err != nil {
-		return err
-	}
-	if err := expectOptionalStringArray(m, "people"); err != nil {
-		return err
-	}
-	if err := expectOptionalStringArray(m, "orgs"); err != nil {
-		return err
-	}
-	if v, ok := m["novelty_verdict"]; ok {
-		s, ok := v.(string)
-		if !ok {
-			return fmt.Errorf("field %q must be a string, got %T", "novelty_verdict", v)
-		}
-		if !validNoveltyVerdicts[s] {
-			return fmt.Errorf("novelty_verdict %q not in allowed enum {novel,extends_existing,duplicate}", s)
-		}
-	}
-	if err := expectOptionalConnections(m, "connections"); err != nil {
 		return err
 	}
 
@@ -174,47 +128,6 @@ func expectOptionalNonNegativeNumber(m map[string]any, key string) error {
 	}
 	if n < 0 {
 		return fmt.Errorf("field %q must be >= 0, got %v", key, n)
-	}
-	return nil
-}
-
-func expectOptionalStringArray(m map[string]any, key string) error {
-	v, ok := m[key]
-	if !ok {
-		return nil
-	}
-	arr, ok := v.([]any)
-	if !ok {
-		return fmt.Errorf("field %q must be an array, got %T", key, v)
-	}
-	for i, el := range arr {
-		if _, ok := el.(string); !ok {
-			return fmt.Errorf("field %q[%d] must be a string, got %T", key, i, el)
-		}
-	}
-	return nil
-}
-
-func expectOptionalConnections(m map[string]any, key string) error {
-	v, ok := m[key]
-	if !ok {
-		return nil
-	}
-	arr, ok := v.([]any)
-	if !ok {
-		return fmt.Errorf("field %q must be an array, got %T", key, v)
-	}
-	for i, el := range arr {
-		obj, ok := el.(map[string]any)
-		if !ok {
-			return fmt.Errorf("field %q[%d] must be an object, got %T", key, i, el)
-		}
-		if _, ok := obj["reading_id"].(string); !ok {
-			return fmt.Errorf("field %q[%d].reading_id must be a non-empty string", key, i)
-		}
-		if _, ok := obj["reason"].(string); !ok {
-			return fmt.Errorf("field %q[%d].reason must be a non-empty string", key, i)
-		}
 	}
 	return nil
 }

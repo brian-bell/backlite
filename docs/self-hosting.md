@@ -7,16 +7,11 @@ Backlite keeps the upstream `BACKFLOW_*` env var prefix for compatibility, even 
 ## Prerequisites
 
 - Go 1.25+
-- Node.js 20+ and npm (the bundled reading-library web app is built into the Go binary by `make build`; if you don't want the SPA, point `BACKFLOW_WEB_DIR` at an empty directory)
 - Docker with a running daemon
 - SQLite
 - `jq`
 - A GitHub token that can clone the target repos and open PRs
 - An Anthropic API key for `claude_code`, or an OpenAI API key for `codex`
-
-If you want `task_mode=read`, set `OPENAI_API_KEY` as well. Reader containers call Backlite's own API for duplicate and similarity lookups.
-
-If you want emailed summaries of completed read tasks (skill-agent image + `claude_code` only), see [docs/resend-setup.md](./resend-setup.md) for the Resend API key and sender-domain DNS setup. The three env vars (`BACKFLOW_RESEND_API_KEY`, `BACKFLOW_NOTIFY_EMAIL_FROM`, `BACKFLOW_NOTIFY_EMAIL_TO`) must be set together or all unset — partial config blocks startup.
 
 ## 1. Build the Images
 
@@ -24,10 +19,9 @@ From the repo root:
 
 ```bash
 make docker-agent-build-local
-make docker-reader-build-local   # only if you want task_mode=read
 ```
 
-If you plan to run the agent or reader from a registry tag instead of the local defaults, set `BACKFLOW_AGENT_IMAGE` and `BACKFLOW_READER_IMAGE` accordingly in `.env`.
+If you plan to run the agent from a registry tag instead of the local default, set `BACKFLOW_AGENT_IMAGE` accordingly in `.env`.
 
 ## 2. Configure `.env`
 
@@ -45,18 +39,6 @@ GITHUB_TOKEN=...
 BACKFLOW_DATABASE_PATH=/srv/backlite/backlite.db
 BACKFLOW_AGENT_IMAGE=backlite-agent
 BACKFLOW_DATA_DIR=/srv/backlite/data
-```
-
-For reader mode, also set:
-
-```bash
-OPENAI_API_KEY=...
-BACKFLOW_READER_IMAGE=backlite-reader
-BACKFLOW_DEFAULT_READ_MAX_BUDGET=<budget-usd>
-BACKFLOW_DEFAULT_READ_MAX_RUNTIME_SEC=<seconds>
-BACKFLOW_DEFAULT_READ_MAX_TURNS=<turns>
-# Optional when the default host-gateway URL does not work for reader containers:
-# BACKFLOW_INTERNAL_API_BASE_URL=http://host.docker.internal:8080
 ```
 
 Optional webhook notifier:
@@ -100,12 +82,6 @@ Submit a review task:
 ./scripts/review-pr.sh https://github.com/owner/repo/pull/42
 ```
 
-Submit a read task:
-
-```bash
-./scripts/read-url.sh https://example.com/article
-```
-
 Inspect the resulting artifacts:
 
 ```bash
@@ -114,15 +90,13 @@ curl -s http://localhost:8080/api/v1/tasks/<task-id>/output.json
 ls "$BACKFLOW_DATA_DIR/tasks/<task-id>/"
 ```
 
-For a successful HTML read task, the reader's pre-fetch + extraction step also persists captured artifacts under `BACKFLOW_DATA_DIR/readings/<reading-id>/` (`raw.html`, `extracted.md`, `content.json`) and exposes them via `GET /api/v1/readings/{id}/content` and `/content/raw`.
-
 ## 5. Operational Notes
 
 - Backlite is local-Docker-only. There is no alternate cloud runtime path.
-- Webhooks are the primary task-event notifier; the optional Resend integration only emails read-mode summaries.
+- Webhooks are the primary task-event notifier.
 - Concurrency capacity is capped by `BACKFLOW_MAX_CONTAINERS`; the orchestrator counts tasks in `provisioning`/`running` against it.
 - `save_agent_output=false` disables the filesystem artifact write for a task.
-- The reading-library SPA is served at `/`. Visit `http://<host>:8080/` after `make build && make run` to browse stored readings; paste a bearer token into the topbar form when API keys are configured.
+- Backlite serves the REST API only; run any UI or dashboard separately.
 - Local SQLite backups are on by default and write `backlite-YYYYMMDDTHHMMSSZ.sqlite.gz` artifacts plus `.meta.json` sidecars under `BACKFLOW_LOCAL_BACKUP_DIR`. Mount that directory on persistent storage (and consider snapshotting/replicating it off-host). Finalized backups older than `BACKFLOW_LOCAL_BACKUP_RETENTION_SEC` are pruned automatically (the newest valid backup is always preserved); set retention to `0` to keep everything. Worker state and recent errors are exposed on `/debug/stats` under the `backup` key. Disable with `BACKFLOW_LOCAL_BACKUP_ENABLED=false` if you back the database up some other way. Restore is documented in the README.
 
 ## Related Docs

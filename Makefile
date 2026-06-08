@@ -1,12 +1,9 @@
 .PHONY: build run test clean lint \
-       web-deps web-generate web-dev web-build web-test \
        docker-agent-build-local \
-       docker-reader-build-local \
        docker-skill-agent-build-local \
        docker-agents-build-local \
        test-fake-agent test-blackbox test-schema test-soak \
        test-skill-agent-entrypoint \
-       test-reader-fetch-extract \
        db-pending db-running db-completed db-failed \
        deps
 
@@ -19,7 +16,7 @@ DOCKER ?= docker
 # Helper to source .env before a command
 ENV = if [ -f .env ]; then set -a; . ./.env; set +a; fi
 
-build: web-build
+build:
 	go build $(GOFLAGS) -o bin/$(BINARY) ./cmd/backlite
 
 run: build
@@ -29,21 +26,6 @@ run: build
 
 test:
 	go test -tags nocontainers ./... -v -count=1
-
-web-deps:
-	cd web && npm install
-
-web-generate:
-	cd web && npm run generate:api
-
-web-dev:
-	cd web && npm run dev
-
-web-build: web-generate
-	cd web && npm run build
-
-web-test:
-	cd web && npm test
 
 test-fake-agent:
 	$(DOCKER) build -t backlite-fake-agent test/blackbox/fake-agent/
@@ -67,19 +49,13 @@ clean:
 docker-agent-build-local:
 	$(DOCKER) build -t backlite-agent docker/agent/
 
-docker-reader-build-local:
-	$(DOCKER) build -t backlite-reader docker/reader/
-
 docker-skill-agent-build-local:
 	$(DOCKER) build -t backlite-skill-agent docker/skill-agent/
 
-docker-agents-build-local: docker-agent-build-local docker-reader-build-local docker-skill-agent-build-local
+docker-agents-build-local: docker-agent-build-local docker-skill-agent-build-local
 
 test-skill-agent-entrypoint:
 	bash docker/skill-agent/test_entrypoint.sh
-
-test-reader-fetch-extract:
-	bash docker/reader/test_fetch_and_extract.sh
 
 DB_QUERY = @$(ENV); sqlite3 -json "$$BACKFLOW_DATABASE_PATH"
 

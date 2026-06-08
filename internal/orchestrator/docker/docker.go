@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
 	"os"
 	"strings"
 
@@ -154,7 +153,6 @@ func (m *Manager) buildEnvFlags(task *models.Task) []string {
 		fmt.Sprintf("-e MAX_TURNS=%d", task.MaxTurns),
 		fmt.Sprintf("-e CREATE_PR=%t", task.CreatePR),
 		fmt.Sprintf("-e SELF_REVIEW=%t", task.SelfReview),
-		fmt.Sprintf("-e FORCE=%t", task.Force),
 	}
 
 	if task.PRTitle != "" {
@@ -168,14 +166,6 @@ func (m *Manager) buildEnvFlags(task *models.Task) []string {
 	}
 	if task.Context != "" {
 		flags = append(flags, envFlag("TASK_CONTEXT", shellEscape(task.Context)))
-	}
-
-	if task.TaskMode == models.TaskModeRead {
-		flags = append(flags, envFlag("BACKFLOW_API_BASE_URL", shellEscape(m.internalAPIBaseURL())))
-		flags = append(flags, fmt.Sprintf("-e MAX_CONTENT_BYTES=%d", m.config.DefaultReadMaxContentBytes))
-		if task.InlineContentSHA256 != "" {
-			flags = append(flags, "-e INLINE_CONTENT_PATH=/workspace/inline.md")
-		}
 	}
 
 	for k, v := range task.EnvVars {
@@ -203,15 +193,6 @@ func (m *Manager) buildSecretEnvPairs(task *models.Task) []string {
 	if m.config.APIKey != "" {
 		pairs = append(pairs, "BACKFLOW_API_KEY="+m.config.APIKey)
 	}
-	if m.config.ResendAPIKey != "" {
-		pairs = append(pairs, "RESEND_API_KEY="+m.config.ResendAPIKey)
-	}
-	if m.config.NotifyEmailFrom != "" {
-		pairs = append(pairs, "NOTIFY_EMAIL_FROM="+m.config.NotifyEmailFrom)
-	}
-	if m.config.NotifyEmailTo != "" {
-		pairs = append(pairs, "NOTIFY_EMAIL_TO="+m.config.NotifyEmailTo)
-	}
 	return pairs
 }
 
@@ -237,48 +218,12 @@ func writeEnvFile(pairs []string) (string, error) {
 	return f.Name(), nil
 }
 
-// buildVolumeFlags returns volume flags for the docker run command.
-// For read-mode tasks with inline-content sourcing, mounts the persisted
-// markdown file read-only at /workspace/inline.md so the reader container's
-// fetch step can short-circuit on the local file.
-func (m *Manager) buildVolumeFlags(task *models.Task) string {
-	if task.TaskMode == models.TaskModeRead && task.InlineContentSHA256 != "" {
-		host := fmt.Sprintf("%s/ingest/%s.md", m.config.DataDir, task.InlineContentSHA256)
-		return fmt.Sprintf("-v %s:/workspace/inline.md:ro", host)
-	}
+func (m *Manager) buildVolumeFlags(_ *models.Task) string {
 	return ""
 }
 
-func (m *Manager) buildNetworkFlags(task *models.Task) string {
-	if task.TaskMode != models.TaskModeRead {
-		return ""
-	}
-	return "--add-host host.docker.internal:host-gateway"
-}
-
-func (m *Manager) internalAPIBaseURL() string {
-	if m.config.InternalAPIBaseURL != "" {
-		return m.config.InternalAPIBaseURL
-	}
-	host, port := splitListenAddr(m.config.ListenAddr)
-	if host == "" || host == "0.0.0.0" || host == "::" || host == "localhost" || host == "127.0.0.1" {
-		host = "host.docker.internal"
-	}
-	return "http://" + net.JoinHostPort(host, port)
-}
-
-func splitListenAddr(addr string) (string, string) {
-	if addr == "" {
-		return "host.docker.internal", "8080"
-	}
-	if strings.HasPrefix(addr, ":") {
-		return "", strings.TrimPrefix(addr, ":")
-	}
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return "host.docker.internal", "8080"
-	}
-	return host, port
+func (m *Manager) buildNetworkFlags(_ *models.Task) string {
+	return ""
 }
 
 // envFlag returns a single "-e KEY=VALUE" flag string.
@@ -343,16 +288,6 @@ func (m *Manager) enrichFromStatusJSON(ctx context.Context, containerID string, 
 	status.RepoURL = agent.RepoURL
 	status.TargetBranch = agent.TargetBranch
 	status.TaskMode = agent.TaskMode
-	status.URL = agent.URL
-	status.Title = agent.Title
-	status.TLDR = agent.TLDR
-	status.Tags = agent.Tags
-	status.Keywords = agent.Keywords
-	status.People = agent.People
-	status.Orgs = agent.Orgs
-	status.NoveltyVerdict = agent.NoveltyVerdict
-	status.Connections = agent.Connections
-	status.SummaryMarkdown = agent.SummaryMarkdown
 	if agent.Error != "" {
 		status.Error = agent.Error
 	}
@@ -364,74 +299,6 @@ func (m *Manager) enrichFromStatusJSON(ctx context.Context, containerID string, 
 func (m *Manager) GetAgentOutput(ctx context.Context, containerID string) (string, error) {
 	cmd := fmt.Sprintf("f=$(mktemp) && docker cp %s:/tmp/container_output.log \"$f\" && cat \"$f\" && rm -f \"$f\"", containerID)
 	return m.runCmd(ctx, cmd)
-}
-
-// GetReadingContent extracts the captured reading artifacts written by the
-// reader container's pre-fetch + extraction step. Missing files yield nil byte
-// slices (no error) so callers can record content_status accordingly.
-func (m *Manager) GetReadingContent(ctx context.Context, containerID string) (raw, extracted, sidecar []byte, err error) {
-	sidecar = m.copyReadingFile(ctx, containerID, "/home/agent/workspace/content.json")
-	if rawName := rawFilenameFromSidecar(sidecar); rawName != "" {
-		raw = m.copyReadingFile(ctx, containerID, "/home/agent/workspace/"+rawName)
-	}
-	extracted = m.copyReadingFile(ctx, containerID, "/home/agent/workspace/extracted.md")
-	return raw, extracted, sidecar, nil
-}
-
-type readingContentSidecar struct {
-	ContentType   string `json:"content_type"`
-	ContentStatus string `json:"content_status"`
-}
-
-func rawFilenameFromSidecar(sidecar []byte) string {
-	if len(sidecar) == 0 {
-		return "raw.html"
-	}
-	var c readingContentSidecar
-	if err := json.Unmarshal(sidecar, &c); err != nil {
-		return "raw.html"
-	}
-	if c.ContentStatus != "" && c.ContentStatus != "captured" {
-		return ""
-	}
-	if c.ContentType == "" {
-		return "raw.html"
-	}
-	return "raw." + extensionForContentType(c.ContentType)
-}
-
-func extensionForContentType(contentType string) string {
-	ct := strings.ToLower(strings.TrimSpace(contentType))
-	switch {
-	case strings.Contains(ct, "text/html"):
-		return "html"
-	case strings.Contains(ct, "application/pdf"):
-		return "pdf"
-	case strings.Contains(ct, "application/json"):
-		return "json"
-	case strings.Contains(ct, "text/plain"):
-		return "txt"
-	default:
-		return "bin"
-	}
-}
-
-// copyReadingFile pulls a single file out of the container via docker cp.
-// Missing files surface as nil — the docker cp invocation tolerates the
-// absence with `2>/dev/null` and the fallback `cat` of an empty/missing path.
-func (m *Manager) copyReadingFile(ctx context.Context, containerID, srcPath string) []byte {
-	cmd := fmt.Sprintf(
-		"f=$(mktemp) && docker cp %s:%s \"$f\" 2>/dev/null && cat \"$f\" && rm -f \"$f\"",
-		containerID, srcPath,
-	)
-	out, err := m.runCmd(ctx, cmd)
-	if err != nil {
-		return nil
-	}
-	if out == "" {
-		return nil
-	}
-	return []byte(out)
 }
 
 // shellEscape wraps a string in single quotes, escaping any embedded single

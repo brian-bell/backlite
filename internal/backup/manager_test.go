@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -627,9 +628,9 @@ func TestMaybeSchedule_UploadMarkerInspectErrorDoesNotBlockDueLocalBackup(t *tes
 		Uploader: uploader,
 	})
 	m.now = func() time.Time { return now }
-	backupRuns := 0
+	var backupRuns atomic.Int32
 	m.runBackupFn = func(context.Context, time.Time) error {
-		backupRuns++
+		backupRuns.Add(1)
 		newPath := filepath.Join(dir, "backlite-"+now.Format(timestampLayout)+".sqlite.gz")
 		return writeValidTestArtifactFinalizedAt(t, newPath, now, now, []byte("new-backup"))
 	}
@@ -637,10 +638,10 @@ func TestMaybeSchedule_UploadMarkerInspectErrorDoesNotBlockDueLocalBackup(t *tes
 	m.MaybeSchedule(context.Background())
 
 	waitFor(t, 2*time.Second, func() bool {
-		return backupRuns == 1 && m.Status().LastErrorMessage != ""
+		return backupRuns.Load() == 1 && m.Status().LastErrorMessage != ""
 	})
-	if backupRuns != 1 {
-		t.Fatalf("backupRuns = %d, want 1", backupRuns)
+	if got := backupRuns.Load(); got != 1 {
+		t.Fatalf("backupRuns = %d, want 1", got)
 	}
 	select {
 	case input := <-uploader.ch:

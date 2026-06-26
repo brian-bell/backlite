@@ -50,6 +50,8 @@ AWS credentials must already be configured for the target provider. For an
 S3-compatible provider, pass --endpoint-url and --path-style when required.
 For Cloudflare R2, pass --phase 6 with --r2-bucket-url or the account-level
 --endpoint-url plus --bucket. If no region is configured, phase 6 uses auto.
+Phase 6 may use separate R2 credentials from BACKFLOW_SMOKE_R2_ACCESS_KEY_ID
+and BACKFLOW_SMOKE_R2_SECRET_ACCESS_KEY, or the CLOUDFLARE_R2_* aliases.
 Phase 3 must run with credentials that cannot put objects to the bucket/prefix;
 pass --failure-aws-profile when your default credentials are valid.
 USAGE
@@ -75,6 +77,8 @@ retention_days=7
 phases=()
 aws_profile="${BACKFLOW_SMOKE_AWS_PROFILE:-}"
 cloudflare_r2_url="${BACKFLOW_SMOKE_R2_BUCKET_URL:-${BACKFLOW_SMOKE_CLOUDFLARE_R2_URL:-}}"
+r2_access_key_id="${BACKFLOW_SMOKE_R2_ACCESS_KEY_ID:-${CLOUDFLARE_R2_ACCESS_KEY_ID:-}}"
+r2_secret_access_key="${BACKFLOW_SMOKE_R2_SECRET_ACCESS_KEY:-${CLOUDFLARE_R2_SECRET_ACCESS_KEY:-}}"
 failure_aws_profile="${BACKFLOW_SMOKE_FAILURE_AWS_PROFILE:-}"
 recovery_aws_profile="${BACKFLOW_SMOKE_RECOVERY_AWS_PROFILE:-}"
 restore_artifact="${BACKFLOW_SMOKE_RESTORE_ARTIFACT:-}"
@@ -251,6 +255,12 @@ configure_cloudflare_r2() {
     if [[ -z "$recovery_aws_profile" && -n "$aws_profile" ]]; then
         recovery_aws_profile="$aws_profile"
     fi
+    if [[ -n "$r2_access_key_id$r2_secret_access_key" ]]; then
+        [[ -n "$r2_access_key_id" && -n "$r2_secret_access_key" ]] || die "phase 6 requires both BACKFLOW_SMOKE_R2_ACCESS_KEY_ID and BACKFLOW_SMOKE_R2_SECRET_ACCESS_KEY when using separate R2 credentials"
+        if [[ -n "$aws_profile" || -n "$recovery_aws_profile" ]]; then
+            die "phase 6 R2 env credentials cannot be combined with --aws-profile or --recovery-aws-profile"
+        fi
+    fi
 }
 
 if (( ${#phases[@]} == 0 )); then
@@ -305,9 +315,14 @@ seed_prompt="s3 backup manual smoke test https://github.com/brian-bell/backlite"
 start_server() {
     local backup_enabled="$1"
     local aws_profile="${2:-}"
+    local use_r2_env="${3:-false}"
 
     (
-        if [[ -n "$aws_profile" ]]; then
+        if [[ "$use_r2_env" == "true" ]]; then
+            unset AWS_PROFILE AWS_SESSION_TOKEN
+            export AWS_ACCESS_KEY_ID="$r2_access_key_id"
+            export AWS_SECRET_ACCESS_KEY="$r2_secret_access_key"
+        elif [[ -n "$aws_profile" ]]; then
             unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
             export AWS_PROFILE="$aws_profile"
         fi
@@ -385,6 +400,17 @@ fi
 
 aws_cmd() {
     aws "${aws_args[@]}" "$@"
+}
+
+r2_aws_cmd() {
+    if [[ -n "$r2_access_key_id" ]]; then
+        AWS_ACCESS_KEY_ID="$r2_access_key_id" \
+        AWS_SECRET_ACCESS_KEY="$r2_secret_access_key" \
+        AWS_EC2_METADATA_DISABLED="${AWS_EC2_METADATA_DISABLED:-true}" \
+            aws "${aws_args[@]}" "$@"
+    else
+        aws_cmd "$@"
+    fi
 }
 
 normalized_prefix="$prefix"
@@ -497,6 +523,7 @@ wait_for_upload_success() {
 
 validate_uploaded_artifact() {
     local allow_upload_errors="${1:-false}"
+    local aws_cmd_name="${2:-aws_cmd}"
 
     [[ -s "$stats_file" ]] || die "debug stats were never written"
     upload_enabled="$(jq -r 'if (.data.backup.upload_enabled? == true) then "true" else "false" end' "$stats_file")"
@@ -534,7 +561,7 @@ validate_uploaded_artifact() {
     [[ "$marker_sha" == "$meta_sha" ]] || die "marker sha $marker_sha did not match metadata sha $meta_sha"
 
     echo "Checking remote object..."
-    head_json="$(aws_cmd s3api head-object --bucket "$bucket" --key "$expected_key" --output json)"
+    head_json="$("$aws_cmd_name" s3api head-object --bucket "$bucket" --key "$expected_key" --output json)"
     remote_size="$(jq -r '.ContentLength' <<<"$head_json")"
     [[ "$remote_size" == "$marker_size" ]] || die "remote object size $remote_size did not match marker size $marker_size"
 
@@ -556,7 +583,7 @@ run_phase_1() {
     echo "Waiting for /health..."
     wait_for_health
     wait_for_upload_success
-    validate_uploaded_artifact false
+    validate_uploaded_artifact false aws_cmd
     stop_server
 
     echo "S3 backup provider smoke test passed."
@@ -752,12 +779,28 @@ run_phase_6() {
     echo "Using Cloudflare R2 region $region"
     echo "Using path-style addressing: $path_style"
 
-    aws_cmd s3api head-bucket --bucket "$bucket" >/dev/null || die "phase 6 could not access R2 bucket $bucket"
+    r2_aws_cmd s3api head-bucket --bucket "$bucket" >/dev/null || die "phase 6 could not access R2 bucket $bucket"
 
-    run_phase_1
+    echo "Phase 1: real provider upload smoke"
+    build_backlite
+    create_seed_task
+
+    echo "Starting Backlite with backup worker enabled..."
+    start_server true "$recovery_aws_profile" "$([[ -n "$r2_access_key_id" ]] && printf true || printf false)"
+    echo "Waiting for /health..."
+    wait_for_health
+    wait_for_upload_success
+    validate_uploaded_artifact false r2_aws_cmd
+    stop_server
+
+    echo "S3 backup provider smoke test passed."
+    echo "  bucket: $bucket"
+    echo "  key: $expected_key"
+    echo "  artifact: $artifact_path"
+    echo "  marker: $marker_path"
 
     echo "Checking Cloudflare R2 object listing..."
-    list_json="$(aws_cmd s3api list-objects-v2 --bucket "$bucket" --prefix "$expected_key" --max-keys 1 --output json)"
+    list_json="$(r2_aws_cmd s3api list-objects-v2 --bucket "$bucket" --prefix "$expected_key" --max-keys 1 --output json)"
     listed_count="$(jq --arg key "$expected_key" '[.Contents[]? | select(.Key == $key)] | length' <<<"$list_json")"
     [[ "$listed_count" == "1" ]] || die "R2 list-objects-v2 did not return uploaded key $expected_key"
 

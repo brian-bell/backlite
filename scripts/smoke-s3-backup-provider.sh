@@ -151,12 +151,55 @@ server_pid=""
 base_url="http://127.0.0.1:$port"
 seed_prompt="s3 backup manual smoke test https://github.com/brian-bell/backlite"
 
-cleanup() {
-    local status=$?
+start_server() {
+    local backup_enabled="$1"
+
+    BACKFLOW_LISTEN_ADDR="127.0.0.1:$port" \
+    BACKFLOW_DATABASE_PATH="$db_path" \
+    BACKFLOW_DATA_DIR="$data_dir" \
+    BACKFLOW_LOG_FILE="$log_file" \
+    BACKFLOW_LOCAL_BACKUP_ENABLED="$backup_enabled" \
+    BACKFLOW_LOCAL_BACKUP_DIR="$backup_dir" \
+    BACKFLOW_LOCAL_BACKUP_INTERVAL_SEC="$backup_interval" \
+    BACKFLOW_LOCAL_BACKUP_RETENTION_SEC=3600 \
+    BACKFLOW_BACKUP_S3_BUCKET="$bucket" \
+    BACKFLOW_BACKUP_S3_PREFIX="$prefix" \
+    BACKFLOW_BACKUP_S3_REGION="$region" \
+    BACKFLOW_BACKUP_S3_ENDPOINT="$endpoint" \
+    BACKFLOW_BACKUP_S3_PATH_STYLE="$path_style" \
+    BACKFLOW_MAX_CONTAINERS=0 \
+    BACKFLOW_POLL_INTERVAL_SEC=1 \
+    BACKFLOW_API_KEY= \
+    ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-sk-ant-smoke-placeholder-not-real}" \
+    AWS_EC2_METADATA_DISABLED="${AWS_EC2_METADATA_DISABLED:-true}" \
+        "$binary" >/dev/null 2>&1 &
+    server_pid=$!
+}
+
+stop_server() {
     if [[ -n "$server_pid" ]] && kill -0 "$server_pid" >/dev/null 2>&1; then
         kill "$server_pid" >/dev/null 2>&1 || true
         wait "$server_pid" >/dev/null 2>&1 || true
     fi
+    server_pid=""
+}
+
+wait_for_health() {
+    for _ in $(seq 1 "$timeout"); do
+        if ! kill -0 "$server_pid" >/dev/null 2>&1; then
+            die "Backlite process exited before becoming healthy"
+        fi
+        if curl -sf "$base_url/health" >/dev/null; then
+            return
+        fi
+        sleep 1
+    done
+    die "Backlite did not become healthy before timeout"
+}
+
+cleanup() {
+    local status=$?
+    stop_server
 
     if (( status != 0 )) && [[ -f "$log_file" ]]; then
         echo "--- backlite log ---" >&2
@@ -210,39 +253,10 @@ echo "Building Backlite..."
 
 mkdir -p "$backup_dir" "$data_dir"
 
-echo "Starting isolated Backlite server on $base_url..."
-BACKFLOW_LISTEN_ADDR="127.0.0.1:$port" \
-BACKFLOW_DATABASE_PATH="$db_path" \
-BACKFLOW_DATA_DIR="$data_dir" \
-BACKFLOW_LOG_FILE="$log_file" \
-BACKFLOW_LOCAL_BACKUP_ENABLED=true \
-BACKFLOW_LOCAL_BACKUP_DIR="$backup_dir" \
-BACKFLOW_LOCAL_BACKUP_INTERVAL_SEC="$backup_interval" \
-BACKFLOW_LOCAL_BACKUP_RETENTION_SEC=3600 \
-BACKFLOW_BACKUP_S3_BUCKET="$bucket" \
-BACKFLOW_BACKUP_S3_PREFIX="$prefix" \
-BACKFLOW_BACKUP_S3_REGION="$region" \
-BACKFLOW_BACKUP_S3_ENDPOINT="$endpoint" \
-BACKFLOW_BACKUP_S3_PATH_STYLE="$path_style" \
-BACKFLOW_MAX_CONTAINERS=0 \
-BACKFLOW_POLL_INTERVAL_SEC=1 \
-BACKFLOW_API_KEY= \
-ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-sk-ant-smoke-placeholder-not-real}" \
-AWS_EC2_METADATA_DISABLED="${AWS_EC2_METADATA_DISABLED:-true}" \
-    "$binary" >/dev/null 2>&1 &
-server_pid=$!
-
+echo "Starting isolated Backlite server on $base_url with backups disabled..."
+start_server false
 echo "Waiting for /health..."
-for _ in $(seq 1 "$timeout"); do
-    if ! kill -0 "$server_pid" >/dev/null 2>&1; then
-        die "Backlite process exited before becoming healthy"
-    fi
-    if curl -sf "$base_url/health" >/dev/null; then
-        break
-    fi
-    sleep 1
-done
-curl -sf "$base_url/health" >/dev/null || die "Backlite did not become healthy before timeout"
+wait_for_health
 
 echo "Creating a pending task so the backup contains application data..."
 payload="$(jq -n --arg prompt "$seed_prompt" '{prompt: $prompt, create_pr: false, save_agent_output: false}')"
@@ -252,6 +266,12 @@ create_response="$(curl -sf -X POST "$base_url/api/v1/tasks" \
 task_id="$(jq -r '.data.id // empty' <<<"$create_response")"
 [[ -n "$task_id" ]] || die "task creation response did not include data.id"
 echo "Created task $task_id"
+
+echo "Restarting Backlite with backup worker enabled..."
+stop_server
+start_server true
+echo "Waiting for /health..."
+wait_for_health
 
 echo "Waiting for backup upload..."
 deadline=$((SECONDS + timeout))

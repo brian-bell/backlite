@@ -71,8 +71,8 @@ FAKE_AWS_HEAD=missing run_setup \
   --endpoint-url http://localhost:9000 \
   --prefix /sqlite/daily// \
   --retention-days 14 >/dev/null
-assert_log_contains "--endpoint-url http://localhost:9000 s3api head-bucket --bucket backlite-test"
-assert_log_contains "--endpoint-url http://localhost:9000 s3api create-bucket --bucket backlite-test --region us-west-2 --create-bucket-configuration LocationConstraint=us-west-2"
+assert_log_contains "--endpoint-url http://localhost:9000 --region us-west-2 s3api head-bucket --bucket backlite-test"
+assert_log_contains "--endpoint-url http://localhost:9000 --region us-west-2 s3api create-bucket --bucket backlite-test --create-bucket-configuration LocationConstraint=us-west-2"
 assert_log_contains "s3api put-public-access-block --bucket backlite-test"
 assert_log_contains "s3api put-bucket-encryption --bucket backlite-test"
 assert_log_contains "s3api put-bucket-lifecycle-configuration --bucket backlite-test"
@@ -85,8 +85,8 @@ FAKE_AWS_HEAD=missing FAKE_AWS_CREATE_WITH_LOCATION_FAIL=1 run_setup \
   --region us-west-2 \
   --endpoint-url http://localhost:9000 \
   --retention-days 0 >/dev/null 2>"$stderr"
-assert_log_contains "--endpoint-url http://localhost:9000 s3api create-bucket --bucket compatible-create --region us-west-2 --create-bucket-configuration LocationConstraint=us-west-2"
-assert_log_contains "--endpoint-url http://localhost:9000 s3api create-bucket --bucket compatible-create --region us-west-2"
+assert_log_contains "--endpoint-url http://localhost:9000 --region us-west-2 s3api create-bucket --bucket compatible-create --create-bucket-configuration LocationConstraint=us-west-2"
+assert_log_contains "--endpoint-url http://localhost:9000 --region us-west-2 s3api create-bucket --bucket compatible-create"
 if ! grep -F -- "warning: provider did not accept optional bucket create location constraint" "$stderr" >/dev/null; then
   echo "expected create retry warning" >&2
   echo "--- stderr ---" >&2
@@ -97,7 +97,7 @@ fi
 : >"$log"
 stderr="$tmpdir/existing.err"
 BACKFLOW_BACKUP_S3_PREFIX=sqlite/ FAKE_AWS_HEAD=ok run_setup --bucket existing-bucket --region us-east-1 >/dev/null 2>"$stderr"
-assert_log_contains "s3api head-bucket --bucket existing-bucket"
+assert_log_contains "--region us-east-1 s3api head-bucket --bucket existing-bucket"
 assert_log_not_contains "s3api create-bucket --bucket existing-bucket"
 assert_log_not_contains "s3api put-bucket-lifecycle-configuration --bucket existing-bucket"
 if ! grep -F -- "warning: existing bucket lifecycle configuration was not changed" "$stderr" >/dev/null; then

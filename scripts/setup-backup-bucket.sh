@@ -93,6 +93,9 @@ aws_args=()
 if [[ -n "$endpoint" ]]; then
   aws_args+=(--endpoint-url "$endpoint")
 fi
+if [[ -n "$region" ]]; then
+  aws_args+=(--region "$region")
+fi
 
 aws_cmd() {
   if (( ${#aws_args[@]} > 0 )); then
@@ -112,7 +115,6 @@ if aws_cmd s3api head-bucket --bucket "$bucket" >/dev/null 2>&1; then
 else
   create_args=(s3api create-bucket --bucket "$bucket")
   if [[ -n "$region" ]]; then
-    create_args+=(--region "$region")
     if [[ "$region" != "us-east-1" ]]; then
       create_args+=(--create-bucket-configuration "LocationConstraint=$region")
     fi
@@ -122,9 +124,6 @@ else
     if [[ -n "$endpoint" && " ${create_args[*]} " == *" --create-bucket-configuration "* ]]; then
       warn_optional "bucket create location constraint"
       simple_create_args=(s3api create-bucket --bucket "$bucket")
-      if [[ -n "$region" ]]; then
-        simple_create_args+=(--region "$region")
-      fi
       aws_cmd "${simple_create_args[@]}" >/dev/null
     else
       cat "$create_err" >&2

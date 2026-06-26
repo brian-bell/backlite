@@ -263,6 +263,8 @@ Optional S3-compatible uploads are enabled by setting `BACKFLOW_BACKUP_S3_BUCKET
 
 For a local end-to-end check of backup uploads against MinIO, run `make test-s3-backup`. The target starts a temporary MinIO container, exercises the real AWS SDK upload path, and removes the container afterward.
 
+For a provider smoke test against real AWS S3 or another S3-compatible service, run `scripts/smoke-s3-backup-provider.sh --bucket "$BACKFLOW_BACKUP_S3_BUCKET" --prefix "$BACKFLOW_BACKUP_S3_PREFIX"` after credentials are configured.
+
 Backups cover only the SQLite database at `BACKFLOW_DATABASE_PATH`. Task output files and reading content under `BACKFLOW_DATA_DIR` are not included.
 
 Manual restore:

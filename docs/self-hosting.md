@@ -67,6 +67,12 @@ scripts/setup-backup-bucket.sh --bucket "$BACKFLOW_BACKUP_S3_BUCKET" --prefix "$
 
 The setup helper does not overwrite lifecycle rules on an existing bucket. Configure retention manually for shared buckets if you need provider-side expiration.
 
+Smoke-test the configured provider with:
+
+```bash
+scripts/smoke-s3-backup-provider.sh --bucket "$BACKFLOW_BACKUP_S3_BUCKET" --prefix "$BACKFLOW_BACKUP_S3_PREFIX"
+```
+
 Backlite auto-runs SQLite migrations on startup. It writes the application database at `BACKFLOW_DATABASE_PATH` and completed task logs and metadata under `BACKFLOW_DATA_DIR/tasks/<task-id>/`. Choose paths on persistent storage.
 
 See `internal/config/config.go` for the full env surface and current defaults.

@@ -13,11 +13,14 @@ Required:
   --bucket NAME               S3 bucket name, or BACKFLOW_BACKUP_S3_BUCKET
 
 Options:
-  --phase PHASE               Phase to run: 1,2,3,4,5, or all (repeatable;
-                              comma-separated values accepted; default: 1)
+  --phase PHASE               Phase to run: 1,2,3,4,5,6,r2, or all
+                              (repeatable; comma-separated values accepted;
+                              default: 1; all runs phases 1-5)
   --prefix PREFIX             Object key prefix, or BACKFLOW_BACKUP_S3_PREFIX
   --region REGION             AWS/S3 region, or BACKFLOW_BACKUP_S3_REGION
   --endpoint-url URL          S3-compatible endpoint, or BACKFLOW_BACKUP_S3_ENDPOINT
+  --r2-bucket-url URL         Cloudflare R2 bucket URL; derives endpoint + bucket
+  --aws-profile NAME          AWS profile for CLI checks and successful uploads
   --path-style                Set BACKFLOW_BACKUP_S3_PATH_STYLE=true for Backlite
   --virtual-hosted-style      Set BACKFLOW_BACKUP_S3_PATH_STYLE=false for Backlite
   --setup-bucket              Run scripts/setup-backup-bucket.sh before smoke test
@@ -38,12 +41,15 @@ Phases:
   Phase 3: verify upload permission failure preserves local backup state
   Phase 4: recover from phase 3 by uploading the existing local artifact
   Phase 5: restore a validated artifact and restart Backlite against it
+  Phase 6: Cloudflare R2 smoke using the account-level endpoint and region auto
 
 Prerequisites:
   aws, curl, go, gunzip, jq, sqlite3
 
 AWS credentials must already be configured for the target provider. For an
 S3-compatible provider, pass --endpoint-url and --path-style when required.
+For Cloudflare R2, pass --phase 6 with --r2-bucket-url or the account-level
+--endpoint-url plus --bucket. If no region is configured, phase 6 uses auto.
 Phase 3 must run with credentials that cannot put objects to the bucket/prefix;
 pass --failure-aws-profile when your default credentials are valid.
 USAGE
@@ -63,9 +69,12 @@ prefix="${BACKFLOW_BACKUP_S3_PREFIX:-}"
 region="${BACKFLOW_BACKUP_S3_REGION:-${AWS_REGION:-${AWS_DEFAULT_REGION:-}}}"
 endpoint="${BACKFLOW_BACKUP_S3_ENDPOINT:-}"
 path_style="${BACKFLOW_BACKUP_S3_PATH_STYLE:-false}"
+path_style_explicit=0
 setup_bucket=0
 retention_days=7
 phases=()
+aws_profile="${BACKFLOW_SMOKE_AWS_PROFILE:-}"
+cloudflare_r2_url="${BACKFLOW_SMOKE_R2_BUCKET_URL:-${BACKFLOW_SMOKE_CLOUDFLARE_R2_URL:-}}"
 failure_aws_profile="${BACKFLOW_SMOKE_FAILURE_AWS_PROFILE:-}"
 recovery_aws_profile="${BACKFLOW_SMOKE_RECOVERY_AWS_PROFILE:-}"
 restore_artifact="${BACKFLOW_SMOKE_RESTORE_ARTIFACT:-}"
@@ -85,11 +94,14 @@ add_phase() {
             all)
                 phases=(1 2 3 4 5)
                 ;;
-            1|2|3|4|5)
+            r2)
+                phases+=(6)
+                ;;
+            1|2|3|4|5|6)
                 phases+=("$entry")
                 ;;
             *)
-                die "invalid phase '$entry'; expected 1,2,3,4,5, or all"
+                die "invalid phase '$entry'; expected 1,2,3,4,5,6,r2, or all"
                 ;;
         esac
     done
@@ -118,12 +130,22 @@ while [[ $# -gt 0 ]]; do
             endpoint="${2:-}"
             shift 2
             ;;
+        --r2-bucket-url|--cloudflare-r2-url)
+            cloudflare_r2_url="${2:-}"
+            shift 2
+            ;;
+        --aws-profile)
+            aws_profile="${2:-}"
+            shift 2
+            ;;
         --path-style)
             path_style=true
+            path_style_explicit=1
             shift
             ;;
         --virtual-hosted-style)
             path_style=false
+            path_style_explicit=1
             shift
             ;;
         --setup-bucket)
@@ -174,10 +196,74 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-[[ -n "$bucket" ]] || die "--bucket or BACKFLOW_BACKUP_S3_BUCKET is required"
+phase_selected() {
+    local wanted="$1"
+    local phase
+    for phase in "${phases[@]}"; do
+        [[ "$phase" == "$wanted" ]] && return 0
+    done
+    return 1
+}
+
+configure_cloudflare_r2() {
+    phase_selected 6 || return 0
+
+    local r2_source="$cloudflare_r2_url"
+    if [[ -z "$r2_source" && "$endpoint" == https://*.r2.cloudflarestorage.com/* ]]; then
+        r2_source="$endpoint"
+    fi
+
+    if [[ -n "$r2_source" ]]; then
+        r2_source="${r2_source%/}"
+        [[ "$r2_source" == https://*.r2.cloudflarestorage.com* ]] || die "--r2-bucket-url must be a Cloudflare R2 URL"
+
+        local without_scheme="${r2_source#https://}"
+        local r2_host="${without_scheme%%/*}"
+        [[ "$r2_host" == *.r2.cloudflarestorage.com ]] || die "--r2-bucket-url host must end in .r2.cloudflarestorage.com"
+
+        if [[ "$without_scheme" == */* ]]; then
+            local r2_path="${without_scheme#*/}"
+            local r2_bucket="${r2_path%%/*}"
+            if [[ -n "$r2_bucket" ]]; then
+                if [[ -n "$bucket" && "$bucket" != "$r2_bucket" ]]; then
+                    die "R2 bucket URL bucket '$r2_bucket' does not match --bucket '$bucket'"
+                fi
+                bucket="$r2_bucket"
+            fi
+        fi
+
+        endpoint="https://$r2_host"
+    fi
+
+    endpoint="${endpoint%/}"
+    [[ -n "$endpoint" ]] || die "phase 6 requires --endpoint-url or --r2-bucket-url"
+    [[ "$endpoint" == https://*.r2.cloudflarestorage.com ]] || die "phase 6 endpoint must be an account-level Cloudflare R2 endpoint"
+
+    if [[ -z "$region" ]]; then
+        region=auto
+    fi
+    if (( path_style_explicit == 0 )); then
+        path_style=true
+    fi
+    if [[ -z "$prefix" ]]; then
+        prefix="sqlite/cloudflare-r2/"
+    fi
+    if [[ -z "$recovery_aws_profile" && -n "$aws_profile" ]]; then
+        recovery_aws_profile="$aws_profile"
+    fi
+}
+
 if (( ${#phases[@]} == 0 )); then
-    phases=(1)
+    if [[ -n "$cloudflare_r2_url" ]]; then
+        phases=(6)
+    else
+        phases=(1)
+    fi
 fi
+
+configure_cloudflare_r2
+
+[[ -n "$bucket" ]] || die "--bucket or BACKFLOW_BACKUP_S3_BUCKET is required"
 [[ "$timeout" =~ ^[0-9]+$ ]] || die "--timeout must be a positive integer"
 (( timeout > 0 )) || die "--timeout must be > 0"
 [[ "$backup_interval" =~ ^[0-9]+$ ]] || die "BACKFLOW_SMOKE_BACKUP_INTERVAL_SEC must be a positive integer"
@@ -287,6 +373,9 @@ cleanup() {
 trap cleanup EXIT
 
 aws_args=()
+if [[ -n "$aws_profile" ]]; then
+    aws_args+=(--profile "$aws_profile")
+fi
 if [[ -n "$endpoint" ]]; then
     aws_args+=(--endpoint-url "$endpoint")
 fi
@@ -653,6 +742,28 @@ run_phase_5() {
     echo "Phase 5 passed"
 }
 
+run_phase_6() {
+    echo "Phase 6: Cloudflare R2 provider smoke"
+    [[ "$endpoint" == https://*.r2.cloudflarestorage.com ]] || die "phase 6 endpoint must be an account-level Cloudflare R2 endpoint"
+    [[ -n "$bucket" ]] || die "phase 6 requires a Cloudflare R2 bucket"
+
+    echo "Using Cloudflare R2 endpoint $endpoint"
+    echo "Using Cloudflare R2 bucket $bucket"
+    echo "Using Cloudflare R2 region $region"
+    echo "Using path-style addressing: $path_style"
+
+    aws_cmd s3api head-bucket --bucket "$bucket" >/dev/null || die "phase 6 could not access R2 bucket $bucket"
+
+    run_phase_1
+
+    echo "Checking Cloudflare R2 object listing..."
+    list_json="$(aws_cmd s3api list-objects-v2 --bucket "$bucket" --prefix "$expected_key" --max-keys 1 --output json)"
+    listed_count="$(jq --arg key "$expected_key" '[.Contents[]? | select(.Key == $key)] | length' <<<"$list_json")"
+    [[ "$listed_count" == "1" ]] || die "R2 list-objects-v2 did not return uploaded key $expected_key"
+
+    echo "Phase 6 passed"
+}
+
 setup_bucket_if_requested
 
 for phase in "${phases[@]}"; do
@@ -662,5 +773,6 @@ for phase in "${phases[@]}"; do
         3) run_phase_3 ;;
         4) run_phase_4 ;;
         5) run_phase_5 ;;
+        6) run_phase_6 ;;
     esac
 done

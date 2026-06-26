@@ -66,15 +66,27 @@ assert_not_contains() {
 help_out="$tmpdir/help.out"
 scripts/smoke-s3-backup-provider.sh --help >"$help_out"
 assert_contains "--phase PHASE" "$help_out"
+assert_contains "--r2-bucket-url URL" "$help_out"
 assert_contains "Phase 2" "$help_out"
 assert_contains "Phase 5" "$help_out"
+assert_contains "Phase 6" "$help_out"
 
 invalid_err="$tmpdir/invalid.err"
-if scripts/smoke-s3-backup-provider.sh --bucket existing-bucket --phase 6 >/dev/null 2>"$invalid_err"; then
+if scripts/smoke-s3-backup-provider.sh --bucket existing-bucket --phase 7 >/dev/null 2>"$invalid_err"; then
   echo "expected invalid phase to fail" >&2
   exit 1
 fi
 assert_contains "invalid phase" "$invalid_err"
+
+r2_mismatch_err="$tmpdir/r2-mismatch.err"
+if scripts/smoke-s3-backup-provider.sh \
+  --bucket other-bucket \
+  --r2-bucket-url https://332a424522e92bba0b6437992168064a.r2.cloudflarestorage.com/backlite-smoke-test \
+  >/dev/null 2>"$r2_mismatch_err"; then
+  echo "expected mismatched R2 bucket URL to fail" >&2
+  exit 1
+fi
+assert_contains "does not match --bucket" "$r2_mismatch_err"
 
 phase2_out="$tmpdir/phase2.out"
 phase2_err="$tmpdir/phase2.err"

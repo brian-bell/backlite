@@ -263,7 +263,7 @@ Optional S3-compatible uploads are enabled by setting `BACKFLOW_BACKUP_S3_BUCKET
 
 For a local end-to-end check of backup uploads against MinIO, run `make test-s3-backup`. The target starts a temporary MinIO container, exercises the real AWS SDK upload path, and removes the container afterward.
 
-For a provider smoke test against real AWS S3 or another S3-compatible service, run `scripts/smoke-s3-backup-provider.sh --bucket "$BACKFLOW_BACKUP_S3_BUCKET" --prefix "$BACKFLOW_BACKUP_S3_PREFIX"` after credentials are configured. The script defaults to phase 1 (upload + restore validation); pass `--phase all` to also verify existing-bucket lifecycle safety, upload permission failure, recovery after failure, and restore restart. Phases 3 and 4 can switch credentials with `--failure-aws-profile` and `--recovery-aws-profile`.
+For a provider smoke test against real AWS S3 or another S3-compatible service, run `scripts/smoke-s3-backup-provider.sh --bucket "$BACKFLOW_BACKUP_S3_BUCKET" --prefix "$BACKFLOW_BACKUP_S3_PREFIX"` after credentials are configured. The script defaults to phase 1 (upload + restore validation); pass `--phase all` to also verify existing-bucket lifecycle safety, upload permission failure, recovery after failure, and restore restart. Phases 3 and 4 can switch credentials with `--failure-aws-profile` and `--recovery-aws-profile`. For Cloudflare R2, pass `--phase 6 --r2-bucket-url "https://<account-id>.r2.cloudflarestorage.com/<bucket>"`; the script derives the account endpoint and bucket, defaults the region to `auto` when needed, and uses path-style addressing unless overridden.
 
 Backups cover only the SQLite database at `BACKFLOW_DATABASE_PATH`. Task output files and reading content under `BACKFLOW_DATA_DIR` are not included.
 

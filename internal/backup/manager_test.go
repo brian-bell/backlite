@@ -653,6 +653,60 @@ func TestMaybeSchedule_UploadMarkerInspectErrorDoesNotBlockDueLocalBackup(t *tes
 	}
 }
 
+func TestMaybeSchedule_UploadsPreviousArtifactWhenDueBackupFails(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)
+	artifactPath := filepath.Join(dir, "backlite-20260426T090000Z.sqlite.gz")
+	if err := writeValidTestArtifactFinalizedAt(t, artifactPath, now.Add(-3*time.Hour), now.Add(-3*time.Hour), []byte("old-backup")); err != nil {
+		t.Fatalf("write artifact: %v", err)
+	}
+
+	uploader := &fakeUploader{
+		result: UploadResult{ETag: `"previous"`},
+		ch:     make(chan UploadInput, 1),
+	}
+	m := New(Config{
+		Enabled:   true,
+		Directory: dir,
+		Interval:  time.Hour,
+		Retention: 7 * 24 * time.Hour,
+		Upload: UploadConfig{
+			Bucket: "backlite-prod",
+		},
+		Uploader: uploader,
+	})
+	m.now = func() time.Time { return now }
+	m.runBackupFn = func(context.Context, time.Time) error {
+		return errors.New("source database locked")
+	}
+
+	m.MaybeSchedule(context.Background())
+
+	select {
+	case input := <-uploader.ch:
+		if input.ArtifactPath != artifactPath {
+			t.Fatalf("uploaded artifact = %q, want previous valid artifact %q", input.ArtifactPath, artifactPath)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for upload of previous valid artifact")
+	}
+
+	waitFor(t, 2*time.Second, func() bool {
+		marker, valid, err := readUploadMarker(artifactPath, uploadMarkerPath(artifactPath), UploadConfig{
+			Bucket: "backlite-prod",
+		}, uploader.calls[0].Metadata)
+		return err == nil && valid && marker.ETag == `"previous"`
+	})
+
+	s := m.Status()
+	if s.LastErrorMessage != "source database locked" {
+		t.Fatalf("Status.LastErrorMessage = %q, want source database locked", s.LastErrorMessage)
+	}
+	if s.PendingUpload {
+		t.Fatal("Status.PendingUpload = true, want false after previous artifact upload succeeds")
+	}
+}
+
 func TestMaybeSchedule_RecordsBackupErrorInStatus(t *testing.T) {
 	m := New(Config{
 		Enabled:   true,

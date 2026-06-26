@@ -62,8 +62,10 @@ BACKFLOW_BACKUP_S3_PREFIX=sqlite/
 Create or verify the bucket with:
 
 ```bash
-scripts/setup-backup-bucket.sh --bucket "$BACKFLOW_BACKUP_S3_BUCKET"
+scripts/setup-backup-bucket.sh --bucket "$BACKFLOW_BACKUP_S3_BUCKET" --prefix "$BACKFLOW_BACKUP_S3_PREFIX"
 ```
+
+The setup helper does not overwrite lifecycle rules on an existing bucket. Configure retention manually for shared buckets if you need provider-side expiration.
 
 Backlite auto-runs SQLite migrations on startup. It writes the application database at `BACKFLOW_DATABASE_PATH` and completed task logs and metadata under `BACKFLOW_DATA_DIR/tasks/<task-id>/`. Choose paths on persistent storage.
 

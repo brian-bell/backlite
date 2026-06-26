@@ -17,6 +17,7 @@ make test-schema        # Schemathesis fuzz tests against OpenAPI spec (requires
 make test-blackbox      # Black-box integration test (builds fake agent, spins up server + DB)
 make test-soak          # Soak test (10 min short mode; starts dedicated server on sibling -soak.db)
 make test-fake-agent    # Unit tests for the fake agent Docker image
+make test-s3-backup     # MinIO-backed integration test for S3 backup uploads
 make deps               # go mod tidy
 make clean              # Remove bin/ directory
 make db-running         # Show running tasks (also: db-pending, db-completed, db-failed)

@@ -36,6 +36,7 @@ make test-blackbox                # End-to-end: builds fake agent, starts server
 make test-soak                    # Resource leak detector (10 min; starts dedicated server on sibling -soak.db)
 make test-fake-agent              # Unit tests for the fake agent image
 make test-schema                  # Schemathesis fuzz tests against OpenAPI spec
+make test-s3-backup               # MinIO-backed integration test for S3 backup uploads
 make test-skill-agent-entrypoint  # Shell-level e2e tests for the skill-agent container entrypoint
 ```
 
@@ -258,7 +259,9 @@ Optional S3-compatible uploads are enabled by setting `BACKFLOW_BACKUP_S3_BUCKET
 | `BACKFLOW_BACKUP_S3_ENDPOINT` | Optional custom endpoint for S3-compatible providers |
 | `BACKFLOW_BACKUP_S3_PATH_STYLE` | Use path-style addressing for compatible providers that require it |
 
-`scripts/setup-backup-bucket.sh` creates or verifies a bucket with AWS CLI-compatible commands. It requires the bucket name via `--bucket` or `BACKFLOW_BACKUP_S3_BUCKET`; encryption, public-access blocking, and lifecycle retention are best-effort because S3-compatible providers vary.
+`scripts/setup-backup-bucket.sh` creates or verifies a bucket with AWS CLI-compatible commands. It requires the bucket name via `--bucket` or `BACKFLOW_BACKUP_S3_BUCKET`; encryption and public-access blocking are best-effort because S3-compatible providers vary. Lifecycle retention is only installed when the helper creates a new bucket, scoped to `--prefix` / `BACKFLOW_BACKUP_S3_PREFIX`, so existing bucket lifecycle policies are not overwritten.
+
+For a local end-to-end check of backup uploads against MinIO, run `make test-s3-backup`. The target starts a temporary MinIO container, exercises the real AWS SDK upload path, and removes the container afterward.
 
 Backups cover only the SQLite database at `BACKFLOW_DATABASE_PATH`. Task output files and reading content under `BACKFLOW_DATA_DIR` are not included.
 

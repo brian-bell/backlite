@@ -69,12 +69,14 @@ FAKE_AWS_HEAD=missing run_setup \
   --bucket backlite-test \
   --region us-west-2 \
   --endpoint-url http://localhost:9000 \
+  --prefix /sqlite/daily// \
   --retention-days 14 >/dev/null
 assert_log_contains "--endpoint-url http://localhost:9000 s3api head-bucket --bucket backlite-test"
 assert_log_contains "--endpoint-url http://localhost:9000 s3api create-bucket --bucket backlite-test --region us-west-2 --create-bucket-configuration LocationConstraint=us-west-2"
 assert_log_contains "s3api put-public-access-block --bucket backlite-test"
 assert_log_contains "s3api put-bucket-encryption --bucket backlite-test"
 assert_log_contains "s3api put-bucket-lifecycle-configuration --bucket backlite-test"
+assert_log_contains '"Prefix":"sqlite/daily/"'
 
 : >"$log"
 stderr="$tmpdir/create-retry.err"
@@ -93,14 +95,23 @@ if ! grep -F -- "warning: provider did not accept optional bucket create locatio
 fi
 
 : >"$log"
-FAKE_AWS_HEAD=ok run_setup --bucket existing-bucket --region us-east-1 >/dev/null
+stderr="$tmpdir/existing.err"
+BACKFLOW_BACKUP_S3_PREFIX=sqlite/ FAKE_AWS_HEAD=ok run_setup --bucket existing-bucket --region us-east-1 >/dev/null 2>"$stderr"
 assert_log_contains "s3api head-bucket --bucket existing-bucket"
 assert_log_not_contains "s3api create-bucket --bucket existing-bucket"
+assert_log_not_contains "s3api put-bucket-lifecycle-configuration --bucket existing-bucket"
+if ! grep -F -- "warning: existing bucket lifecycle configuration was not changed" "$stderr" >/dev/null; then
+  echo "expected existing-bucket lifecycle warning" >&2
+  echo "--- stderr ---" >&2
+  cat "$stderr" >&2
+  exit 1
+fi
 
 : >"$log"
 stderr="$tmpdir/optional.err"
-FAKE_AWS_HEAD=ok FAKE_AWS_OPTIONAL_FAIL=1 run_setup --bucket compatible-bucket --retention-days 7 >/dev/null 2>"$stderr"
+FAKE_AWS_HEAD=missing FAKE_AWS_OPTIONAL_FAIL=1 run_setup --bucket compatible-bucket --retention-days 7 >/dev/null 2>"$stderr"
 assert_log_contains "s3api head-bucket --bucket compatible-bucket"
+assert_log_contains "s3api create-bucket --bucket compatible-bucket"
 if [[ "$(grep -c 'warning: provider did not accept optional' "$stderr")" -ne 3 ]]; then
   echo "expected three optional-feature warnings" >&2
   echo "--- stderr ---" >&2

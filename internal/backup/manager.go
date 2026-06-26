@@ -216,22 +216,24 @@ func (m *Manager) MaybeSchedule(ctx context.Context) {
 					Str("backup_dir", m.cfg.Directory).
 					Str("database_path", m.cfg.DatabasePath).
 					Msg("local sqlite backup failed")
-				return
-			}
+				if artifact == nil {
+					return
+				}
+			} else {
+				m.recordSuccess(startedAt)
+				log.Info().
+					Str("backup_dir", m.cfg.Directory).
+					Str("database_path", m.cfg.DatabasePath).
+					Time("backup_at", startedAt).
+					Msg("local sqlite backup completed")
 
-			m.recordSuccess(startedAt)
-			log.Info().
-				Str("backup_dir", m.cfg.Directory).
-				Str("database_path", m.cfg.DatabasePath).
-				Time("backup_at", startedAt).
-				Msg("local sqlite backup completed")
-
-			var err error
-			artifact, err = m.findLatestValidArtifact()
-			if err != nil {
-				m.recordError("backup", err)
-				log.Error().Err(err).Str("backup_dir", m.cfg.Directory).Msg("failed to inspect completed local backup")
-				return
+				var err error
+				artifact, err = m.findLatestValidArtifact()
+				if err != nil {
+					m.recordError("backup", err)
+					log.Error().Err(err).Str("backup_dir", m.cfg.Directory).Msg("failed to inspect completed local backup")
+					return
+				}
 			}
 		}
 

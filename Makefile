@@ -6,6 +6,7 @@
        test-skill-agent-entrypoint \
        test-s3-backup \
        test-setup-backup-bucket \
+       test-smoke-s3-backup-provider \
        db-pending db-running db-completed db-failed \
        deps
 
@@ -64,6 +65,9 @@ test-s3-backup:
 
 test-setup-backup-bucket:
 	bash scripts/test-setup-backup-bucket.sh
+
+test-smoke-s3-backup-provider:
+	bash scripts/test-smoke-s3-backup-provider.sh
 
 DB_QUERY = @$(ENV); sqlite3 -json "$$BACKFLOW_DATABASE_PATH"
 

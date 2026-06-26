@@ -73,6 +73,8 @@ Smoke-test the configured provider with:
 scripts/smoke-s3-backup-provider.sh --bucket "$BACKFLOW_BACKUP_S3_BUCKET" --prefix "$BACKFLOW_BACKUP_S3_PREFIX"
 ```
 
+The script runs phase 1 by default. Use `--phase all` for the lifecycle-safety, permission-failure, recovery, and restore-restart checks; phases 3 and 4 can switch credentials with `--failure-aws-profile` and `--recovery-aws-profile`.
+
 Backlite auto-runs SQLite migrations on startup. It writes the application database at `BACKFLOW_DATABASE_PATH` and completed task logs and metadata under `BACKFLOW_DATA_DIR/tasks/<task-id>/`. Choose paths on persistent storage.
 
 See `internal/config/config.go` for the full env surface and current defaults.

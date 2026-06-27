@@ -23,6 +23,10 @@ case "$args" in
   *"s3api head-bucket --bucket existing-bucket"*)
     exit 0
     ;;
+  *"s3api head-object --bucket profile-bucket --key sqlite/profile/backlite-20260626T000000Z.sqlite.gz"*)
+    printf '{"ContentLength":123}\n'
+    exit 0
+    ;;
   *"s3api get-bucket-lifecycle-configuration --bucket existing-bucket"*)
     printf '{"Rules":[{"ID":"ExistingRule","Status":"Enabled","Filter":{"Prefix":"existing/"},"Expiration":{"Days":30}}]}\n'
     exit 0
@@ -44,6 +48,73 @@ case "$args" in
 esac
 FAKEAWS
 chmod +x "$fakebin/aws"
+
+cat >"$fakebin/go" <<'FAKEGO'
+#!/usr/bin/env bash
+set -euo pipefail
+
+out=""
+while (($# > 0)); do
+  if [[ "$1" == "-o" ]]; then
+    shift
+    out="$1"
+    break
+  fi
+  shift
+done
+[[ -n "$out" ]] || { echo "fake go expected -o" >&2; exit 1; }
+
+cat >"$out" <<'FAKEBACKLITE'
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf '%s:%s\n' "$BACKFLOW_LOCAL_BACKUP_ENABLED" "${AWS_PROFILE:-}" >>"$BACKLITE_PROFILE_LOG"
+
+if [[ "$BACKFLOW_LOCAL_BACKUP_ENABLED" == "true" ]]; then
+  mkdir -p "$BACKFLOW_LOCAL_BACKUP_DIR"
+  source_db="$BACKFLOW_LOCAL_BACKUP_DIR/source.sqlite"
+  artifact="$BACKFLOW_LOCAL_BACKUP_DIR/backlite-20260626T000000Z.sqlite.gz"
+  sqlite3 "$source_db" 'CREATE TABLE tasks (id TEXT PRIMARY KEY); INSERT INTO tasks (id) VALUES ("bf_profile_smoke");'
+  gzip -c "$source_db" >"$artifact"
+  cat >"$artifact.meta.json" <<JSON
+{"file_name":"backlite-20260626T000000Z.sqlite.gz","created_at":"2026-06-26T00:00:00Z","finalized_at":"2026-06-26T00:00:00Z","sha256":"fake-sha","size_bytes":123}
+JSON
+  cat >"$artifact.upload.json" <<JSON
+{"bucket":"profile-bucket","key":"sqlite/profile/backlite-20260626T000000Z.sqlite.gz","endpoint":"","etag":"fake-etag","size_bytes":123,"sha256":"fake-sha","uploaded_at":"2026-06-26T00:00:00Z"}
+JSON
+fi
+
+trap 'exit 0' TERM INT
+while true; do sleep 1; done
+FAKEBACKLITE
+chmod +x "$out"
+FAKEGO
+chmod +x "$fakebin/go"
+
+cat >"$fakebin/curl" <<'FAKECURL'
+#!/usr/bin/env bash
+set -euo pipefail
+
+args="$*"
+case "$args" in
+  *"/health"*)
+    printf '{"status":"ok"}\n'
+    ;;
+  *"-X POST"*"api/v1/tasks"*)
+    printf '{"data":{"id":"bf_profile_smoke"}}\n'
+    ;;
+  *"/debug/stats"*)
+    cat <<'JSON'
+{"data":{"backup":{"upload_enabled":true,"pending_upload":false,"latest_artifact":{"file_name":"backlite-20260626T000000Z.sqlite.gz"},"latest_uploaded_artifact":{"bucket":"profile-bucket","key":"sqlite/profile/backlite-20260626T000000Z.sqlite.gz"},"recent_errors":[]}}}
+JSON
+    ;;
+  *)
+    echo "unexpected curl call: $args" >&2
+    exit 1
+    ;;
+esac
+FAKECURL
+chmod +x "$fakebin/curl"
 
 assert_contains() {
   local needle="$1"
@@ -115,6 +186,19 @@ if BACKFLOW_SMOKE_R2_ACCESS_KEY_ID=r2id \
 fi
 assert_contains "phase 6 could not access R2 bucket backlite-smoke-test" "$r2_env_err"
 assert_contains "R2ENV:r2id:r2secret" "$r2_log"
+
+profile_out="$tmpdir/profile.out"
+profile_err="$tmpdir/profile.err"
+profile_log="$tmpdir/profile.log"
+AWS_LOG="$log" BACKLITE_PROFILE_LOG="$profile_log" PATH="$fakebin:$PATH" scripts/smoke-s3-backup-provider.sh \
+  --bucket profile-bucket \
+  --prefix sqlite/profile/ \
+  --aws-profile prod \
+  --phase 1 \
+  --timeout 3 >"$profile_out" 2>"$profile_err"
+
+assert_contains "Phase 1 passed" "$profile_out"
+assert_contains "true:prod" "$profile_log"
 
 phase2_out="$tmpdir/phase2.out"
 phase2_err="$tmpdir/phase2.err"

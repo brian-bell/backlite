@@ -8,6 +8,7 @@ bin/
 mise.toml
 .backflow/
 .cache/
+.wrangler/
 .hypothesis/
 .claude/worktrees/
 logs/

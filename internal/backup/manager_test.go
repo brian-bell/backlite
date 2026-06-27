@@ -825,6 +825,30 @@ func TestStatus_ReportsLatestArtifactAndWorkerState(t *testing.T) {
 	}
 }
 
+func TestStatus_ReportsUploadDisabledWhenWorkerDisabled(t *testing.T) {
+	dir := t.TempDir()
+	m := New(Config{
+		Enabled:   false,
+		Directory: dir,
+		Interval:  time.Hour,
+		Upload: UploadConfig{
+			Bucket: "backlite-prod-backups",
+			Prefix: "sqlite/",
+		},
+	})
+
+	s := m.Status()
+	if s.Enabled {
+		t.Error("Status.Enabled = true, want false")
+	}
+	if s.UploadEnabled {
+		t.Error("Status.UploadEnabled = true, want false when local backup worker is disabled")
+	}
+	if s.PendingUpload {
+		t.Error("Status.PendingUpload = true, want false when local backup worker is disabled")
+	}
+}
+
 func TestNeedsBackup_IgnoresStaleTempFiles(t *testing.T) {
 	dir := t.TempDir()
 	tempPath := filepath.Join(dir, "backlite-20260425T120000Z.sqlite.gz.tmp")

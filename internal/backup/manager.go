@@ -319,12 +319,13 @@ func (m *Manager) Status() Status {
 	copy(recent, m.recent)
 	m.mu.Unlock()
 
+	uploadEnabled := m.cfg.Enabled && m.cfg.Upload.Enabled()
 	s := Status{
 		Enabled:             m.cfg.Enabled,
 		Directory:           m.cfg.Directory,
 		Interval:            m.cfg.Interval,
 		Retention:           m.cfg.Retention,
-		UploadEnabled:       m.cfg.Upload.Enabled(),
+		UploadEnabled:       uploadEnabled,
 		UploadBucket:        m.cfg.Upload.Bucket,
 		UploadPrefix:        m.cfg.Upload.Prefix,
 		UploadEndpoint:      m.cfg.Upload.Endpoint,
@@ -338,12 +339,14 @@ func (m *Manager) Status() Status {
 	if latest, err := m.findLatestValidArtifact(); err == nil && latest != nil {
 		meta := latest.Metadata
 		s.LatestArtifact = &meta
-		pending, uploaded, err := m.needsUpload(latest)
-		if err == nil {
-			s.PendingUpload = pending
-			if uploaded != nil {
-				marker := *uploaded
-				s.LatestUploaded = &marker
+		if uploadEnabled {
+			pending, uploaded, err := m.needsUpload(latest)
+			if err == nil {
+				s.PendingUpload = pending
+				if uploaded != nil {
+					marker := *uploaded
+					s.LatestUploaded = &marker
+				}
 			}
 		}
 	}

@@ -579,7 +579,7 @@ run_phase_1() {
     create_seed_task
 
     echo "Starting Backlite with backup worker enabled..."
-    start_server true "$recovery_aws_profile"
+    start_server true "$aws_profile"
     echo "Waiting for /health..."
     wait_for_health
     wait_for_upload_success

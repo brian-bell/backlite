@@ -195,6 +195,7 @@ func buildSubprocessEnv(port int, dbPath, webhookURL string) []string {
 		"BACKFLOW_CONTAINER_CPUS=1",
 		"BACKFLOW_CONTAINER_MEMORY_GB=1",
 		"BACKFLOW_MAX_CONTAINERS=1",
+		"BACKFLOW_LOCAL_BACKUP_ENABLED=false",
 		"BACKFLOW_DEFAULT_SAVE_AGENT_OUTPUT=false",
 		"BACKFLOW_DEFAULT_CREATE_PR=false",
 		"BACKFLOW_DEFAULT_SELF_REVIEW=false",
@@ -208,6 +209,18 @@ func buildSubprocessEnv(port int, dbPath, webhookURL string) []string {
 	}
 
 	return env
+}
+
+func TestBuildSubprocessEnvDisablesLocalBackups(t *testing.T) {
+	env := buildSubprocessEnv(1234, "/tmp/backlite-test.db", "http://127.0.0.1:4321/webhook")
+
+	for _, kv := range env {
+		if kv == "BACKFLOW_LOCAL_BACKUP_ENABLED=false" {
+			return
+		}
+	}
+
+	t.Fatal("expected blackbox subprocess env to disable local backups")
 }
 
 // freePort asks the OS for an available TCP port.

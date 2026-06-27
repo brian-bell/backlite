@@ -29,6 +29,9 @@ case "$args" in
   *"s3api head-bucket --bucket existing-bucket"*)
     exit 0
     ;;
+  *"s3api head-bucket --bucket lifecycle-denied-bucket"*)
+    exit 0
+    ;;
   *"s3api head-bucket --bucket profile-bucket"*)
     printf 'SETUP_PROFILE:%s\n' "${AWS_PROFILE:-}" >>"$AWS_LOG"
     exit 0
@@ -50,6 +53,10 @@ case "$args" in
   *"s3api get-bucket-lifecycle-configuration --bucket existing-bucket"*)
     printf '{"Rules":[{"ID":"ExistingRule","Status":"Enabled","Filter":{"Prefix":"existing/"},"Expiration":{"Days":30}}]}\n'
     exit 0
+    ;;
+  *"s3api get-bucket-lifecycle-configuration --bucket lifecycle-denied-bucket"*)
+    echo "An error occurred (AccessDenied) when calling the GetBucketLifecycleConfiguration operation: Access Denied" >&2
+    exit 255
     ;;
   *"s3api put-public-access-block --bucket existing-bucket"*)
     exit 0
@@ -360,5 +367,18 @@ assert_contains "existing bucket lifecycle configuration was not changed" "$phas
 assert_contains "--endpoint-url http://localhost:9000 --region us-west-2 s3api head-bucket --bucket existing-bucket" "$log"
 assert_contains "--endpoint-url http://localhost:9000 --region us-west-2 s3api get-bucket-lifecycle-configuration --bucket existing-bucket --output json" "$log"
 assert_not_contains "put-bucket-lifecycle-configuration" "$log"
+
+lifecycle_denied_out="$tmpdir/lifecycle-denied.out"
+lifecycle_denied_err="$tmpdir/lifecycle-denied.err"
+if AWS_LOG="$log" PATH="$fakebin:$PATH" scripts/smoke-s3-backup-provider.sh \
+  --bucket lifecycle-denied-bucket \
+  --prefix sqlite/manual-pr86/ \
+  --region us-west-2 \
+  --endpoint-url http://localhost:9000 \
+  --phase 2 >"$lifecycle_denied_out" 2>"$lifecycle_denied_err"; then
+  echo "expected phase 2 lifecycle read failure to fail" >&2
+  exit 1
+fi
+assert_contains "could not read existing bucket lifecycle configuration" "$lifecycle_denied_err"
 
 echo "smoke-s3-backup-provider tests passed"

@@ -682,6 +682,10 @@ capture_lifecycle() {
         jq -S . "$output_path" >"$output_path.normalized"
         echo "present"
     else
+        if ! grep -Eiq '(NoSuchLifecycleConfiguration|Not[[:space:]]*Found|NotFound|404)' "$error_path"; then
+            cat "$error_path" >&2
+            die "could not read existing bucket lifecycle configuration"
+        fi
         : >"$output_path.normalized"
         echo "absent"
     fi

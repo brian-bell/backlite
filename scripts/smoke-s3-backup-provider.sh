@@ -432,6 +432,14 @@ recovery_aws_cmd() {
     aws_cmd_with_profile "$recovery_aws_profile" "$@"
 }
 
+phase4_aws_cmd() {
+    if [[ -n "$aws_profile" ]]; then
+        aws_cmd "$@"
+    else
+        recovery_aws_cmd "$@"
+    fi
+}
+
 r2_aws_cmd() {
     if [[ -n "$r2_access_key_id" ]]; then
         if (( ${#aws_common_args[@]} > 0 )); then
@@ -802,7 +810,7 @@ run_phase_4() {
     echo "Waiting for /health..."
     wait_for_health
     wait_for_upload_success
-    validate_uploaded_artifact true recovery_aws_cmd
+    validate_uploaded_artifact true phase4_aws_cmd
 
     after_count="$(artifact_count)"
     [[ "$after_count" == "$before_count" ]] || die "upload recovery created duplicate local backups"

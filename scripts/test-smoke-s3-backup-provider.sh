@@ -278,6 +278,29 @@ assert_contains "true:recovery" "$phase34_profile_log"
 assert_contains "SETUP_PROFILE:recovery" "$phase34_log"
 assert_contains "--profile recovery s3api head-object --bucket profile-bucket --key sqlite/profile/backlite-20260626T000000Z.sqlite.gz --output json" "$phase34_log"
 
+phase34_split_out="$tmpdir/phase34-split.out"
+phase34_split_err="$tmpdir/phase34-split.err"
+phase34_split_log="$tmpdir/phase34-split-aws.log"
+phase34_split_profile_log="$tmpdir/phase34-split-profile.log"
+phase34_split_state_file="$tmpdir/phase34-split-state"
+if ! AWS_LOG="$phase34_split_log" BACKLITE_PROFILE_LOG="$phase34_split_profile_log" BACKLITE_STATE_FILE="$phase34_split_state_file" PATH="$fakebin:$PATH" scripts/smoke-s3-backup-provider.sh \
+  --bucket profile-bucket \
+  --prefix sqlite/profile/ \
+  --aws-profile prod \
+  --failure-aws-profile denied \
+  --recovery-aws-profile recovery \
+  --phase 3,4 \
+  --phase3-watch-sec 0 \
+  --timeout 3 >"$phase34_split_out" 2>"$phase34_split_err"; then
+  cat "$phase34_split_out"
+  cat "$phase34_split_err" >&2
+  exit 1
+fi
+
+assert_contains "Phase 4 passed" "$phase34_split_out"
+assert_contains "true:recovery" "$phase34_split_profile_log"
+assert_contains "--profile prod s3api head-object --bucket profile-bucket --key sqlite/profile/backlite-20260626T000000Z.sqlite.gz --output json" "$phase34_split_log"
+
 recovery_phase1_out="$tmpdir/recovery-phase1.out"
 recovery_phase1_err="$tmpdir/recovery-phase1.err"
 recovery_phase1_log="$tmpdir/recovery-phase1-aws.log"

@@ -65,7 +65,7 @@ Create or verify the bucket with:
 scripts/setup-backup-bucket.sh --bucket "$BACKFLOW_BACKUP_S3_BUCKET" --prefix "$BACKFLOW_BACKUP_S3_PREFIX"
 ```
 
-The setup helper does not overwrite lifecycle rules on an existing bucket. Configure retention manually for shared buckets if you need provider-side expiration.
+The setup helper does not overwrite encryption or lifecycle rules on an existing bucket. Configure retention and encryption manually for shared buckets if you need provider-side controls.
 
 Smoke-test the configured provider with:
 

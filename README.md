@@ -259,7 +259,7 @@ Optional S3-compatible uploads are enabled by setting `BACKFLOW_BACKUP_S3_BUCKET
 | `BACKFLOW_BACKUP_S3_ENDPOINT` | Optional custom endpoint for S3-compatible providers |
 | `BACKFLOW_BACKUP_S3_PATH_STYLE` | Use path-style addressing for compatible providers that require it |
 
-`scripts/setup-backup-bucket.sh` creates or verifies a bucket with AWS CLI-compatible commands. It requires the bucket name via `--bucket` or `BACKFLOW_BACKUP_S3_BUCKET`; encryption and public-access blocking are best-effort because S3-compatible providers vary. Lifecycle retention is only installed when the helper creates a new bucket, scoped to `--prefix` / `BACKFLOW_BACKUP_S3_PREFIX`, so existing bucket lifecycle policies are not overwritten.
+`scripts/setup-backup-bucket.sh` creates or verifies a bucket with AWS CLI-compatible commands. It requires the bucket name via `--bucket` or `BACKFLOW_BACKUP_S3_BUCKET`; public-access blocking is best-effort because S3-compatible providers vary. Default encryption and lifecycle retention are only installed when the helper creates a new bucket, scoped to `--prefix` / `BACKFLOW_BACKUP_S3_PREFIX`, so existing bucket encryption and lifecycle policies are not overwritten.
 
 For a local end-to-end check of backup uploads against MinIO, run `make test-s3-backup`. The target starts a temporary MinIO container, exercises the real AWS SDK upload path, and removes the container afterward.
 

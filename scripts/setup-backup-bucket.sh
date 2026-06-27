@@ -142,10 +142,14 @@ if ! aws_cmd s3api put-public-access-block \
   warn_optional "public-access block"
 fi
 
-if ! aws_cmd s3api put-bucket-encryption \
-  --bucket "$bucket" \
-  --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}' >/dev/null 2>&1; then
-  warn_optional "server-side encryption"
+if (( created_bucket == 1 )); then
+  if ! aws_cmd s3api put-bucket-encryption \
+    --bucket "$bucket" \
+    --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}' >/dev/null 2>&1; then
+    warn_optional "server-side encryption"
+  fi
+else
+  echo "warning: existing bucket encryption configuration was not changed; preserve or configure encryption manually if needed" >&2
 fi
 
 if (( retention_days > 0 && created_bucket == 1 )); then

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -651,6 +652,52 @@ func TestMaybeSchedule_UploadMarkerInspectErrorDoesNotBlockDueLocalBackup(t *tes
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for upload of newly-created backup")
 	}
+}
+
+func TestMaybeSchedule_UploadMarkerInspectErrorDoesNotBlockFreshArtifactUpload(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)
+	artifactPath := filepath.Join(dir, "backlite-20260426T113000Z.sqlite.gz")
+	if err := writeValidTestArtifactFinalizedAt(t, artifactPath, now.Add(-30*time.Minute), now.Add(-30*time.Minute), []byte("fresh-backup")); err != nil {
+		t.Fatalf("write artifact: %v", err)
+	}
+	if err := os.Mkdir(uploadMarkerPath(artifactPath), 0o755); err != nil {
+		t.Fatalf("create unreadable upload marker path: %v", err)
+	}
+
+	uploader := &fakeUploader{
+		result: UploadResult{ETag: `"uploaded-before-marker-failure"`},
+		ch:     make(chan UploadInput, 1),
+	}
+	m := New(Config{
+		Enabled:   true,
+		Directory: dir,
+		Interval:  time.Hour,
+		Retention: 7 * 24 * time.Hour,
+		Upload: UploadConfig{
+			Bucket: "backlite-prod",
+		},
+		Uploader: uploader,
+	})
+	m.now = func() time.Time { return now }
+	m.runBackupFn = func(context.Context, time.Time) error {
+		t.Fatal("runBackupFn should not be invoked when a fresh artifact exists")
+		return nil
+	}
+
+	m.MaybeSchedule(context.Background())
+
+	select {
+	case input := <-uploader.ch:
+		if input.ArtifactPath != artifactPath {
+			t.Fatalf("uploaded artifact = %q, want fresh artifact %q", input.ArtifactPath, artifactPath)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for upload of fresh artifact")
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		return strings.Contains(m.Status().LastErrorMessage, "finalize upload marker")
+	})
 }
 
 func TestMaybeSchedule_UploadsPreviousArtifactWhenDueBackupFails(t *testing.T) {

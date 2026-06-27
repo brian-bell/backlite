@@ -173,7 +173,7 @@ func (m *Manager) MaybeSchedule(ctx context.Context) {
 				Err(err).
 				Str("backup_dir", m.cfg.Directory).
 				Msg("failed to inspect backup upload state")
-			if !due {
+			if !due && !uploadPending {
 				return
 			}
 		}
@@ -341,12 +341,10 @@ func (m *Manager) Status() Status {
 		s.LatestArtifact = &meta
 		if uploadEnabled {
 			pending, uploaded, err := m.needsUpload(latest)
-			if err == nil {
-				s.PendingUpload = pending
-				if uploaded != nil {
-					marker := *uploaded
-					s.LatestUploaded = &marker
-				}
+			s.PendingUpload = pending
+			if err == nil && uploaded != nil {
+				marker := *uploaded
+				s.LatestUploaded = &marker
 			}
 		}
 	}
@@ -399,7 +397,7 @@ func (m *Manager) needsUpload(artifact *Artifact) (bool, *UploadMarker, error) {
 	}
 	marker, valid, err := readUploadMarker(artifact.Path, uploadMarkerPath(artifact.Path), m.cfg.Upload, artifact.Metadata)
 	if err != nil {
-		return false, nil, err
+		return true, nil, err
 	}
 	if valid {
 		return false, &marker, nil
@@ -409,7 +407,7 @@ func (m *Manager) needsUpload(artifact *Artifact) (bool, *UploadMarker, error) {
 
 func (m *Manager) uploadArtifact(ctx context.Context, artifact *Artifact) error {
 	pending, _, err := m.needsUpload(artifact)
-	if err != nil {
+	if err != nil && !pending {
 		return err
 	}
 	if !pending {
@@ -432,7 +430,7 @@ func (m *Manager) uploadArtifact(ctx context.Context, artifact *Artifact) error 
 	if err != nil {
 		return err
 	}
-	if err := writeUploadMarker(artifact.Path, UploadMarker{
+	marker := UploadMarker{
 		Bucket:     m.cfg.Upload.Bucket,
 		Key:        key,
 		Endpoint:   m.cfg.Upload.Endpoint,
@@ -440,7 +438,8 @@ func (m *Manager) uploadArtifact(ctx context.Context, artifact *Artifact) error 
 		SizeBytes:  artifact.Metadata.SizeBytes,
 		SHA256:     artifact.Metadata.SHA256,
 		UploadedAt: m.now().UTC().Truncate(time.Second),
-	}); err != nil {
+	}
+	if err := writeUploadMarker(artifact.Path, marker); err != nil {
 		return err
 	}
 	m.recordUploadSuccess()

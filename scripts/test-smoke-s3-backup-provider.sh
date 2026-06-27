@@ -17,7 +17,7 @@ printf '%s\n' "$*" >>"$AWS_LOG"
 args="$*"
 case "$args" in
   *"s3api head-bucket --bucket backlite-smoke-test"*)
-    printf 'R2ENV:%s:%s\n' "${AWS_ACCESS_KEY_ID:-}" "${AWS_SECRET_ACCESS_KEY:-}" >>"$AWS_LOG"
+    printf 'R2ENV:%s:%s:%s\n' "${AWS_ACCESS_KEY_ID:-}" "${AWS_SECRET_ACCESS_KEY:-}" "${AWS_SESSION_TOKEN:-}" >>"$AWS_LOG"
     if [[ "${FAKE_R2_HEAD_OK:-0}" == "1" ]]; then
       exit 0
     fi
@@ -228,7 +228,7 @@ if BACKFLOW_SMOKE_R2_ACCESS_KEY_ID=r2id \
   exit 1
 fi
 assert_contains "phase 6 could not access R2 bucket backlite-smoke-test" "$r2_env_err"
-assert_contains "R2ENV:r2id:r2secret" "$r2_log"
+assert_contains "R2ENV:r2id:r2secret:" "$r2_log"
 
 profile_out="$tmpdir/profile.out"
 profile_err="$tmpdir/profile.err"
@@ -324,6 +324,7 @@ r2_setup_err="$tmpdir/r2-setup.err"
 r2_setup_log="$tmpdir/r2-setup-aws.log"
 if BACKFLOW_SMOKE_R2_ACCESS_KEY_ID=r2id \
   BACKFLOW_SMOKE_R2_SECRET_ACCESS_KEY=r2secret \
+  AWS_SESSION_TOKEN=stale-session-token \
   AWS_LOG="$r2_setup_log" FAKE_R2_HEAD_OK=1 PATH="$fakebin:$PATH" scripts/smoke-s3-backup-provider.sh \
   --setup-bucket \
   --r2-bucket-url https://332a424522e92bba0b6437992168064a.r2.cloudflarestorage.com/backlite-smoke-test \
@@ -331,9 +332,10 @@ if BACKFLOW_SMOKE_R2_ACCESS_KEY_ID=r2id \
   echo "expected fake R2 upload path to fail after setup" >&2
   exit 1
 fi
-assert_contains "R2ENV:r2id:r2secret" "$r2_setup_log"
+assert_contains "R2ENV:r2id:r2secret:" "$r2_setup_log"
+assert_not_contains "R2ENV:r2id:r2secret:stale-session-token" "$r2_setup_log"
 first_r2_env="$(grep -m1 '^R2ENV:' "$r2_setup_log" || true)"
-if [[ "$first_r2_env" != "R2ENV:r2id:r2secret" ]]; then
+if [[ "$first_r2_env" != "R2ENV:r2id:r2secret:" ]]; then
   echo "expected setup helper to receive R2 credentials first, got: $first_r2_env" >&2
   echo "--- r2 setup aws log ---" >&2
   cat "$r2_setup_log" >&2

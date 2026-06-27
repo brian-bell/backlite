@@ -442,17 +442,17 @@ phase4_aws_cmd() {
 
 r2_aws_cmd() {
     if [[ -n "$r2_access_key_id" ]]; then
-        if (( ${#aws_common_args[@]} > 0 )); then
-            AWS_ACCESS_KEY_ID="$r2_access_key_id" \
-            AWS_SECRET_ACCESS_KEY="$r2_secret_access_key" \
-            AWS_EC2_METADATA_DISABLED="${AWS_EC2_METADATA_DISABLED:-true}" \
+        (
+            unset AWS_PROFILE AWS_SESSION_TOKEN
+            export AWS_ACCESS_KEY_ID="$r2_access_key_id"
+            export AWS_SECRET_ACCESS_KEY="$r2_secret_access_key"
+            export AWS_EC2_METADATA_DISABLED="${AWS_EC2_METADATA_DISABLED:-true}"
+            if (( ${#aws_common_args[@]} > 0 )); then
                 aws "${aws_common_args[@]}" "$@"
-        else
-            AWS_ACCESS_KEY_ID="$r2_access_key_id" \
-            AWS_SECRET_ACCESS_KEY="$r2_secret_access_key" \
-            AWS_EC2_METADATA_DISABLED="${AWS_EC2_METADATA_DISABLED:-true}" \
+            else
                 aws "$@"
-        fi
+            fi
+        )
     else
         aws_cmd "$@"
     fi

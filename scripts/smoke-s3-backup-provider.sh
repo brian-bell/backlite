@@ -209,22 +209,6 @@ phase_selected() {
     return 1
 }
 
-only_selected_phase() {
-    local wanted="$1"
-    (( ${#phases[@]} == 1 )) && [[ "${phases[0]}" == "$wanted" ]]
-}
-
-phases_are_recovery_only() {
-    local phase
-    for phase in "${phases[@]}"; do
-        case "$phase" in
-            3|4) ;;
-            *) return 1 ;;
-        esac
-    done
-    return 0
-}
-
 configure_cloudflare_r2() {
     phase_selected 6 || return 0
 
@@ -268,6 +252,9 @@ configure_cloudflare_r2() {
     if [[ -z "$prefix" ]]; then
         prefix="sqlite/cloudflare-r2/"
     fi
+    if [[ -z "$recovery_aws_profile" && -n "$aws_profile" ]]; then
+        recovery_aws_profile="$aws_profile"
+    fi
     if [[ -n "$r2_access_key_id$r2_secret_access_key" ]]; then
         [[ -n "$r2_access_key_id" && -n "$r2_secret_access_key" ]] || die "phase 6 requires both BACKFLOW_SMOKE_R2_ACCESS_KEY_ID and BACKFLOW_SMOKE_R2_SECRET_ACCESS_KEY when using separate R2 credentials"
         if [[ -n "$aws_profile" || -n "$recovery_aws_profile" ]]; then
@@ -285,9 +272,6 @@ if (( ${#phases[@]} == 0 )); then
 fi
 
 configure_cloudflare_r2
-if [[ -z "$recovery_aws_profile" && -n "$aws_profile" ]]; then
-    recovery_aws_profile="$aws_profile"
-fi
 
 [[ -n "$bucket" ]] || die "--bucket or BACKFLOW_BACKUP_S3_BUCKET is required"
 [[ "$timeout" =~ ^[0-9]+$ ]] || die "--timeout must be a positive integer"
@@ -403,89 +387,30 @@ cleanup() {
 }
 trap cleanup EXIT
 
-aws_common_args=()
+aws_args=()
+if [[ -n "$aws_profile" ]]; then
+    aws_args+=(--profile "$aws_profile")
+fi
 if [[ -n "$endpoint" ]]; then
-    aws_common_args+=(--endpoint-url "$endpoint")
+    aws_args+=(--endpoint-url "$endpoint")
 fi
 if [[ -n "$region" ]]; then
-    aws_common_args+=(--region "$region")
+    aws_args+=(--region "$region")
 fi
 
-aws_cmd_with_profile() {
-    local profile="$1"
-    shift
-    local args=()
-    if [[ -n "$profile" ]]; then
-        args+=(--profile "$profile")
-    fi
-    if (( ${#aws_common_args[@]} > 0 )); then
-        args+=("${aws_common_args[@]}")
-    fi
-    aws "${args[@]}" "$@"
-}
-
 aws_cmd() {
-    aws_cmd_with_profile "$aws_profile" "$@"
-}
-
-recovery_aws_cmd() {
-    aws_cmd_with_profile "$recovery_aws_profile" "$@"
-}
-
-phase4_aws_cmd() {
-    if [[ -n "$aws_profile" ]]; then
-        aws_cmd "$@"
-    else
-        recovery_aws_cmd "$@"
-    fi
+    aws "${aws_args[@]}" "$@"
 }
 
 r2_aws_cmd() {
     if [[ -n "$r2_access_key_id" ]]; then
-        if (( ${#aws_common_args[@]} > 0 )); then
-            AWS_ACCESS_KEY_ID="$r2_access_key_id" \
-            AWS_SECRET_ACCESS_KEY="$r2_secret_access_key" \
-            AWS_EC2_METADATA_DISABLED="${AWS_EC2_METADATA_DISABLED:-true}" \
-                aws "${aws_common_args[@]}" "$@"
-        else
-            AWS_ACCESS_KEY_ID="$r2_access_key_id" \
-            AWS_SECRET_ACCESS_KEY="$r2_secret_access_key" \
-            AWS_EC2_METADATA_DISABLED="${AWS_EC2_METADATA_DISABLED:-true}" \
-                aws "$@"
-        fi
+        AWS_ACCESS_KEY_ID="$r2_access_key_id" \
+        AWS_SECRET_ACCESS_KEY="$r2_secret_access_key" \
+        AWS_EC2_METADATA_DISABLED="${AWS_EC2_METADATA_DISABLED:-true}" \
+            aws "${aws_args[@]}" "$@"
     else
         aws_cmd "$@"
     fi
-}
-
-setup_credentials_profile() {
-    if [[ -n "$aws_profile" ]]; then
-        printf '%s' "$aws_profile"
-    elif phases_are_recovery_only && [[ -n "$recovery_aws_profile" ]]; then
-        printf '%s' "$recovery_aws_profile"
-    fi
-}
-
-setup_credentials_use_r2_env() {
-    only_selected_phase 6 && [[ -n "$r2_access_key_id" ]]
-}
-
-run_with_smoke_credentials() {
-    local profile="$1"
-    local use_r2_env="$2"
-    shift 2
-    (
-        if [[ "$use_r2_env" == "true" ]]; then
-            unset AWS_PROFILE AWS_SESSION_TOKEN
-            export AWS_ACCESS_KEY_ID="$r2_access_key_id"
-            export AWS_SECRET_ACCESS_KEY="$r2_secret_access_key"
-            export AWS_EC2_METADATA_DISABLED="${AWS_EC2_METADATA_DISABLED:-true}"
-        elif [[ -n "$profile" ]]; then
-            unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
-            export AWS_PROFILE="$profile"
-        fi
-        "$@"
-    )
 }
 
 normalized_prefix="$prefix"
@@ -511,13 +436,7 @@ setup_bucket_if_requested() {
     if [[ -n "$endpoint" ]]; then
         setup_args+=(--endpoint-url "$endpoint")
     fi
-    local setup_profile
-    setup_profile="$(setup_credentials_profile)"
-    local setup_use_r2_env=false
-    if setup_credentials_use_r2_env; then
-        setup_use_r2_env=true
-    fi
-    run_with_smoke_credentials "$setup_profile" "$setup_use_r2_env" "$repo_root/scripts/setup-backup-bucket.sh" "${setup_args[@]}"
+    "$repo_root/scripts/setup-backup-bucket.sh" "${setup_args[@]}"
 }
 
 backlite_built=0
@@ -706,13 +625,7 @@ run_phase_2() {
     if [[ -n "$endpoint" ]]; then
         setup_args+=(--endpoint-url "$endpoint")
     fi
-    local setup_profile
-    setup_profile="$(setup_credentials_profile)"
-    local setup_use_r2_env=false
-    if setup_credentials_use_r2_env; then
-        setup_use_r2_env=true
-    fi
-    if ! run_with_smoke_credentials "$setup_profile" "$setup_use_r2_env" "$repo_root/scripts/setup-backup-bucket.sh" "${setup_args[@]}" >"$phase2_stdout" 2>"$phase2_stderr"; then
+    if ! "$repo_root/scripts/setup-backup-bucket.sh" "${setup_args[@]}" >"$phase2_stdout" 2>"$phase2_stderr"; then
         cat "$phase2_stdout"
         cat "$phase2_stderr" >&2
         die "setup helper failed during phase 2"
@@ -810,7 +723,7 @@ run_phase_4() {
     echo "Waiting for /health..."
     wait_for_health
     wait_for_upload_success
-    validate_uploaded_artifact true phase4_aws_cmd
+    validate_uploaded_artifact true
 
     after_count="$(artifact_count)"
     [[ "$after_count" == "$before_count" ]] || die "upload recovery created duplicate local backups"

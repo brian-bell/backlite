@@ -33,11 +33,6 @@ func (u *S3Uploader) Upload(ctx context.Context, input UploadInput) (UploadResul
 	if err != nil {
 		return UploadResult{}, fmt.Errorf("load aws config: %w", err)
 	}
-	if awsCfg.Region == "" && u.cfg.Endpoint != "" {
-		// The SDK still requires a signing region when BaseEndpoint points at
-		// an S3-compatible provider.
-		awsCfg.Region = "auto"
-	}
 
 	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
 		if u.cfg.Endpoint != "" {

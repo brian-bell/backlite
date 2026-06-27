@@ -136,10 +136,14 @@ else
   created_bucket=1
 fi
 
-if ! aws_cmd s3api put-public-access-block \
-  --bucket "$bucket" \
-  --public-access-block-configuration "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true" >/dev/null 2>&1; then
-  warn_optional "public-access block"
+if (( created_bucket == 1 )); then
+  if ! aws_cmd s3api put-public-access-block \
+    --bucket "$bucket" \
+    --public-access-block-configuration "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true" >/dev/null 2>&1; then
+    warn_optional "public-access block"
+  fi
+else
+  echo "warning: existing bucket public-access block configuration was not changed; preserve or configure public access manually if needed" >&2
 fi
 
 if (( created_bucket == 1 )); then

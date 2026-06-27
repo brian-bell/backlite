@@ -99,8 +99,15 @@ stderr="$tmpdir/existing.err"
 BACKFLOW_BACKUP_S3_PREFIX=sqlite/ FAKE_AWS_HEAD=ok run_setup --bucket existing-bucket --region us-east-1 >/dev/null 2>"$stderr"
 assert_log_contains "--region us-east-1 s3api head-bucket --bucket existing-bucket"
 assert_log_not_contains "s3api create-bucket --bucket existing-bucket"
+assert_log_not_contains "s3api put-public-access-block --bucket existing-bucket"
 assert_log_not_contains "s3api put-bucket-encryption --bucket existing-bucket"
 assert_log_not_contains "s3api put-bucket-lifecycle-configuration --bucket existing-bucket"
+if ! grep -F -- "warning: existing bucket public-access block configuration was not changed" "$stderr" >/dev/null; then
+  echo "expected existing-bucket public-access warning" >&2
+  echo "--- stderr ---" >&2
+  cat "$stderr" >&2
+  exit 1
+fi
 if ! grep -F -- "warning: existing bucket lifecycle configuration was not changed" "$stderr" >/dev/null; then
   echo "expected existing-bucket lifecycle warning" >&2
   echo "--- stderr ---" >&2

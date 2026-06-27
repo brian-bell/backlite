@@ -110,9 +110,22 @@ warn_optional() {
   echo "warning: provider did not accept optional ${feature}; continuing because bucket is usable" >&2
 }
 
-if aws_cmd s3api head-bucket --bucket "$bucket" >/dev/null 2>&1; then
+head_bucket_missing() {
+  local err_file="$1"
+  grep -Eiq '(NoSuchBucket|Not[[:space:]]*Found|NotFound|404)' "$err_file"
+}
+
+head_err="$(mktemp)"
+if aws_cmd s3api head-bucket --bucket "$bucket" >/dev/null 2>"$head_err"; then
   echo "bucket exists: $bucket"
 else
+  if ! head_bucket_missing "$head_err"; then
+    cat "$head_err" >&2
+    rm -f "$head_err"
+    echo "could not verify whether bucket exists: $bucket" >&2
+    exit 1
+  fi
+  rm -f "$head_err"
   create_args=(s3api create-bucket --bucket "$bucket")
   if [[ -n "$region" ]]; then
     if [[ "$region" != "us-east-1" ]]; then
@@ -135,6 +148,7 @@ else
   echo "bucket created: $bucket"
   created_bucket=1
 fi
+rm -f "$head_err"
 
 if (( created_bucket == 1 )); then
   if ! aws_cmd s3api put-public-access-block \

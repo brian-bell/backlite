@@ -19,6 +19,11 @@ case "$*" in
     if [[ "${FAKE_AWS_HEAD:-missing}" == "ok" ]]; then
       exit 0
     fi
+    if [[ "${FAKE_AWS_HEAD:-missing}" == "forbidden" ]]; then
+      echo "An error occurred (403) when calling the HeadBucket operation: Forbidden" >&2
+      exit 255
+    fi
+    echo "An error occurred (404) when calling the HeadBucket operation: Not Found" >&2
     exit 255
     ;;
   *"s3api create-bucket "*"--create-bucket-configuration "*)
@@ -110,6 +115,24 @@ if ! grep -F -- "warning: existing bucket public-access block configuration was 
 fi
 if ! grep -F -- "warning: existing bucket lifecycle configuration was not changed" "$stderr" >/dev/null; then
   echo "expected existing-bucket lifecycle warning" >&2
+  echo "--- stderr ---" >&2
+  cat "$stderr" >&2
+  exit 1
+fi
+
+: >"$log"
+stderr="$tmpdir/protected.err"
+if FAKE_AWS_HEAD=forbidden run_setup --bucket protected-bucket --region us-east-1 >/dev/null 2>"$stderr"; then
+  echo "expected protected-bucket head-bucket failure to stop setup" >&2
+  exit 1
+fi
+assert_log_contains "--region us-east-1 s3api head-bucket --bucket protected-bucket"
+assert_log_not_contains "s3api create-bucket --bucket protected-bucket"
+assert_log_not_contains "s3api put-public-access-block --bucket protected-bucket"
+assert_log_not_contains "s3api put-bucket-encryption --bucket protected-bucket"
+assert_log_not_contains "s3api put-bucket-lifecycle-configuration --bucket protected-bucket"
+if ! grep -F -- "could not verify whether bucket exists: protected-bucket" "$stderr" >/dev/null; then
+  echo "expected protected-bucket verification failure" >&2
   echo "--- stderr ---" >&2
   cat "$stderr" >&2
   exit 1

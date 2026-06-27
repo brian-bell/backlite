@@ -161,6 +161,61 @@ func TestLoad_LocalBackupCanBeDisabled(t *testing.T) {
 	}
 }
 
+func TestLoad_BackupS3UploadDefaultsDisabled(t *testing.T) {
+	setBaseEnv(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+
+	if cfg.BackupS3Bucket != "" {
+		t.Fatalf("BackupS3Bucket = %q, want empty by default", cfg.BackupS3Bucket)
+	}
+	if cfg.BackupS3Prefix != "" {
+		t.Fatalf("BackupS3Prefix = %q, want empty by default", cfg.BackupS3Prefix)
+	}
+	if cfg.BackupS3Region != "" {
+		t.Fatalf("BackupS3Region = %q, want empty by default", cfg.BackupS3Region)
+	}
+	if cfg.BackupS3Endpoint != "" {
+		t.Fatalf("BackupS3Endpoint = %q, want empty by default", cfg.BackupS3Endpoint)
+	}
+	if cfg.BackupS3PathStyle {
+		t.Fatal("BackupS3PathStyle = true, want false by default")
+	}
+}
+
+func TestLoad_BackupS3UploadConfig(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("BACKFLOW_BACKUP_S3_BUCKET", "backlite-prod-backups")
+	t.Setenv("BACKFLOW_BACKUP_S3_PREFIX", "sqlite/daily/")
+	t.Setenv("BACKFLOW_BACKUP_S3_REGION", "us-east-2")
+	t.Setenv("BACKFLOW_BACKUP_S3_ENDPOINT", "https://s3.us-east-2.amazonaws.com")
+	t.Setenv("BACKFLOW_BACKUP_S3_PATH_STYLE", "true")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+
+	if cfg.BackupS3Bucket != "backlite-prod-backups" {
+		t.Fatalf("BackupS3Bucket = %q, want backlite-prod-backups", cfg.BackupS3Bucket)
+	}
+	if cfg.BackupS3Prefix != "sqlite/daily/" {
+		t.Fatalf("BackupS3Prefix = %q, want sqlite/daily/", cfg.BackupS3Prefix)
+	}
+	if cfg.BackupS3Region != "us-east-2" {
+		t.Fatalf("BackupS3Region = %q, want us-east-2", cfg.BackupS3Region)
+	}
+	if cfg.BackupS3Endpoint != "https://s3.us-east-2.amazonaws.com" {
+		t.Fatalf("BackupS3Endpoint = %q, want https://s3.us-east-2.amazonaws.com", cfg.BackupS3Endpoint)
+	}
+	if !cfg.BackupS3PathStyle {
+		t.Fatal("BackupS3PathStyle = false, want true")
+	}
+}
+
 func TestLoad_LocalBackupRequiresPositiveIntervalWhenEnabled(t *testing.T) {
 	setBaseEnv(t)
 	t.Setenv("BACKFLOW_LOCAL_BACKUP_INTERVAL_SEC", "0")

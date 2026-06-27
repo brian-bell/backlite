@@ -29,16 +29,23 @@ type statsResponse struct {
 }
 
 type backupStats struct {
-	Enabled          bool                `json:"enabled"`
-	Directory        string              `json:"directory"`
-	IntervalSeconds  float64             `json:"interval_seconds"`
-	RetentionSeconds float64             `json:"retention_seconds"`
-	WorkerState      string              `json:"worker_state"`
-	LatestArtifact   *backup.Metadata    `json:"latest_artifact,omitempty"`
-	LastSuccessAt    *time.Time          `json:"last_success_at,omitempty"`
-	LastErrorAt      *time.Time          `json:"last_error_at,omitempty"`
-	LastErrorMessage string              `json:"last_error_message,omitempty"`
-	RecentErrors     []backup.ErrorEntry `json:"recent_errors"`
+	Enabled             bool                 `json:"enabled"`
+	Directory           string               `json:"directory"`
+	IntervalSeconds     float64              `json:"interval_seconds"`
+	RetentionSeconds    float64              `json:"retention_seconds"`
+	UploadEnabled       bool                 `json:"upload_enabled"`
+	UploadBucket        string               `json:"upload_bucket,omitempty"`
+	UploadPrefix        string               `json:"upload_prefix,omitempty"`
+	UploadEndpoint      string               `json:"upload_endpoint,omitempty"`
+	LatestUploaded      *backup.UploadMarker `json:"latest_uploaded_artifact,omitempty"`
+	PendingUpload       bool                 `json:"pending_upload"`
+	NextUploadAttemptAt *time.Time           `json:"next_upload_attempt_at,omitempty"`
+	WorkerState         string               `json:"worker_state"`
+	LatestArtifact      *backup.Metadata     `json:"latest_artifact,omitempty"`
+	LastSuccessAt       *time.Time           `json:"last_success_at,omitempty"`
+	LastErrorAt         *time.Time           `json:"last_error_at,omitempty"`
+	LastErrorMessage    string               `json:"last_error_message,omitempty"`
+	RecentErrors        []backup.ErrorEntry  `json:"recent_errors"`
 }
 
 type orchestratorStats struct {
@@ -97,16 +104,23 @@ func StatsHandler(runningFn func() int, ps PoolStatter, startedAt time.Time, bac
 			s := backupStatusFn()
 			if s.Enabled || s.Directory != "" {
 				bs := &backupStats{
-					Enabled:          s.Enabled,
-					Directory:        s.Directory,
-					IntervalSeconds:  s.Interval.Seconds(),
-					RetentionSeconds: s.Retention.Seconds(),
-					WorkerState:      s.WorkerState,
-					LatestArtifact:   s.LatestArtifact,
-					LastSuccessAt:    s.LastSuccessAt,
-					LastErrorAt:      s.LastErrorAt,
-					LastErrorMessage: s.LastErrorMessage,
-					RecentErrors:     s.RecentErrors,
+					Enabled:             s.Enabled,
+					Directory:           s.Directory,
+					IntervalSeconds:     s.Interval.Seconds(),
+					RetentionSeconds:    s.Retention.Seconds(),
+					UploadEnabled:       s.UploadEnabled,
+					UploadBucket:        s.UploadBucket,
+					UploadPrefix:        s.UploadPrefix,
+					UploadEndpoint:      s.UploadEndpoint,
+					LatestUploaded:      s.LatestUploaded,
+					PendingUpload:       s.PendingUpload,
+					NextUploadAttemptAt: s.NextUploadAttemptAt,
+					WorkerState:         s.WorkerState,
+					LatestArtifact:      s.LatestArtifact,
+					LastSuccessAt:       s.LastSuccessAt,
+					LastErrorAt:         s.LastErrorAt,
+					LastErrorMessage:    s.LastErrorMessage,
+					RecentErrors:        s.RecentErrors,
 				}
 				if bs.RecentErrors == nil {
 					bs.RecentErrors = []backup.ErrorEntry{}

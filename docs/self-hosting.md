@@ -48,6 +48,33 @@ BACKFLOW_WEBHOOK_URL=https://your-webhook-endpoint.example
 BACKFLOW_WEBHOOK_EVENTS=task.completed,task.failed,task.needs_input
 ```
 
+Optional S3-compatible backup upload:
+
+```bash
+BACKFLOW_BACKUP_S3_BUCKET=your-backlite-backups
+BACKFLOW_BACKUP_S3_PREFIX=sqlite/
+# Optional provider controls:
+# BACKFLOW_BACKUP_S3_REGION=us-east-1
+# BACKFLOW_BACKUP_S3_ENDPOINT=https://s3.example.com
+# BACKFLOW_BACKUP_S3_PATH_STYLE=true
+```
+
+Create or verify the bucket with:
+
+```bash
+scripts/setup-backup-bucket.sh --bucket "$BACKFLOW_BACKUP_S3_BUCKET" --prefix "$BACKFLOW_BACKUP_S3_PREFIX"
+```
+
+The setup helper does not overwrite encryption or lifecycle rules on an existing bucket. Configure retention and encryption manually for shared buckets if you need provider-side controls.
+
+Smoke-test the configured provider with:
+
+```bash
+scripts/smoke-s3-backup-provider.sh --bucket "$BACKFLOW_BACKUP_S3_BUCKET" --prefix "$BACKFLOW_BACKUP_S3_PREFIX"
+```
+
+The script runs phase 1 by default. Use `--phase all` for the lifecycle-safety, permission-failure, recovery, and restore-restart checks; phases 3 and 4 can switch credentials with `--failure-aws-profile` and `--recovery-aws-profile`. For Cloudflare R2, set `BACKFLOW_SMOKE_R2_ACCESS_KEY_ID` and `BACKFLOW_SMOKE_R2_SECRET_ACCESS_KEY`, then use `--phase 6 --r2-bucket-url "https://<account-id>.r2.cloudflarestorage.com/<bucket>"`.
+
 Backlite auto-runs SQLite migrations on startup. It writes the application database at `BACKFLOW_DATABASE_PATH` and completed task logs and metadata under `BACKFLOW_DATA_DIR/tasks/<task-id>/`. Choose paths on persistent storage.
 
 See `internal/config/config.go` for the full env surface and current defaults.
@@ -97,7 +124,7 @@ ls "$BACKFLOW_DATA_DIR/tasks/<task-id>/"
 - Concurrency capacity is capped by `BACKFLOW_MAX_CONTAINERS`; the orchestrator counts tasks in `provisioning`/`running` against it.
 - `save_agent_output=false` disables the filesystem artifact write for a task.
 - Backlite serves the REST API only; run any UI or dashboard separately.
-- Local SQLite backups are on by default and write `backlite-YYYYMMDDTHHMMSSZ.sqlite.gz` artifacts plus `.meta.json` sidecars under `BACKFLOW_LOCAL_BACKUP_DIR`. Mount that directory on persistent storage (and consider snapshotting/replicating it off-host). Finalized backups older than `BACKFLOW_LOCAL_BACKUP_RETENTION_SEC` are pruned automatically (the newest valid backup is always preserved); set retention to `0` to keep everything. Worker state and recent errors are exposed on `/debug/stats` under the `backup` key. Disable with `BACKFLOW_LOCAL_BACKUP_ENABLED=false` if you back the database up some other way. Restore is documented in the README.
+- Local SQLite backups are on by default and write `backlite-YYYYMMDDTHHMMSSZ.sqlite.gz` artifacts plus `.meta.json` sidecars under `BACKFLOW_LOCAL_BACKUP_DIR`. Mount that directory on persistent storage. When `BACKFLOW_BACKUP_S3_BUCKET` is set, the newest valid local artifact is uploaded to S3-compatible storage and marked locally with `.upload.json`; upload failures retry independently and do not create duplicate local backups. Finalized backups older than `BACKFLOW_LOCAL_BACKUP_RETENTION_SEC` are pruned automatically with metadata and upload-marker sidecars (the newest valid backup is always preserved); set retention to `0` to keep everything. Worker state, upload state, and recent errors are exposed on `/debug/stats` under the `backup` key. Disable with `BACKFLOW_LOCAL_BACKUP_ENABLED=false` if you back the database up some other way. Backups include only the SQLite database, not `BACKFLOW_DATA_DIR`; restore is documented in the README.
 
 ## Related Docs
 

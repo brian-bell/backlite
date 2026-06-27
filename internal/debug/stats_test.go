@@ -80,20 +80,41 @@ func TestStatsHandler_ReturnsExpectedFields(t *testing.T) {
 
 func TestStatsHandler_IncludesBackupStatus(t *testing.T) {
 	finalized := time.Date(2026, 4, 25, 12, 0, 0, 0, time.UTC)
+	uploadedAt := finalized.Add(2 * time.Minute)
+	nextUploadAttemptAt := finalized.Add(5 * time.Minute)
 	statusFn := func() backup.Status {
 		return backup.Status{
-			Enabled:     true,
-			Directory:   "/var/backups/backlite",
-			Interval:    24 * time.Hour,
-			Retention:   7 * 24 * time.Hour,
-			WorkerState: "idle",
+			Enabled:             true,
+			Directory:           "/var/backups/backlite",
+			Interval:            24 * time.Hour,
+			Retention:           7 * 24 * time.Hour,
+			UploadEnabled:       true,
+			UploadBucket:        "backlite-prod",
+			UploadPrefix:        "sqlite/daily/",
+			UploadEndpoint:      "https://s3.example.test",
+			PendingUpload:       true,
+			NextUploadAttemptAt: &nextUploadAttemptAt,
+			WorkerState:         "idle",
 			LatestArtifact: &backup.Metadata{
 				FileName:    "backlite-20260425T120000Z.sqlite.gz",
 				FinalizedAt: finalized,
 				SHA256:      "abc",
 				SizeBytes:   123,
 			},
-			RecentErrors: []backup.ErrorEntry{},
+			LatestUploaded: &backup.UploadMarker{
+				Bucket:     "backlite-prod",
+				Key:        "sqlite/daily/backlite-20260425T120000Z.sqlite.gz",
+				Endpoint:   "https://s3.example.test",
+				ETag:       `"abc123"`,
+				SHA256:     "abc",
+				SizeBytes:  123,
+				UploadedAt: uploadedAt,
+			},
+			RecentErrors: []backup.ErrorEntry{{
+				At:      finalized.Add(time.Minute),
+				Phase:   "upload",
+				Message: "temporary s3 outage",
+			}},
 		}
 	}
 
@@ -110,13 +131,30 @@ func TestStatsHandler_IncludesBackupStatus(t *testing.T) {
 	var resp struct {
 		Data struct {
 			Backup *struct {
-				Enabled        bool   `json:"enabled"`
-				Directory      string `json:"directory"`
-				WorkerState    string `json:"worker_state"`
-				LatestArtifact *struct {
+				Enabled             bool       `json:"enabled"`
+				Directory           string     `json:"directory"`
+				UploadEnabled       bool       `json:"upload_enabled"`
+				UploadBucket        string     `json:"upload_bucket"`
+				UploadPrefix        string     `json:"upload_prefix"`
+				UploadEndpoint      string     `json:"upload_endpoint"`
+				PendingUpload       bool       `json:"pending_upload"`
+				NextUploadAttemptAt *time.Time `json:"next_upload_attempt_at"`
+				WorkerState         string     `json:"worker_state"`
+				LatestArtifact      *struct {
 					FileName  string `json:"file_name"`
 					SizeBytes int64  `json:"size_bytes"`
 				} `json:"latest_artifact"`
+				LatestUploaded *struct {
+					Bucket     string    `json:"bucket"`
+					Key        string    `json:"key"`
+					Endpoint   string    `json:"endpoint"`
+					ETag       string    `json:"etag"`
+					UploadedAt time.Time `json:"uploaded_at"`
+				} `json:"latest_uploaded_artifact"`
+				RecentErrors []struct {
+					Phase   string `json:"phase"`
+					Message string `json:"message"`
+				} `json:"recent_errors"`
 			} `json:"backup"`
 		} `json:"data"`
 	}
@@ -135,6 +173,24 @@ func TestStatsHandler_IncludesBackupStatus(t *testing.T) {
 	if resp.Data.Backup.WorkerState != "idle" {
 		t.Errorf("backup.worker_state = %q, want idle", resp.Data.Backup.WorkerState)
 	}
+	if !resp.Data.Backup.UploadEnabled {
+		t.Error("backup.upload_enabled = false, want true")
+	}
+	if resp.Data.Backup.UploadBucket != "backlite-prod" {
+		t.Errorf("backup.upload_bucket = %q, want backlite-prod", resp.Data.Backup.UploadBucket)
+	}
+	if resp.Data.Backup.UploadPrefix != "sqlite/daily/" {
+		t.Errorf("backup.upload_prefix = %q, want sqlite/daily/", resp.Data.Backup.UploadPrefix)
+	}
+	if resp.Data.Backup.UploadEndpoint != "https://s3.example.test" {
+		t.Errorf("backup.upload_endpoint = %q", resp.Data.Backup.UploadEndpoint)
+	}
+	if !resp.Data.Backup.PendingUpload {
+		t.Error("backup.pending_upload = false, want true")
+	}
+	if resp.Data.Backup.NextUploadAttemptAt == nil || !resp.Data.Backup.NextUploadAttemptAt.Equal(nextUploadAttemptAt) {
+		t.Errorf("backup.next_upload_attempt_at = %v, want %v", resp.Data.Backup.NextUploadAttemptAt, nextUploadAttemptAt)
+	}
 	if resp.Data.Backup.LatestArtifact == nil {
 		t.Fatal("backup.latest_artifact missing")
 	}
@@ -143,6 +199,21 @@ func TestStatsHandler_IncludesBackupStatus(t *testing.T) {
 	}
 	if resp.Data.Backup.LatestArtifact.SizeBytes != 123 {
 		t.Errorf("latest_artifact.size_bytes = %d, want 123", resp.Data.Backup.LatestArtifact.SizeBytes)
+	}
+	if resp.Data.Backup.LatestUploaded == nil {
+		t.Fatal("backup.latest_uploaded_artifact missing")
+	}
+	if resp.Data.Backup.LatestUploaded.Key != "sqlite/daily/backlite-20260425T120000Z.sqlite.gz" {
+		t.Errorf("latest_uploaded_artifact.key = %q", resp.Data.Backup.LatestUploaded.Key)
+	}
+	if resp.Data.Backup.LatestUploaded.ETag != `"abc123"` {
+		t.Errorf("latest_uploaded_artifact.etag = %q", resp.Data.Backup.LatestUploaded.ETag)
+	}
+	if len(resp.Data.Backup.RecentErrors) != 1 {
+		t.Fatalf("len(backup.recent_errors) = %d, want 1", len(resp.Data.Backup.RecentErrors))
+	}
+	if resp.Data.Backup.RecentErrors[0].Phase != "upload" {
+		t.Errorf("recent_errors[0].phase = %q, want upload", resp.Data.Backup.RecentErrors[0].Phase)
 	}
 }
 

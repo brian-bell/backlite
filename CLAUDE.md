@@ -17,6 +17,7 @@ make test-schema        # Schemathesis fuzz tests against OpenAPI spec (requires
 make test-blackbox      # Black-box integration test (builds fake agent, spins up server + DB)
 make test-soak          # Soak test (10 min short mode; starts dedicated server on sibling -soak.db)
 make test-fake-agent    # Unit tests for the fake agent Docker image
+make test-s3-backup     # MinIO-backed integration test for S3 backup uploads
 make deps               # go mod tidy
 make clean              # Remove bin/ directory
 make db-running         # Show running tasks (also: db-pending, db-completed, db-failed)
@@ -62,7 +63,7 @@ All JSON responses are wrapped in a `{"data": …}` envelope; errors use `{"erro
 - **config/** — Env-var config (`BACKFLOW_*` prefix). `BACKFLOW_API_KEY` enables single-token API auth; otherwise `api_keys` in SQLite can back authenticated API/debug requests. `TaskDefaults(taskMode)` returns resolved defaults. `Apply(task, overrides)` fills zero-value fields using `*bool` overrides (nil = use default, non-nil = use pointed value).
 - **notify/** — `Notifier` interface, `WebhookNotifier` (HTTP POST, 3 retries, event filtering), `NoopNotifier`, `EventBus` (async fan-out delivery via buffered channel), `NewEvent` constructor with `EventOption` functional options. `Event` carries `TaskMode` and `ParentTaskID` when set.
 - **debug/** — `/debug/stats` handler: PID, uptime, running task count, database handle metrics
-- **backup/** — Local SQLite backup manager. `Manager.MaybeSchedule(ctx)` is invoked from each orchestrator tick; when enabled and the latest valid artifact is older than the configured interval, it spawns a single background goroutine that uses the SQLite online-backup API, gzip-compresses the snapshot, decompresses + `PRAGMA integrity_check`s it, then atomically renames into place and writes a sidecar with size, sha256, and finalization time. Subsequent ticks recompute the sha256 of the latest candidate before trusting it; mismatches fall back to the next-older valid artifact.
+- **backup/** — Local SQLite backup manager plus optional S3-compatible uploader. `Manager.MaybeSchedule(ctx)` is invoked from each orchestrator tick; when enabled and the latest valid artifact is older than the configured interval, it spawns a single background goroutine that uses the SQLite online-backup API, gzip-compresses the snapshot, decompresses + `PRAGMA integrity_check`s it, then atomically renames into place and writes a sidecar with size, sha256, and finalization time. Subsequent ticks recompute the sha256 of the latest candidate before trusting it; mismatches fall back to the next-older valid artifact. When `BACKFLOW_BACKUP_S3_BUCKET` is set, the same single-flight worker uploads the newest valid local artifact and writes an `.upload.json` marker; upload retry/backoff is independent from local backup freshness.
 - **skillcontract/** — Embedded JSON Schema validator (`schema.json`) for skill-agent `status.json` payloads. Tests walk every `docker/skill-agent/skills/*/examples/status.json` fixture and assert the deliberately broken negative fixture fails. Used by the skill-agent build to keep skill bundles' contract test fixtures honest.
 
 ### Fake agent (`test/blackbox/fake-agent/`)
@@ -116,7 +117,7 @@ Success is the agent's call, not the harness's. `monitor.handleCompletion` requi
 
 ## Local SQLite backups
 
-Enabled by default. Each orchestrator tick calls `backup.Manager.MaybeSchedule(ctx)`; the manager first prunes aged artifacts and stale temp files (see below), then exits early if disabled, already running, or the latest valid backup is younger than `BACKFLOW_LOCAL_BACKUP_INTERVAL_SEC`. Otherwise it launches a single background goroutine that:
+Enabled by default. Each orchestrator tick calls `backup.Manager.MaybeSchedule(ctx)`; the manager first prunes aged artifacts and stale temp files (see below), then inspects local freshness and upload-marker state. It exits early if disabled, already running, the latest valid backup is younger than `BACKFLOW_LOCAL_BACKUP_INTERVAL_SEC`, and no S3 upload is currently due. Otherwise it launches a single background goroutine that:
 
 1. Opens the configured database read-side and runs the SQLite online backup API (`*sqlite.Backup` from `modernc.org/sqlite`) into a temp file.
 2. Gzip-compresses the temp file to a `.sqlite.gz.tmp` sibling.
@@ -125,17 +126,19 @@ Enabled by default. Each orchestrator tick calls `backup.Manager.MaybeSchedule(c
 
 Artifact filenames are `backlite-YYYYMMDDTHHMMSSZ.sqlite.gz` (UTC). Age comparisons use `finalized_at` so a backup that takes longer than the interval does not immediately appear stale and trigger a continuous loop. Validity requires a structurally-correct sidecar **and** a recomputed sha256 that matches; corrupted artifacts are skipped and the scheduler falls back to the next-older valid one.
 
+When S3 upload is configured with `BACKFLOW_BACKUP_S3_BUCKET`, upload keys are the normalized `BACKFLOW_BACKUP_S3_PREFIX` plus the artifact file name. The concrete uploader uses AWS SDK for Go v2 with the standard credential chain and supports `BACKFLOW_BACKUP_S3_REGION`, `BACKFLOW_BACKUP_S3_ENDPOINT`, and `BACKFLOW_BACKUP_S3_PATH_STYLE`. A successful upload writes `<artifact>.upload.json` containing `bucket`, `key`, `endpoint`, `etag`, `size_bytes`, `sha256`, and `uploaded_at`. The manager validates bucket, key, endpoint, size, and checksum before trusting a marker, so stale markers cannot suppress a required upload. Upload failures record `phase: "upload"`, set in-memory retry backoff (`next_upload_attempt_at`), and do **not** create another local backup just to retry upload.
+
 Retention pruning runs synchronously at the top of each `MaybeSchedule` tick and deletes:
 
-- Finalized artifacts older than `BACKFLOW_LOCAL_BACKUP_RETENTION_SEC`, paired with their `.meta.json` sidecars. The newest valid artifact is always preserved regardless of age. Setting retention to `0` disables pruning.
-- Stale temp files (`.sqlite.tmp`, `.sqlite.gz.tmp`, `.sqlite.gz.tmp.verify`, `.meta.json.tmp`) whose mtime is older than a 1-hour grace.
-- Orphan `.meta.json` sidecars whose `.sqlite.gz` artifact has already been removed.
+- Finalized artifacts older than `BACKFLOW_LOCAL_BACKUP_RETENTION_SEC`, paired with their `.meta.json` and `.upload.json` sidecars. The newest valid artifact is always preserved regardless of age. Setting retention to `0` disables pruning.
+- Stale temp files (`.sqlite.tmp`, `.sqlite.gz.tmp`, `.sqlite.gz.tmp.verify`, `.meta.json.tmp`, `.upload.json.tmp`) whose mtime is older than a 1-hour grace.
+- Orphan `.meta.json` and `.upload.json` sidecars whose `.sqlite.gz` artifact has already been removed.
 
 Each delete logs `pruned local sqlite backup …` at `Info` with `file_name`, `age_seconds`, and a `reason` of `age`, `stale_temp`, or `orphan_metadata`. Per-file delete failures log `Error` and the loop continues.
 
-Operator visibility lives on `/debug/stats` under the `backup` key: `enabled`, `directory`, `interval_seconds`, `retention_seconds`, `worker_state` (`idle`/`running`), `latest_artifact` (the sidecar metadata), `last_success_at`, `last_error_at`, `last_error_message`, and a `recent_errors` ring of the last 5 entries (each tagged with `phase: "backup"` or `"prune"`). Skipped ticks log at `Debug` with `reason=disabled|already_running|not_due` so they don't spam logs at default levels.
+Operator visibility lives on `/debug/stats` under the `backup` key: `enabled`, `directory`, `interval_seconds`, `retention_seconds`, `upload_enabled`, `upload_bucket`, `upload_prefix`, `upload_endpoint`, `latest_uploaded_artifact`, `pending_upload`, `next_upload_attempt_at`, `worker_state` (`idle`/`running`), `latest_artifact` (the sidecar metadata), `last_success_at`, `last_error_at`, `last_error_message`, and a `recent_errors` ring of the last 5 entries (each tagged with `phase: "backup"`, `"prune"`, or `"upload"`). Skipped ticks log at `Debug` with `reason=disabled|already_running|not_due` so they don't spam logs at default levels.
 
-Failures (e.g. integrity check fails, disk full, source DB locked beyond `busy_timeout`, retention prune errors) are logged and recorded in `recent_errors`, but do not affect health checks (`/health`, `/api/v1/health`) or task orchestration. Backup work runs concurrently with task orchestration but `MaybeSchedule` enforces single-flight via a mutex.
+Failures (e.g. integrity check fails, disk full, source DB locked beyond `busy_timeout`, retention prune errors, S3 upload errors) are logged and recorded in `recent_errors`, but do not affect health checks (`/health`, `/api/v1/health`) or task orchestration. Backup/upload work runs concurrently with task orchestration but `MaybeSchedule` enforces single-flight via a mutex.
 
 Env vars (see `internal/config/config.go` for current defaults):
 
@@ -143,8 +146,15 @@ Env vars (see `internal/config/config.go` for current defaults):
 - `BACKFLOW_LOCAL_BACKUP_DIR` — output directory; supports `~` expansion
 - `BACKFLOW_LOCAL_BACKUP_INTERVAL_SEC` — minimum spacing between successful backups
 - `BACKFLOW_LOCAL_BACKUP_RETENTION_SEC` — age (seconds) past which finalized backups are pruned; `0` disables pruning
+- `BACKFLOW_BACKUP_S3_BUCKET` — enables optional S3-compatible upload
+- `BACKFLOW_BACKUP_S3_PREFIX` — optional object key prefix
+- `BACKFLOW_BACKUP_S3_REGION` — optional region for AWS SDK config
+- `BACKFLOW_BACKUP_S3_ENDPOINT` — optional custom endpoint for compatible providers
+- `BACKFLOW_BACKUP_S3_PATH_STYLE` — use path-style requests
 
-Restore is manual: stop the server, copy the chosen `.sqlite.gz` aside, `gunzip` it, optionally re-run `PRAGMA integrity_check`, replace the file at `BACKFLOW_DATABASE_PATH`, and restart.
+`scripts/setup-backup-bucket.sh` creates or verifies a bucket via AWS CLI-compatible commands. Public-access block, server-side encryption, and lifecycle retention are best-effort and warn/continue when a provider does not support them.
+
+Backups cover only the SQLite database, not task output artifacts or `BACKFLOW_DATA_DIR`. Restore is manual: stop the server, copy or download the chosen `.sqlite.gz` aside, `gunzip -c` it into a separate restore file, run `PRAGMA integrity_check`, preserve the old file at `BACKFLOW_DATABASE_PATH`, replace it with the validated restore file, and restart.
 
 ## Output storage
 

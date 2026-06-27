@@ -36,6 +36,7 @@ make test-blackbox                # End-to-end: builds fake agent, starts server
 make test-soak                    # Resource leak detector (10 min; starts dedicated server on sibling -soak.db)
 make test-fake-agent              # Unit tests for the fake agent image
 make test-schema                  # Schemathesis fuzz tests against OpenAPI spec
+make test-s3-backup               # MinIO-backed integration test for S3 backup uploads
 make test-skill-agent-entrypoint  # Shell-level e2e tests for the skill-agent container entrypoint
 ```
 
@@ -242,7 +243,9 @@ Events: `task.created`, `task.running`, `task.completed`, `task.failed`, `task.n
 
 Enabled by default. The server runs a single background worker from the orchestrator tick that takes a consistent online SQLite snapshot, gzip-compresses and verifies it, and writes it into a configurable directory alongside a `.meta.json` sidecar (`file_name`, `created_at`, `finalized_at`, `sha256`, `size_bytes`). Artifacts are named `backlite-YYYYMMDDTHHMMSSZ.sqlite.gz`. The latest artifact's sha256 is recomputed each tick before it is trusted; corrupted artifacts are skipped and the scheduler falls back to the previous valid one.
 
-Each tick also prunes finalized artifacts older than `BACKFLOW_LOCAL_BACKUP_RETENTION_SEC` (with their sidecars), stale temp files, and orphan sidecars. The newest valid artifact is always preserved, regardless of age; setting retention to `0` disables pruning. Operator-visible state lives on `/debug/stats` under the `backup` key: latest-artifact metadata, worker state, last success/error timestamps, and a ring of recent backup/prune errors. Backup and retention failures are logged and recorded in that feed but do not affect health checks (`/health`, `/api/v1/health`) or task orchestration.
+Each tick also prunes finalized artifacts older than `BACKFLOW_LOCAL_BACKUP_RETENTION_SEC` (with their `.meta.json` and `.upload.json` sidecars), stale temp files, and orphan sidecars. The newest valid artifact is always preserved, regardless of age; setting retention to `0` disables pruning. Operator-visible state lives on `/debug/stats` under the `backup` key: latest-artifact metadata, S3 upload state, worker state, last success/error timestamps, and a ring of recent backup/prune/upload errors. Backup, upload, and retention failures are logged and recorded in that feed but do not affect health checks (`/health`, `/api/v1/health`) or task orchestration.
+
+Optional S3-compatible uploads are enabled by setting `BACKFLOW_BACKUP_S3_BUCKET`. The manager uploads the newest valid local artifact and writes `<artifact>.upload.json` next to the local backup after a successful upload. That marker records bucket, key, endpoint, ETag, size, sha256, and upload time; future ticks validate the marker against the local artifact before suppressing duplicate uploads. Upload failures retry with in-memory backoff and do not force a new local backup.
 
 | Variable | Description |
 |----------|-------------|
@@ -250,5 +253,26 @@ Each tick also prunes finalized artifacts older than `BACKFLOW_LOCAL_BACKUP_RETE
 | `BACKFLOW_LOCAL_BACKUP_DIR` | Output directory (supports `~` expansion) |
 | `BACKFLOW_LOCAL_BACKUP_INTERVAL_SEC` | Minimum spacing between successful backups |
 | `BACKFLOW_LOCAL_BACKUP_RETENTION_SEC` | Age past which finalized backups are pruned (`0` disables pruning) |
+| `BACKFLOW_BACKUP_S3_BUCKET` | Enables optional S3-compatible upload to this bucket |
+| `BACKFLOW_BACKUP_S3_PREFIX` | Optional object key prefix |
+| `BACKFLOW_BACKUP_S3_REGION` | Optional S3 region |
+| `BACKFLOW_BACKUP_S3_ENDPOINT` | Optional custom endpoint for S3-compatible providers |
+| `BACKFLOW_BACKUP_S3_PATH_STYLE` | Use path-style addressing for compatible providers that require it |
 
-To restore: stop the server, `gunzip backlite-...sqlite.gz`, optionally `sqlite3 file.sqlite "PRAGMA integrity_check;"`, copy the result over the file at `BACKFLOW_DATABASE_PATH`, and restart.
+`scripts/setup-backup-bucket.sh` creates or verifies a bucket with AWS CLI-compatible commands. It requires the bucket name via `--bucket` or `BACKFLOW_BACKUP_S3_BUCKET`; public-access blocking is best-effort because S3-compatible providers vary. Default encryption and lifecycle retention are only installed when the helper creates a new bucket, scoped to `--prefix` / `BACKFLOW_BACKUP_S3_PREFIX`, so existing bucket encryption and lifecycle policies are not overwritten.
+
+For a local end-to-end check of backup uploads against MinIO, run `make test-s3-backup`. The target starts a temporary MinIO container, exercises the real AWS SDK upload path, and removes the container afterward.
+
+For a provider smoke test against real AWS S3 or another S3-compatible service, run `scripts/smoke-s3-backup-provider.sh --bucket "$BACKFLOW_BACKUP_S3_BUCKET" --prefix "$BACKFLOW_BACKUP_S3_PREFIX"` after credentials are configured. The script defaults to phase 1 (upload + restore validation); pass `--phase all` to also verify existing-bucket lifecycle safety, upload permission failure, recovery after failure, and restore restart. Phases 3 and 4 can switch credentials with `--failure-aws-profile` and `--recovery-aws-profile`. For Cloudflare R2, set `BACKFLOW_SMOKE_R2_ACCESS_KEY_ID` and `BACKFLOW_SMOKE_R2_SECRET_ACCESS_KEY`, then pass `--phase 6 --r2-bucket-url "https://<account-id>.r2.cloudflarestorage.com/<bucket>"`; the script derives the account endpoint and bucket, defaults the region to `auto` when needed, and uses path-style addressing unless overridden.
+
+Backups cover only the SQLite database at `BACKFLOW_DATABASE_PATH`. Task output files and reading content under `BACKFLOW_DATA_DIR` are not included.
+
+Manual restore:
+
+1. Stop the Backlite server so SQLite is not writing to the database.
+2. Choose a local `.sqlite.gz` artifact, or download the corresponding object from S3.
+3. Decompress to a separate path: `gunzip -c backlite-...sqlite.gz > restore.sqlite`.
+4. Validate the restore candidate: `sqlite3 restore.sqlite "PRAGMA integrity_check;"` should return `ok`.
+5. Preserve the current database: `cp "$BACKFLOW_DATABASE_PATH" "$BACKFLOW_DATABASE_PATH.before-restore"`.
+6. Replace the configured database path with `restore.sqlite`.
+7. Restart Backlite and check `/health` plus `/debug/stats`.

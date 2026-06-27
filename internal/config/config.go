@@ -64,6 +64,11 @@ type Config struct {
 	LocalBackupDir       string
 	LocalBackupInterval  time.Duration
 	LocalBackupRetention time.Duration
+	BackupS3Bucket       string
+	BackupS3Prefix       string
+	BackupS3Region       string
+	BackupS3Endpoint     string
+	BackupS3PathStyle    bool
 
 	// Retry
 	MaxUserRetries int
@@ -103,6 +108,10 @@ func Load() (*Config, error) {
 		LocalBackupDir:       envOr("BACKFLOW_LOCAL_BACKUP_DIR", defaultLocalBackupDir()),
 		LocalBackupInterval:  time.Duration(envInt("BACKFLOW_LOCAL_BACKUP_INTERVAL_SEC", 86400)) * time.Second,
 		LocalBackupRetention: time.Duration(envInt("BACKFLOW_LOCAL_BACKUP_RETENTION_SEC", 604800)) * time.Second,
+		BackupS3Bucket:       os.Getenv("BACKFLOW_BACKUP_S3_BUCKET"),
+		BackupS3Prefix:       os.Getenv("BACKFLOW_BACKUP_S3_PREFIX"),
+		BackupS3Region:       os.Getenv("BACKFLOW_BACKUP_S3_REGION"),
+		BackupS3Endpoint:     os.Getenv("BACKFLOW_BACKUP_S3_ENDPOINT"),
 		MaxUserRetries:       envInt("BACKFLOW_MAX_USER_RETRIES", 2),
 		PollInterval:         time.Duration(envInt("BACKFLOW_POLL_INTERVAL_SEC", 5)) * time.Second,
 	}
@@ -111,6 +120,7 @@ func Load() (*Config, error) {
 	c.DefaultSelfReview = envBool("BACKFLOW_DEFAULT_SELF_REVIEW", false)
 	c.DefaultSaveOutput = envBool("BACKFLOW_DEFAULT_SAVE_AGENT_OUTPUT", true)
 	c.LocalBackupEnabled = envBool("BACKFLOW_LOCAL_BACKUP_ENABLED", true)
+	c.BackupS3PathStyle = envBool("BACKFLOW_BACKUP_S3_PATH_STYLE", false)
 
 	c.WebhookEvents = envCSV("BACKFLOW_WEBHOOK_EVENTS")
 	c.LocalBackupDir = expandHomeDir(c.LocalBackupDir)
